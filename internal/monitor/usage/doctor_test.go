@@ -2,11 +2,99 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCheckSourceFetchReportsOnlyAvailableUsageWindows(t *testing.T) {
+	tests := []struct {
+		name              string
+		primary           WindowSummary
+		secondary         WindowSummary
+		wantDetails       string
+		wantFiveHour      *int
+		wantWeekly        *int
+		wantAbsentJSONKey string
+	}{
+		{
+			name:         "both windows",
+			primary:      WindowSummary{UsedPercent: 12},
+			secondary:    WindowSummary{UsedPercent: 34},
+			wantDetails:  "plan=pro 5h=12% weekly=34% source=app-server",
+			wantFiveHour: intPtr(12),
+			wantWeekly:   intPtr(34),
+		},
+		{
+			name:              "weekly only",
+			primary:           unavailableWindowSummary(),
+			secondary:         WindowSummary{UsedPercent: 24},
+			wantDetails:       "plan=pro weekly=24% source=app-server",
+			wantWeekly:        intPtr(24),
+			wantAbsentJSONKey: "five_hour_used_percent",
+		},
+		{
+			name:              "five hour only",
+			primary:           WindowSummary{UsedPercent: 7},
+			secondary:         unavailableWindowSummary(),
+			wantDetails:       "plan=pro 5h=7% source=app-server",
+			wantFiveHour:      intPtr(7),
+			wantAbsentJSONKey: "weekly_used_percent",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			check := checkSourceFetch(context.Background(), MonitorAccount{Label: "personal"}, &fakeSource{
+				name: "app-server",
+				out: &Summary{
+					PlanType:        "pro",
+					Source:          "app-server",
+					PrimaryWindow:   test.primary,
+					SecondaryWindow: test.secondary,
+				},
+			})
+
+			if !check.OK {
+				t.Fatalf("expected successful check, got %s", check.Details)
+			}
+			if check.Details != test.wantDetails {
+				t.Fatalf("details = %q, want %q", check.Details, test.wantDetails)
+			}
+			if check.PlanType != "pro" || check.Source != "app-server" {
+				t.Fatalf("unexpected structured metadata: plan=%q source=%q", check.PlanType, check.Source)
+			}
+			assertOptionalIntEqual(t, "five-hour", check.FiveHourUsedPercent, test.wantFiveHour)
+			assertOptionalIntEqual(t, "weekly", check.WeeklyUsedPercent, test.wantWeekly)
+
+			encoded, err := json.Marshal(check)
+			if err != nil {
+				t.Fatalf("marshal check: %v", err)
+			}
+			if strings.Contains(string(encoded), "-1") {
+				t.Fatalf("doctor JSON exposed unavailable sentinel: %s", encoded)
+			}
+			if test.wantAbsentJSONKey != "" && strings.Contains(string(encoded), `"`+test.wantAbsentJSONKey+`"`) {
+				t.Fatalf("doctor JSON included unavailable field %q: %s", test.wantAbsentJSONKey, encoded)
+			}
+		})
+	}
+}
+
+func assertOptionalIntEqual(t *testing.T, label string, got, want *int) {
+	t.Helper()
+	if got == nil || want == nil {
+		if got != nil || want != nil {
+			t.Fatalf("%s value = %v, want %v", label, got, want)
+		}
+		return
+	}
+	if *got != *want {
+		t.Fatalf("%s value = %d, want %d", label, *got, *want)
+	}
+}
 
 func TestDoctorReportStatus(t *testing.T) {
 	t.Parallel()

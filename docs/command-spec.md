@@ -117,6 +117,7 @@ Multicodex intentionally has no command for changing the shared default Codex ac
 `multicodex monitor doctor`
 - Runs read-only monitor setup and source checks.
 - Supports JSON output.
+- Successful JSON fetch checks include structured plan and source fields plus only the available five-hour and weekly percentages; unavailable windows are omitted instead of exposing the internal `-1` marker.
 - Checks configured monitor accounts and configured multicodex profiles by default.
 - Uses the normal source policy by default: app-server first for validated profile homes, direct OAuth for other homes.
 - Adds default Codex home, active `CODEX_HOME`, filesystem discovery, or raw app-server checks only when the caller passes `--include-default`, `--include-active`, `--discover`, or `--app-server`.

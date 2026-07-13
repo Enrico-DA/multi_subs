@@ -120,15 +120,34 @@ func checkSourceFetch(ctx context.Context, account MonitorAccount, source Source
 			Details: err.Error(),
 		}
 	}
+	fiveHourUsedPercent := availableUsedPercent(summary.PrimaryWindow)
+	weeklyUsedPercent := availableUsedPercent(summary.SecondaryWindow)
 	return DoctorCheck{
-		Name: name,
-		OK:   true,
-		Details: fmt.Sprintf(
-			"plan=%s 5h=%d%% weekly=%d%% source=%s",
-			summary.PlanType,
-			summary.PrimaryWindow.UsedPercent,
-			summary.SecondaryWindow.UsedPercent,
-			summary.Source,
-		),
+		Name:                name,
+		OK:                  true,
+		Details:             formatUsageDetails(summary.PlanType, summary.Source, fiveHourUsedPercent, weeklyUsedPercent),
+		PlanType:            summary.PlanType,
+		Source:              summary.Source,
+		FiveHourUsedPercent: fiveHourUsedPercent,
+		WeeklyUsedPercent:   weeklyUsedPercent,
 	}
+}
+
+func availableUsedPercent(window WindowSummary) *int {
+	if window.UsedPercent == unavailableUsedPercent {
+		return nil
+	}
+	usedPercent := window.UsedPercent
+	return &usedPercent
+}
+
+func formatUsageDetails(planType, source string, fiveHourUsedPercent, weeklyUsedPercent *int) string {
+	parts := []string{fmt.Sprintf("plan=%s", planType)}
+	if fiveHourUsedPercent != nil {
+		parts = append(parts, fmt.Sprintf("5h=%d%%", *fiveHourUsedPercent))
+	}
+	if weeklyUsedPercent != nil {
+		parts = append(parts, fmt.Sprintf("weekly=%d%%", *weeklyUsedPercent))
+	}
+	return strings.Join(append(parts, fmt.Sprintf("source=%s", source)), " ")
 }
