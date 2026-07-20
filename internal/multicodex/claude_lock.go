@@ -1,15 +1,22 @@
 package multicodex
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
 type claudeReservation struct {
 	file *os.File
+}
+
+func claudeReservationTargetForOrg(orgID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(orgID)))
+	return fmt.Sprintf("org-%x", sum[:16])
 }
 
 func (s *claudeStore) acquireReservation(target string) (*claudeReservation, bool, error) {

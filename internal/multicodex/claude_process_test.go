@@ -1,6 +1,9 @@
 package multicodex
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,12 +14,24 @@ func TestClaudeDefaultEnvRemovesConfigAndCredentialOverrides(t *testing.T) {
 		"WORKER_TOOL_SETTING=keep",
 		"CLAUDE_CONFIG_DIR=/tmp/stale",
 		"CLAUDE_CODE_OAUTH_TOKEN=secret",
+		"CLAUDE_CODE_OAUTH_REFRESH_TOKEN=secret",
+		"CLAUDE_CODE_OAUTH_SCOPES=user:inference",
+		"CLAUDE_CODE_OAUTH_CLIENT_ID=override",
+		"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=7",
 		"ANTHROPIC_API_KEY=secret",
 		"ANTHROPIC_AUTH_TOKEN=secret",
 		"ANTHROPIC_BASE_URL=https://example.invalid",
+		"ANTHROPIC_IDENTITY_TOKEN=secret",
+		"ANTHROPIC_FOUNDRY_AUTH_TOKEN=secret",
+		"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR=8",
+		"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1",
 		"CLAUDE_CODE_USE_BEDROCK=1",
 		"CLAUDE_CODE_USE_VERTEX=1",
 		"CLAUDE_CODE_USE_FOUNDRY=1",
+		"CLAUDE_CODE_USE_ANTHROPIC_AWS=1",
+		"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD=1",
+		"CLAUDE_CODE_USE_GATEWAY=1",
+		"CLAUDE_CODE_USE_MANTLE=1",
 		"MULTICODEX_CLAUDE_PROFILE=stale",
 		"MULTICODEX_CLAUDE_CONFIG_DIR=/tmp/out",
 		"MULTICODEX_CLAUDE_TARGET=stale",
@@ -30,12 +45,24 @@ func TestClaudeDefaultEnvRemovesConfigAndCredentialOverrides(t *testing.T) {
 	for _, key := range []string{
 		"CLAUDE_CONFIG_DIR",
 		"CLAUDE_CODE_OAUTH_TOKEN",
+		"CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+		"CLAUDE_CODE_OAUTH_SCOPES",
+		"CLAUDE_CODE_OAUTH_CLIENT_ID",
+		"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
 		"ANTHROPIC_API_KEY",
 		"ANTHROPIC_AUTH_TOKEN",
 		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_IDENTITY_TOKEN",
+		"ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+		"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+		"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
 		"CLAUDE_CODE_USE_BEDROCK",
 		"CLAUDE_CODE_USE_VERTEX",
 		"CLAUDE_CODE_USE_FOUNDRY",
+		"CLAUDE_CODE_USE_ANTHROPIC_AWS",
+		"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+		"CLAUDE_CODE_USE_GATEWAY",
+		"CLAUDE_CODE_USE_MANTLE",
 		"MULTICODEX_CLAUDE_PROFILE",
 		"MULTICODEX_CLAUDE_CONFIG_DIR",
 		"MULTICODEX_CLAUDE_TARGET",
@@ -86,10 +113,46 @@ func TestClaudeArgsRequestFableParsesModelWithoutChangingArgs(t *testing.T) {
 	if !claudeArgsRequestFable([]string{"--model=FABLE", "prompt"}) {
 		t.Fatal("expected --model=FABLE to be detected")
 	}
-	if claudeArgsRequestFable([]string{"--", "--model=fable"}) {
+	if claudeArgsRequestFable([]string{"--model", "sonnet", "--", "--model=fable"}) {
 		t.Fatal("model-looking prompt text after -- must not affect routing")
 	}
-	if claudeArgsRequestFable([]string{"prompt"}) {
-		t.Fatal("omitted model must use non-Fable routing without model injection")
+	if !claudeArgsRequestFable([]string{"prompt"}) {
+		t.Fatal("omitted model must conservatively require Fable quota")
+	}
+	if !claudeArgsRequestFable([]string{"--model", "sonnet", "--fallback-model", "fable", "prompt"}) {
+		t.Fatal("Fable fallback must require Fable quota")
+	}
+	t.Setenv("ANTHROPIC_MODEL", "claude-fable-5")
+	if !claudeArgsRequestFable([]string{"prompt"}) {
+		t.Fatal("Fable environment model must require Fable quota")
+	}
+	if claudeArgsRequestFable([]string{"--model", "sonnet", "prompt"}) {
+		t.Fatal("explicit non-Fable model must override the environment model")
+	}
+}
+
+func TestClaudeReservedRunPassesLockDescriptorToChild(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.Mkdir(binDir, 0o700); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	output := filepath.Join(root, "result")
+	script := "#!/bin/sh\nset -eu\n[ -e /dev/fd/3 ]\nprintf inherited > " + shellQuote(output) + "\n"
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake Claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+":/usr/bin:/bin")
+	lockFile, err := os.OpenFile(filepath.Join(root, "reservation.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open reservation: %v", err)
+	}
+	defer lockFile.Close()
+	env := []string{"PATH=" + os.Getenv("PATH")}
+	if err := (osClaudeCommandRunner{}).RunReserved(context.Background(), []string{"probe"}, env, lockFile); err != nil {
+		t.Fatalf("reserved run: %v", err)
+	}
+	if data, err := os.ReadFile(output); err != nil || string(data) != "inherited" {
+		t.Fatalf("child did not inherit reservation descriptor: data=%q err=%v", data, err)
 	}
 }

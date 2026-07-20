@@ -15,6 +15,7 @@ type claudeExecCandidate struct {
 	Target claudeTarget
 	Usage  claudeUsage
 	Score  float64
+	OrgID  string
 }
 
 func (a *App) cmdClaudeExec(args []string) error {
@@ -29,10 +30,30 @@ func (a *App) cmdClaudeExec(args []string) error {
 		return err
 	}
 	fableRequested := claudeArgsRequestFable(args)
+	defaultAuthCtx, defaultAuthCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
+	defaultAuth, defaultAuthErr := fetchClaudeAuthStatus(defaultAuthCtx, a.claudeCommandRunner(), "")
+	defaultAuthCancel()
+	if defaultAuthErr == nil {
+		defaultAuthErr = validateClaudeRoutingAuth(defaultAuth)
+	}
+
 	eligible := make([]claudeExecCandidate, 0, len(cfg.Profiles))
+	eligibleOrganizations := make(map[string]struct{}, len(cfg.Profiles))
 	for _, name := range sortedClaudeProfileNames(cfg) {
 		profile := cfg.Profiles[name]
 		if err := store.EnsureProfileReady(profile); err != nil {
+			continue
+		}
+		authCtx, authCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
+		auth, authErr := fetchClaudeAuthStatus(authCtx, a.claudeCommandRunner(), profile.ConfigDir)
+		authCancel()
+		if authErr != nil || validateClaudeRoutingAuth(auth) != nil {
+			continue
+		}
+		if defaultAuthErr == nil && auth.OrgID == defaultAuth.OrgID {
+			continue
+		}
+		if _, duplicate := eligibleOrganizations[auth.OrgID]; duplicate {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
@@ -46,7 +67,9 @@ func (a *App) cmdClaudeExec(args []string) error {
 			Target: claudeTarget{Name: name, Kind: "managed", ConfigDir: profile.ConfigDir, Profile: &profileCopy},
 			Usage:  usage,
 			Score:  claudeUsageWorstPercent(usage, fableRequested),
+			OrgID:  auth.OrgID,
 		})
+		eligibleOrganizations[auth.OrgID] = struct{}{}
 	}
 	sort.Slice(eligible, func(i, j int) bool {
 		if eligible[i].Score != eligible[j].Score {
@@ -56,7 +79,7 @@ func (a *App) cmdClaudeExec(args []string) error {
 	})
 
 	for _, candidate := range eligible {
-		reservation, acquired, err := store.acquireReservation(candidate.Target.Name)
+		reservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg(candidate.OrgID))
 		if err != nil {
 			return err
 		}
@@ -65,10 +88,11 @@ func (a *App) cmdClaudeExec(args []string) error {
 		}
 		runErr := func() error {
 			defer reservation.Release()
-			return a.claudeCommandRunner().Run(
+			return a.claudeCommandRunner().RunReserved(
 				context.Background(),
 				append([]string{"-p"}, args...),
 				claudeEnv(os.Environ(), candidate.Target.ConfigDir),
+				reservation.file,
 			)
 		}()
 		return claudeChildError(runErr, "Claude command failed")
@@ -77,6 +101,9 @@ func (a *App) cmdClaudeExec(args []string) error {
 		return &ExitError{Code: claudeBusyExitCode, Message: "all quota-eligible Claude managed profiles are busy; the default reserve was not used"}
 	}
 
+	if defaultAuthErr != nil {
+		return &ExitError{Code: 1, Message: fmt.Sprintf("no usable Claude account: default reserve auth is unavailable (%s)", defaultAuthErr)}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
 	defaultUsage, usageErr := fetchClaudeUsage(ctx, a.claudeCommandRunner(), "")
 	cancel()
@@ -86,7 +113,7 @@ func (a *App) cmdClaudeExec(args []string) error {
 	if !claudeUsageIsEligible(defaultUsage, fableRequested) {
 		return &ExitError{Code: 1, Message: "no quota-eligible Claude account; managed profiles were unavailable or exhausted and the default reserve is exhausted"}
 	}
-	reservation, acquired, err := store.acquireReservation(claudeDefaultTarget)
+	reservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg(defaultAuth.OrgID))
 	if err != nil {
 		return err
 	}
@@ -95,10 +122,11 @@ func (a *App) cmdClaudeExec(args []string) error {
 	}
 	runErr := func() error {
 		defer reservation.Release()
-		return a.claudeCommandRunner().Run(
+		return a.claudeCommandRunner().RunReserved(
 			context.Background(),
 			append([]string{"-p"}, args...),
 			claudeEnv(os.Environ(), ""),
+			reservation.file,
 		)
 	}()
 	return claudeChildError(runErr, "Claude command failed")
@@ -106,6 +134,8 @@ func (a *App) cmdClaudeExec(args []string) error {
 
 func claudeArgsRequestFable(args []string) bool {
 	model := ""
+	fallbackModel := ""
+	modelWasExplicit := false
 	for index := 0; index < len(args); index++ {
 		arg := strings.TrimSpace(args[index])
 		if arg == "--" {
@@ -115,15 +145,36 @@ func claudeArgsRequestFable(args []string) bool {
 		case arg == "--model" || arg == "-m":
 			if index+1 < len(args) {
 				model = strings.TrimSpace(args[index+1])
+				modelWasExplicit = true
 				index++
 			}
 		case strings.HasPrefix(arg, "--model="):
 			model = strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
+			modelWasExplicit = true
 		case strings.HasPrefix(arg, "-m="):
 			model = strings.TrimSpace(strings.TrimPrefix(arg, "-m="))
+			modelWasExplicit = true
+		case arg == "--fallback-model":
+			if index+1 < len(args) {
+				fallbackModel = strings.TrimSpace(args[index+1])
+				index++
+			}
+		case strings.HasPrefix(arg, "--fallback-model="):
+			fallbackModel = strings.TrimSpace(strings.TrimPrefix(arg, "--fallback-model="))
 		}
 	}
-	return strings.Contains(strings.ToLower(model), "fable")
+	if strings.Contains(strings.ToLower(fallbackModel), "fable") {
+		return true
+	}
+	if modelWasExplicit {
+		return strings.Contains(strings.ToLower(model), "fable")
+	}
+	if envModel := strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")); envModel != "" {
+		return strings.Contains(strings.ToLower(envModel), "fable")
+	}
+	// Without an explicit effective model, route conservatively because user or
+	// managed settings may select Fable.
+	return true
 }
 
 func claudeUsageIsEligible(usage claudeUsage, fableRequested bool) bool {

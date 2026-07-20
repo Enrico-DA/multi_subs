@@ -13,6 +13,7 @@ import (
 type claudeCommandRunner interface {
 	Capture(context.Context, []string, []string) ([]byte, []byte, error)
 	Run(context.Context, []string, []string) error
+	RunReserved(context.Context, []string, []string, *os.File) error
 	RunInteractive([]string, []string) error
 }
 
@@ -21,6 +22,7 @@ type osClaudeCommandRunner struct{}
 func (osClaudeCommandRunner) Capture(ctx context.Context, args, env []string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Env = env
+	cmd.Dir = "/"
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -30,11 +32,22 @@ func (osClaudeCommandRunner) Capture(ctx context.Context, args, env []string) ([
 }
 
 func (osClaudeCommandRunner) Run(ctx context.Context, args, env []string) error {
+	return runClaudeCommand(ctx, args, env, nil)
+}
+
+func (osClaudeCommandRunner) RunReserved(ctx context.Context, args, env []string, reservation *os.File) error {
+	return runClaudeCommand(ctx, args, env, reservation)
+}
+
+func runClaudeCommand(ctx context.Context, args, env []string, reservation *os.File) error {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if reservation != nil {
+		cmd.ExtraFiles = []*os.File{reservation}
+	}
 	return cmd.Run()
 }
 
@@ -68,12 +81,52 @@ func claudeEnvVarShouldBeStripped(key string) bool {
 	switch key {
 	case "CLAUDE_CONFIG_DIR",
 		"CLAUDE_CODE_OAUTH_TOKEN",
+		"CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+		"CLAUDE_CODE_OAUTH_SCOPES",
+		"CLAUDE_CODE_OAUTH_CLIENT_ID",
+		"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
 		"ANTHROPIC_API_KEY",
 		"ANTHROPIC_AUTH_TOKEN",
 		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_AWS_API_KEY",
+		"ANTHROPIC_AWS_BASE_URL",
+		"ANTHROPIC_BEDROCK_BASE_URL",
+		"ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+		"ANTHROPIC_FOUNDRY_API_KEY",
+		"ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+		"ANTHROPIC_FOUNDRY_BASE_URL",
+		"ANTHROPIC_GOOGLE_CLOUD_BASE_URL",
+		"ANTHROPIC_IDENTITY_TOKEN",
+		"ANTHROPIC_IDENTITY_TOKEN_FILE",
+		"ANTHROPIC_VERTEX_BASE_URL",
+		"ANTHROPIC_VERTEX_BASE_URL6",
+		"CLAUDE_CODE_API_BASE_URL",
+		"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+		"CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL",
+		"CLAUDE_CODE_CLIENT_KEY",
+		"CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+		"CLAUDE_CODE_CUSTOM_OAUTH_URL",
+		"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+		"CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER",
+		"CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+		"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+		"CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+		"CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH",
+		"CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+		"CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH",
+		"CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH",
+		"CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+		"CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+		"CLAUDE_CODE_SKIP_MANTLE_AUTH",
+		"CLAUDE_CODE_SKIP_VERTEX_AUTH",
 		"CLAUDE_CODE_USE_BEDROCK",
 		"CLAUDE_CODE_USE_VERTEX",
 		"CLAUDE_CODE_USE_FOUNDRY",
+		"CLAUDE_CODE_USE_ANTHROPIC_AWS",
+		"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+		"CLAUDE_CODE_USE_GATEWAY",
+		"CLAUDE_CODE_USE_MANTLE",
+		"CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR",
 		"MULTICODEX_CLAUDE_PROFILE",
 		"MULTICODEX_CLAUDE_CONFIG_DIR",
 		"MULTICODEX_CLAUDE_TARGET",

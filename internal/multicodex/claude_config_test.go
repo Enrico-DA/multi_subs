@@ -218,3 +218,31 @@ func TestClaudeAddRejectsProtectedDefaultName(t *testing.T) {
 		t.Fatalf("unexpected error: %s", exitErr.Message)
 	}
 }
+
+func TestClaudeProfileRejectsLinkedCredentialFiles(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		link func(string, string) error
+		want string
+	}{
+		{name: "symlink", link: os.Symlink, want: "symlink"},
+		{name: "hardlink", link: os.Link, want: "multiple hard links"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app, _, root := newClaudeTestApp(t)
+			profile := createClaudeProfiles(t, app, "work")["work"]
+			outside := filepath.Join(root, "outside-credentials.json")
+			if err := os.WriteFile(outside, []byte(`{"synthetic":true}`), 0o600); err != nil {
+				t.Fatalf("write synthetic credential: %v", err)
+			}
+			credentialPath := filepath.Join(profile.ConfigDir, ".credentials.json")
+			if err := test.link(outside, credentialPath); err != nil {
+				t.Fatalf("create %s: %v", test.name, err)
+			}
+			err := newClaudeStore(app.store.paths).EnsureProfileReady(profile)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %s rejection, got %v", test.want, err)
+			}
+		})
+	}
+}

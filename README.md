@@ -158,12 +158,15 @@ Two terminals can run `multicodex cli` with different profiles at the same time.
 
 - Session and all-model weekly usage must both be below 100%.
 - Explicit Fable requests also require an available Fable weekly window.
+- When the effective model is not explicit, routing conservatively requires Fable capacity. A Fable fallback also requires Fable capacity.
 - Eligible managed profiles are ordered by their highest applicable usage percentage, then name.
-- A non-blocking file lock reserves the chosen account until the child exits. Concurrent workers therefore try different eligible profiles.
+- Only first-party Claude Max logins with a stable organization ID are routable. Profiles that resolve to the same organization are deduplicated, including duplicates of the default reserve.
+- A non-blocking organization lock reserves the chosen account until the child exits. The child inherits the lock descriptor, so the reservation survives wrapper death.
 - If eligible managed profiles are only busy, the command returns a busy error instead of spending the default reserve.
 - The default Claude account is used only when no managed profile has usable quota.
 - Arguments are passed to official `claude -p` unchanged. Multicodex does not inject a model.
 - A managed auth or usage failure excludes that profile. Unsafe local state is a fatal error.
+- Usage probes disable session persistence, user/project settings, and MCP servers and run from a neutral directory.
 
 ## Heartbeat
 

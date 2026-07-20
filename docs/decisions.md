@@ -385,6 +385,6 @@ Rationale:
 Trade-offs:
 Claude usage parsing depends on the supported official CLI text contract. The default Claude account is a reserve rather than a managed profile, and concurrent eligible workers may return busy instead of spending it.
 Enforcement:
-Bare commands remain Codex commands. `multicodex claude` derives managed paths under the Claude provider tree, scrubs inherited account overrides, reserves a target until its child exits, routes from fresh official usage, and never reads or writes Claude credentials. Unit tests use fake CLI output; a live acceptance test covers two Max accounts and Fable execution.
+Bare commands remain Codex commands. `multicodex claude` derives managed paths under the Claude provider tree, scrubs inherited account overrides, requires and deduplicates first-party Max organization identities, uses isolated non-persistent usage probes, and gives the official child an organization lock that survives wrapper death. It never reads or writes Claude credentials. Unit tests use fake CLI output; a live acceptance test covers two Max accounts and Fable execution.
 References:
 `internal/multicodex/claude*.go`, `README.md`, `docs/command-spec.md`, `docs/security-and-privacy.md`

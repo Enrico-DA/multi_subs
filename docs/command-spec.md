@@ -181,6 +181,7 @@ Bare commands remain Codex commands. Claude support is isolated under `multicode
 
 `multicodex claude usage`
 - Calls official `claude -p --output-format json /usage` for every target.
+- Disables session persistence, user/project settings, and MCP servers for the probe and runs it from a neutral directory.
 - Parses only the top-level `result` text for session, all-model weekly, and Fable usage.
 - Treats missing Fable usage as unavailable while keeping the core windows usable.
 - Does not create provider state or send a model request.
@@ -190,8 +191,10 @@ Bare commands remain Codex commands. Claude support is isolated under `multicode
 - Fetches fresh official usage for every managed profile before selection.
 - For non-Fable work, requires session and all-model weekly usage below 100%.
 - For explicit Fable work, also requires Fable weekly usage below 100%.
+- Treats an omitted effective model conservatively as Fable-capable; also recognizes Fable fallback and environment model selection.
+- Requires first-party Claude Max auth with an organization ID and deduplicates profiles by organization, including the default reserve.
 - Ranks eligible profiles by their highest applicable percentage, then profile name.
-- Holds a provider-qualified, non-blocking file reservation until the child exits.
+- Holds an organization-qualified, non-blocking file reservation until the child exits. The official child inherits the lock descriptor so wrapper death does not release the account early.
 - Tries another eligible managed profile when the preferred one is busy.
 - Returns a busy error when all quota-eligible managed profiles are busy; it does not spend the default reserve in that case.
 - Uses the protected default account only when no managed profile is quota-eligible.
@@ -199,6 +202,7 @@ Bare commands remain Codex commands. Claude support is isolated under `multicode
 
 `multicodex claude doctor`
 - Checks the official binary, sidecar integrity, managed path safety, and profile auth state.
+- Fails when two targets resolve to the same Claude organization.
 - Reports warnings for profiles that need login and fails on unsafe local state.
 - Does not create provider state.
 

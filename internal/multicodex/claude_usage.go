@@ -29,7 +29,7 @@ var (
 )
 
 func fetchClaudeUsage(ctx context.Context, runner claudeCommandRunner, configDir string) (claudeUsage, error) {
-	stdout, stderr, err := runner.Capture(ctx, []string{"-p", "--output-format", "json", "/usage"}, claudeEnv(os.Environ(), configDir))
+	stdout, stderr, err := runner.Capture(ctx, claudeUsageProbeArgs(), claudeEnv(os.Environ(), configDir))
 	if err != nil {
 		return claudeUsage{}, fmt.Errorf("Claude usage command failed: %s", claudeProbeFailure(ctx, err, stderr))
 	}
@@ -38,6 +38,18 @@ func fetchClaudeUsage(ctx context.Context, runner claudeCommandRunner, configDir
 		return claudeUsage{}, err
 	}
 	return usage, nil
+}
+
+func claudeUsageProbeArgs() []string {
+	return []string{
+		"-p",
+		"--no-session-persistence",
+		"--setting-sources", "",
+		"--strict-mcp-config",
+		"--mcp-config", `{"mcpServers":{}}`,
+		"--output-format", "json",
+		"/usage",
+	}
 }
 
 func parseClaudeUsageEnvelope(raw []byte) (claudeUsage, error) {

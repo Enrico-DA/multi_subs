@@ -235,7 +235,19 @@ func (s *claudeStore) EnsureProfileReady(profile claudeProfile) error {
 	if err := validatePrivateDirectoryInfo(profile.ConfigDir, "Claude profile config directory", info); err != nil {
 		return err
 	}
-	return nil
+	return validateClaudeCredentialMetadata(profile.ConfigDir)
+}
+
+func validateClaudeCredentialMetadata(configDir string) error {
+	credentialPath := filepath.Join(configDir, ".credentials.json")
+	info, err := os.Lstat(credentialPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect Claude credential metadata: %w", err)
+	}
+	return validatePrivateRegularFileInfo(credentialPath, "Claude credential file", info)
 }
 
 func (s *claudeStore) validateProviderTreeIfPresent() error {

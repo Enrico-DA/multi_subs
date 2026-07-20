@@ -136,7 +136,54 @@ func (a *App) cmdClaudeLogin(args []string) error {
 	if err != nil {
 		return claudeChildError(err, "Claude auth login failed")
 	}
-	fmt.Println("Claude login command completed")
+	ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
+	status, statusErr := fetchClaudeAuthStatus(ctx, a.claudeCommandRunner(), profile.ConfigDir)
+	cancel()
+	if statusErr != nil {
+		return fmt.Errorf("verify Claude login: %w", statusErr)
+	}
+	if err := validateClaudeRoutingAuth(status); err != nil {
+		return fmt.Errorf("verify Claude login: %w", err)
+	}
+	if err := a.rejectDuplicateClaudeOrganization(profile, status.OrgID); err != nil {
+		return err
+	}
+	fmt.Printf("Claude login complete: %s (%s)\n", valueOrDash(status.Identity), status.OrgID)
+	return nil
+}
+
+func (a *App) rejectDuplicateClaudeOrganization(profile claudeProfile, orgID string) error {
+	store := newClaudeStore(a.store.paths)
+	cfg, err := store.LoadIfExists()
+	if err != nil {
+		return err
+	}
+	targets := []claudeTarget{{Name: claudeDefaultTarget, Kind: "reserve"}}
+	for _, name := range sortedClaudeProfileNames(cfg) {
+		if name == profile.Name {
+			continue
+		}
+		other := cfg.Profiles[name]
+		if err := store.EnsureProfileReady(other); err != nil {
+			continue
+		}
+		otherCopy := other
+		targets = append(targets, claudeTarget{Name: name, Kind: "managed", ConfigDir: other.ConfigDir, Profile: &otherCopy})
+	}
+	for _, target := range targets {
+		ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
+		status, statusErr := fetchClaudeAuthStatus(ctx, a.claudeCommandRunner(), target.ConfigDir)
+		cancel()
+		if statusErr != nil || !status.LoggedIn || strings.TrimSpace(status.OrgID) == "" {
+			continue
+		}
+		if status.OrgID == orgID {
+			return &ExitError{
+				Code:    2,
+				Message: fmt.Sprintf("Claude profile %q uses the same organization as %s %q; log in with a different Max account", profile.Name, target.Kind, target.Name),
+			}
+		}
+	}
 	return nil
 }
 
@@ -272,6 +319,7 @@ func (a *App) cmdClaudeDoctor(args []string) error {
 		}
 		checks = append(checks, check{"ok", "Claude binary", truncate(firstLineOrDash(version), 120)})
 	}
+	organizationTargets := make(map[string]string, len(cfg.Profiles)+1)
 	for _, target := range claudeTargets(cfg) {
 		if target.Profile != nil {
 			if err := store.EnsureProfileReady(*target.Profile); err != nil {
@@ -290,7 +338,16 @@ func (a *App) cmdClaudeDoctor(args []string) error {
 			checks = append(checks, check{"warn", "target " + target.Name, "not logged in"})
 			continue
 		}
-		checks = append(checks, check{"ok", "target " + target.Name, "logged in as " + valueOrDash(status.Identity)})
+		if err := validateClaudeRoutingAuth(status); err != nil {
+			checks = append(checks, check{"warn", "target " + target.Name, err.Error()})
+			continue
+		}
+		if existing, duplicate := organizationTargets[status.OrgID]; duplicate {
+			checks = append(checks, check{"fail", "target " + target.Name, "duplicates Claude organization used by " + existing})
+			continue
+		}
+		organizationTargets[status.OrgID] = target.Name
+		checks = append(checks, check{"ok", "target " + target.Name, "logged in as " + valueOrDash(status.Identity) + " (" + status.OrgID + ")"})
 	}
 
 	fmt.Println("multicodex claude doctor")
@@ -386,9 +443,6 @@ func claudeOfficialHelpFastPath(args []string) ([]string, bool) {
 }
 
 func commandArgsContainHelp(args []string) bool {
-	if len(args) == 1 && args[0] == "help" {
-		return true
-	}
 	for _, arg := range args {
 		if arg == "--" {
 			return false

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -15,11 +16,19 @@ type claudeAuthStatus struct {
 	AuthMethod   string
 	APIProvider  string
 	Subscription string
+	OrgID        string
 }
 
 func fetchClaudeAuthStatus(ctx context.Context, runner claudeCommandRunner, configDir string) (claudeAuthStatus, error) {
 	stdout, stderr, err := runner.Capture(ctx, []string{"auth", "status", "--json"}, claudeEnv(os.Environ(), configDir))
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			status, parseErr := parseClaudeAuthStatus(stdout)
+			if parseErr == nil && !status.LoggedIn {
+				return status, nil
+			}
+		}
 		return claudeAuthStatus{}, fmt.Errorf("Claude auth status failed: %s", claudeProbeFailure(ctx, err, stderr))
 	}
 	status, err := parseClaudeAuthStatus(stdout)
@@ -52,6 +61,7 @@ func parseClaudeAuthStatus(raw []byte) (claudeAuthStatus, error) {
 		AuthMethod:   claudeJSONString(payload, "authMethod", "auth_method"),
 		APIProvider:  claudeJSONString(payload, "apiProvider", "api_provider"),
 		Subscription: claudeJSONString(payload, "subscriptionType", "subscription_type", "subscription"),
+		OrgID:        claudeJSONString(payload, "orgId", "org_id", "organizationUuid", "organization_uuid"),
 	}
 	if status.Identity == "" {
 		var account map[string]json.RawMessage
@@ -81,4 +91,20 @@ func claudeJSONString(payload map[string]json.RawMessage, names ...string) strin
 		return ""
 	}
 	return strings.TrimSpace(value)
+}
+
+func validateClaudeRoutingAuth(status claudeAuthStatus) error {
+	if !status.LoggedIn {
+		return errors.New("not logged in")
+	}
+	if status.AuthMethod != "claude.ai" || status.APIProvider != "firstParty" {
+		return fmt.Errorf("expected first-party Claude subscription auth, got method=%q provider=%q", status.AuthMethod, status.APIProvider)
+	}
+	if !strings.EqualFold(status.Subscription, "max") {
+		return fmt.Errorf("expected Claude Max subscription, got %q", status.Subscription)
+	}
+	if strings.TrimSpace(status.OrgID) == "" {
+		return errors.New("Claude auth status did not report an organization ID")
+	}
+	return nil
 }

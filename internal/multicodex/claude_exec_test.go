@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClaudeExecRoutesNonFableByLowestWorstUsageAndPassesArgsExactly(t *testing.T) {
@@ -32,7 +34,7 @@ func TestClaudeExecRoutesNonFableByLowestWorstUsageAndPassesArgsExactly(t *testi
 		t.Fatalf("Claude exec: %v", err)
 	}
 	for _, call := range runner.Calls() {
-		if call.Kind == "capture" && claudeConfigDirFromEnv(call.Env) == "" {
+		if call.Kind == "capture" && reflect.DeepEqual(call.Args, claudeUsageProbeArgs()) && claudeConfigDirFromEnv(call.Env) == "" {
 			t.Fatal("default reserve usage should not be queried while a managed profile is eligible")
 		}
 	}
@@ -63,6 +65,40 @@ func TestClaudeExecFableRoutingRequiresAllThreeWindows(t *testing.T) {
 	}
 }
 
+func TestClaudeExecExcludesManagedProfileThatDuplicatesDefaultOrganization(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profiles := createClaudeProfiles(t, app, "duplicate", "independent")
+	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
+		configDir := claudeConfigDirFromEnv(env)
+		switch {
+		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
+			switch configDir {
+			case "":
+				return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "shared-org"), nil, nil
+			case profiles["duplicate"].ConfigDir:
+				return fakeClaudeAuthJSONWithOrg(true, "duplicate@example.com", "shared-org"), nil, nil
+			default:
+				return fakeClaudeAuthJSONWithOrg(true, "independent@example.com", "independent-org"), nil, nil
+			}
+		case reflect.DeepEqual(args, claudeUsageProbeArgs()):
+			if configDir == profiles["independent"].ConfigDir {
+				return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
+			}
+			t.Fatalf("usage queried for duplicate/default target: %q", configDir)
+		}
+		return nil, nil, errors.New("unexpected capture")
+	}
+	runner.run = func(_ context.Context, _ []string, env []string) error {
+		if got := claudeConfigDirFromEnv(env); got != profiles["independent"].ConfigDir {
+			t.Fatalf("selected duplicate organization instead of independent profile: %q", got)
+		}
+		return nil
+	}
+	if err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"}); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+}
+
 func TestClaudeExecUsesDefaultOnlyWhenNoManagedProfileIsQuotaEligible(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "exhausted", "broken")
@@ -76,12 +112,12 @@ func TestClaudeExecUsesDefaultOnlyWhenNoManagedProfileIsQuotaEligible(t *testing
 		if claudeConfigDirFromEnv(env) != "" || envContainsKey(env, "CLAUDE_CONFIG_DIR") {
 			t.Fatalf("default reserve must have CLAUDE_CONFIG_DIR absent: %q", env)
 		}
-		if !reflect.DeepEqual(args, []string{"-p", "hello"}) {
+		if !reflect.DeepEqual(args, []string{"-p", "--model", "sonnet", "hello"}) {
 			t.Fatalf("unexpected default args: %#v", args)
 		}
 		return nil
 	}
-	if err := app.cmdClaudeExec([]string{"hello"}); err != nil {
+	if err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"}); err != nil {
 		t.Fatalf("default reserve exec: %v", err)
 	}
 }
@@ -94,7 +130,7 @@ func TestClaudeExecSkipsBusyManagedProfileAndUsesAnotherEligibleManagedProfile(t
 		profiles["beta"].ConfigDir:  fakeClaudeUsageEnvelope(10, 20, nil),
 	})
 	store := newClaudeStore(app.store.paths)
-	alphaReservation, acquired, err := store.acquireReservation("alpha")
+	alphaReservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg("org-alpha@example.com"))
 	if err != nil || !acquired {
 		t.Fatalf("reserve alpha: acquired=%v err=%v", acquired, err)
 	}
@@ -105,7 +141,7 @@ func TestClaudeExecSkipsBusyManagedProfileAndUsesAnotherEligibleManagedProfile(t
 		}
 		return nil
 	}
-	if err := app.cmdClaudeExec([]string{"hello"}); err != nil {
+	if err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"}); err != nil {
 		t.Fatalf("exec with one busy profile: %v", err)
 	}
 }
@@ -120,7 +156,7 @@ func TestClaudeExecReturnsBusyWithoutUsingDefaultWhenAllEligibleManagedProfilesA
 	store := newClaudeStore(app.store.paths)
 	var held []*claudeReservation
 	for _, name := range []string{"alpha", "beta"} {
-		reservation, acquired, err := store.acquireReservation(name)
+		reservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg("org-" + name + "@example.com"))
 		if err != nil || !acquired {
 			t.Fatalf("reserve %s: acquired=%v err=%v", name, acquired, err)
 		}
@@ -136,7 +172,7 @@ func TestClaudeExecReturnsBusyWithoutUsingDefaultWhenAllEligibleManagedProfilesA
 		return nil
 	}
 
-	err := app.cmdClaudeExec([]string{"hello"})
+	err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"})
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != claudeBusyExitCode {
 		t.Fatalf("expected busy ExitError, got %T %v", err, err)
@@ -145,7 +181,7 @@ func TestClaudeExecReturnsBusyWithoutUsingDefaultWhenAllEligibleManagedProfilesA
 		t.Fatalf("unexpected busy message: %s", exitErr.Message)
 	}
 	for _, call := range runner.Calls() {
-		if call.Kind == "capture" && claudeConfigDirFromEnv(call.Env) == "" {
+		if call.Kind == "capture" && reflect.DeepEqual(call.Args, claudeUsageProbeArgs()) && claudeConfigDirFromEnv(call.Env) == "" {
 			t.Fatal("default usage must not be queried when eligible managed profiles are merely busy")
 		}
 	}
@@ -154,12 +190,13 @@ func TestClaudeExecReturnsBusyWithoutUsingDefaultWhenAllEligibleManagedProfilesA
 func TestClaudeExecHoldsReservationUntilChildReturnsAndReleasesOnExitError(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "alpha")
+	fable := 3.0
 	setFakeUsageCapture(t, runner, map[string][]byte{
-		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(1, 2, nil),
+		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(1, 2, &fable),
 	})
 	store := newClaudeStore(app.store.paths)
 	runner.run = func(context.Context, []string, []string) error {
-		reservation, acquired, err := store.acquireReservation("alpha")
+		reservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg("org-alpha@example.com"))
 		if err != nil {
 			t.Fatalf("probe held reservation: %v", err)
 		}
@@ -169,12 +206,12 @@ func TestClaudeExecHoldsReservationUntilChildReturnsAndReleasesOnExitError(t *te
 		}
 		return &ExitError{Code: 42}
 	}
-	err := app.cmdClaudeExec([]string{"hello"})
+	err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"})
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 42 {
 		t.Fatalf("expected child exit 42, got %T %v", err, err)
 	}
-	reservation, acquired, err := store.acquireReservation("alpha")
+	reservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg("org-alpha@example.com"))
 	if err != nil || !acquired {
 		t.Fatalf("reservation was not released after child return: acquired=%v err=%v", acquired, err)
 	}
@@ -232,6 +269,81 @@ func TestClaudeReservationRejectsSymlinkAndHardlinkLockFiles(t *testing.T) {
 	}
 }
 
+func TestClaudeReservationSurvivesWrapperDeath(t *testing.T) {
+	const helperEnv = "MULTICODEX_CLAUDE_LOCK_HELPER"
+	if os.Getenv(helperEnv) == "1" {
+		store := newClaudeStore(Paths{MulticodexHome: os.Getenv("MULTICODEX_HOME")})
+		reservation, acquired, err := store.acquireReservation("survival")
+		if err != nil || !acquired {
+			os.Exit(20)
+		}
+		err = (osClaudeCommandRunner{}).RunReserved(
+			context.Background(),
+			[]string{"probe"},
+			claudeEnv(os.Environ(), ""),
+			reservation.file,
+		)
+		if err != nil {
+			os.Exit(21)
+		}
+		os.Exit(0)
+	}
+
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.Mkdir(binDir, 0o700); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	readyPath := filepath.Join(root, "child-ready")
+	script := "#!/bin/sh\nset -eu\n[ -e /dev/fd/3 ]\nprintf ready > \"$READY_PATH\"\nsleep 2\n"
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake Claude: %v", err)
+	}
+	home := filepath.Join(root, "multicodex")
+	t.Setenv(helperEnv, "1")
+	t.Setenv("MULTICODEX_HOME", home)
+	t.Setenv("PATH", binDir+":/usr/bin:/bin")
+	t.Setenv("READY_PATH", readyPath)
+	helper := exec.Command(os.Args[0], "-test.run=^TestClaudeReservationSurvivesWrapperDeath$")
+	helper.Env = os.Environ()
+	if err := helper.Start(); err != nil {
+		t.Fatalf("start helper: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = helper.Process.Kill()
+			_ = helper.Wait()
+			t.Fatal("timed out waiting for inherited-lock child")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := helper.Process.Kill(); err != nil {
+		t.Fatalf("kill wrapper helper: %v", err)
+	}
+	_ = helper.Wait()
+
+	store := newClaudeStore(Paths{MulticodexHome: home})
+	reservation, acquired, err := store.acquireReservation("survival")
+	if err != nil {
+		t.Fatalf("probe inherited lock: %v", err)
+	}
+	if acquired {
+		reservation.Release()
+		t.Fatal("reservation was released while orphaned Claude child was still running")
+	}
+
+	time.Sleep(2300 * time.Millisecond)
+	reservation, acquired, err = store.acquireReservation("survival")
+	if err != nil || !acquired {
+		t.Fatalf("reservation did not release after child exit: acquired=%v err=%v", acquired, err)
+	}
+	reservation.Release()
+}
+
 func TestClaudeExecHelpFastPathSkipsStateAndUsage(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	runner.run = func(_ context.Context, args, env []string) error {
@@ -256,17 +368,47 @@ func TestClaudeExecHelpFastPathSkipsStateAndUsage(t *testing.T) {
 	}
 }
 
+func TestClaudeExecPositionalHelpPromptStillUsesRouting(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profiles := createClaudeProfiles(t, app, "alpha")
+	fable := 3.0
+	setFakeUsageCapture(t, runner, map[string][]byte{
+		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(1, 2, &fable),
+	})
+	runner.run = func(_ context.Context, args, env []string) error {
+		if !reflect.DeepEqual(args, []string{"-p", "help"}) {
+			t.Fatalf("unexpected args: %#v", args)
+		}
+		if got := claudeConfigDirFromEnv(env); got != profiles["alpha"].ConfigDir {
+			t.Fatalf("positional help bypassed managed routing: got %q", got)
+		}
+		return nil
+	}
+	if err := app.cmdClaudeExec([]string{"help"}); err != nil {
+		t.Fatalf("positional help exec: %v", err)
+	}
+}
+
 func setFakeUsageCapture(t *testing.T, runner *fakeClaudeRunner, usageByDir map[string][]byte) {
 	t.Helper()
 	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
-		if !reflect.DeepEqual(args, []string{"-p", "--output-format", "json", "/usage"}) {
-			t.Fatalf("unexpected capture args: %#v", args)
-		}
 		configDir := claudeConfigDirFromEnv(env)
-		result, ok := usageByDir[configDir]
-		if !ok {
-			return nil, []byte("not logged in"), errors.New("usage unavailable")
+		switch {
+		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
+			email := "reserve@example.com"
+			if configDir != "" {
+				email = filepath.Base(filepath.Dir(configDir)) + "@example.com"
+			}
+			return fakeClaudeAuthJSON(true, email), nil, nil
+		case reflect.DeepEqual(args, claudeUsageProbeArgs()):
+			result, ok := usageByDir[configDir]
+			if !ok {
+				return nil, []byte("not logged in"), errors.New("usage unavailable")
+			}
+			return result, nil, nil
+		default:
+			t.Fatalf("unexpected capture args: %#v", args)
+			return nil, nil, nil
 		}
-		return result, nil, nil
 	}
 }

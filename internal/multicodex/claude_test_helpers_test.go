@@ -40,6 +40,10 @@ func (f *fakeClaudeRunner) Run(ctx context.Context, args, env []string) error {
 	return f.run(ctx, append([]string(nil), args...), append([]string(nil), env...))
 }
 
+func (f *fakeClaudeRunner) RunReserved(ctx context.Context, args, env []string, _ *os.File) error {
+	return f.Run(ctx, args, env)
+}
+
 func (f *fakeClaudeRunner) RunInteractive(args, env []string) error {
 	f.record("interactive", args, env)
 	if f.runInteractive == nil {
@@ -110,12 +114,17 @@ func fakeClaudeUsageEnvelope(session, weekly float64, fable *float64) []byte {
 }
 
 func fakeClaudeAuthJSON(loggedIn bool, email string) []byte {
+	return fakeClaudeAuthJSONWithOrg(loggedIn, email, "org-"+email)
+}
+
+func fakeClaudeAuthJSONWithOrg(loggedIn bool, email, orgID string) []byte {
 	payload, _ := json.Marshal(map[string]any{
 		"loggedIn":         loggedIn,
 		"email":            email,
 		"authMethod":       "claude.ai",
 		"apiProvider":      "firstParty",
 		"subscriptionType": "max",
+		"orgId":            orgID,
 	})
 	return payload
 }

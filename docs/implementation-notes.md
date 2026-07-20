@@ -40,5 +40,5 @@
 - Manual smoke tests for profile-local workflows with temporary homes.
 - Manual verification of newly added real profiles should use `multicodex status`, an optional read-only prompt in `multicodex cli <name>`, and then `multicodex status` again to confirm profile-local behavior.
 - Manual verification of heartbeat changes should confirm refreshes remain profile-local.
-- Claude tests use an injected fake official CLI runner and synthetic `/usage` envelopes. They cover sidecar isolation, path safety, environment scrubbing, usage parsing, model-aware selection, reserve policy, and lock lifetime without touching real credentials or the network.
+- Claude tests use an injected fake official CLI runner and synthetic `/usage` envelopes. They cover sidecar isolation, path safety, credential metadata, environment scrubbing, usage parsing, Max organization deduplication, model-aware selection, reserve policy, and lock lifetime—including wrapper death—without touching real credentials or the network.
 - Live Claude acceptance uses two locally authenticated Max accounts: concurrent Haiku calls, a Fable call, free `/usage` probes, fail-closed empty profiles, and a routing choice from the reported limits.
