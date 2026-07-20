@@ -56,6 +56,22 @@ func TestClaudeLoginRejectsDefaultOrganizationDuplicate(t *testing.T) {
 	}
 }
 
+func TestClaudeLoginFailsClosedWhenDefaultIdentityIsUnknown(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profile := createClaudeProfiles(t, app, "work")["work"]
+	runner.run = func(context.Context, []string, []string) error { return nil }
+	runner.capture = func(_ context.Context, _ []string, env []string) ([]byte, []byte, error) {
+		if claudeConfigDirFromEnv(env) == profile.ConfigDir {
+			return fakeClaudeAuthJSONWithOrg(true, "work@example.com", "work-org"), nil, nil
+		}
+		return nil, nil, errors.New("default status transport failed")
+	}
+	_, err := captureStdout(t, func() error { return app.cmdClaudeLogin([]string{"work"}) })
+	if err == nil || !strings.Contains(err.Error(), "cannot verify Claude organization for reserve") {
+		t.Fatalf("expected fail-closed default identity error, got %v", err)
+	}
+}
+
 func TestClaudeCLIRunsDefaultWithoutConfigAndManagedWithDerivedConfig(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "work")

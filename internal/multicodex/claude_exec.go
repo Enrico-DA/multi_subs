@@ -29,28 +29,36 @@ func (a *App) cmdClaudeExec(args []string) error {
 	if err != nil {
 		return err
 	}
+	for _, name := range sortedClaudeProfileNames(cfg) {
+		if err := store.EnsureProfileReady(cfg.Profiles[name]); err != nil {
+			return fmt.Errorf("Claude profile %q is unsafe: %w", name, err)
+		}
+	}
 	fableRequested := claudeArgsRequestFable(args)
 	defaultAuthCtx, defaultAuthCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
-	defaultAuth, defaultAuthErr := fetchClaudeAuthStatus(defaultAuthCtx, a.claudeCommandRunner(), "")
+	defaultAuth, defaultAuthProbeErr := fetchClaudeAuthStatus(defaultAuthCtx, a.claudeCommandRunner(), "")
 	defaultAuthCancel()
-	if defaultAuthErr == nil {
-		defaultAuthErr = validateClaudeRoutingAuth(defaultAuth)
+	if defaultAuthProbeErr != nil {
+		return fmt.Errorf("cannot verify Claude default account identity: %w", defaultAuthProbeErr)
+	}
+	defaultRoutable := defaultAuth.LoggedIn
+	if defaultRoutable {
+		if err := validateClaudeRoutingAuth(defaultAuth); err != nil {
+			return fmt.Errorf("cannot verify Claude default account identity: %w", err)
+		}
 	}
 
 	eligible := make([]claudeExecCandidate, 0, len(cfg.Profiles))
 	eligibleOrganizations := make(map[string]struct{}, len(cfg.Profiles))
 	for _, name := range sortedClaudeProfileNames(cfg) {
 		profile := cfg.Profiles[name]
-		if err := store.EnsureProfileReady(profile); err != nil {
-			continue
-		}
 		authCtx, authCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
 		auth, authErr := fetchClaudeAuthStatus(authCtx, a.claudeCommandRunner(), profile.ConfigDir)
 		authCancel()
 		if authErr != nil || validateClaudeRoutingAuth(auth) != nil {
 			continue
 		}
-		if defaultAuthErr == nil && auth.OrgID == defaultAuth.OrgID {
+		if defaultRoutable && auth.OrgID == defaultAuth.OrgID {
 			continue
 		}
 		if _, duplicate := eligibleOrganizations[auth.OrgID]; duplicate {
@@ -101,8 +109,8 @@ func (a *App) cmdClaudeExec(args []string) error {
 		return &ExitError{Code: claudeBusyExitCode, Message: "all quota-eligible Claude managed profiles are busy; the default reserve was not used"}
 	}
 
-	if defaultAuthErr != nil {
-		return &ExitError{Code: 1, Message: fmt.Sprintf("no usable Claude account: default reserve auth is unavailable (%s)", defaultAuthErr)}
+	if !defaultRoutable {
+		return &ExitError{Code: 1, Message: "no usable Claude account: default reserve is logged out"}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
 	defaultUsage, usageErr := fetchClaudeUsage(ctx, a.claudeCommandRunner(), "")
@@ -163,18 +171,35 @@ func claudeArgsRequestFable(args []string) bool {
 			fallbackModel = strings.TrimSpace(strings.TrimPrefix(arg, "--fallback-model="))
 		}
 	}
-	if strings.Contains(strings.ToLower(fallbackModel), "fable") {
+	if fallbackModel != "" && claudeModelMayUseFable(fallbackModel) {
 		return true
 	}
 	if modelWasExplicit {
-		return strings.Contains(strings.ToLower(model), "fable")
+		return claudeModelMayUseFable(model)
 	}
 	if envModel := strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")); envModel != "" {
-		return strings.Contains(strings.ToLower(envModel), "fable")
+		return claudeModelMayUseFable(envModel)
 	}
 	// Without an explicit effective model, route conservatively because user or
 	// managed settings may select Fable.
 	return true
+}
+
+func claudeModelMayUseFable(models string) bool {
+	for _, model := range strings.Split(models, ",") {
+		lower := strings.ToLower(strings.TrimSpace(model))
+		if lower == "" {
+			return true
+		}
+		if strings.Contains(lower, "fable") {
+			return true
+		}
+		if strings.Contains(lower, "sonnet") || strings.Contains(lower, "haiku") || strings.Contains(lower, "opus") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func claudeUsageIsEligible(usage claudeUsage, fableRequested bool) bool {

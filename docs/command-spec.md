@@ -191,7 +191,7 @@ Bare commands remain Codex commands. Claude support is isolated under `multicode
 - Fetches fresh official usage for every managed profile before selection.
 - For non-Fable work, requires session and all-model weekly usage below 100%.
 - For explicit Fable work, also requires Fable weekly usage below 100%.
-- Treats an omitted effective model conservatively as Fable-capable; also recognizes Fable fallback and environment model selection.
+- Treats an omitted or unknown effective model conservatively as Fable-capable; also recognizes fallback and environment model selection.
 - Requires first-party Claude Max auth with an organization ID and deduplicates profiles by organization, including the default reserve.
 - Ranks eligible profiles by their highest applicable percentage, then profile name.
 - Holds an organization-qualified, non-blocking file reservation until the child exits. The official child inherits the lock descriptor so wrapper death does not release the account early.

@@ -99,6 +99,27 @@ func TestClaudeExecExcludesManagedProfileThatDuplicatesDefaultOrganization(t *te
 	}
 }
 
+func TestClaudeExecFailsClosedWhenDefaultIdentityIsUnknown(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	createClaudeProfiles(t, app, "managed")
+	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) && claudeConfigDirFromEnv(env) == "" {
+			return nil, nil, errors.New("default status transport failed")
+		}
+		t.Fatalf("probe continued after unknown default identity: args=%#v env=%q", args, env)
+		return nil, nil, nil
+	}
+	err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"})
+	if err == nil || !strings.Contains(err.Error(), "cannot verify Claude default account identity") {
+		t.Fatalf("expected fail-closed default identity error, got %v", err)
+	}
+	for _, call := range runner.Calls() {
+		if call.Kind == "run" {
+			t.Fatalf("unknown default identity started child: %+v", call)
+		}
+	}
+}
+
 func TestClaudeExecUsesDefaultOnlyWhenNoManagedProfileIsQuotaEligible(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "exhausted", "broken")
@@ -266,6 +287,25 @@ func TestClaudeReservationRejectsSymlinkAndHardlinkLockFiles(t *testing.T) {
 				t.Fatalf("expected %s rejection, got %v", test.message, err)
 			}
 		})
+	}
+}
+
+func TestClaudeExecFailsBeforeProbesForLinkedCredential(t *testing.T) {
+	app, runner, root := newClaudeTestApp(t)
+	profile := createClaudeProfiles(t, app, "unsafe")["unsafe"]
+	outside := filepath.Join(root, "outside-credentials.json")
+	if err := os.WriteFile(outside, []byte(`{"synthetic":true}`), 0o600); err != nil {
+		t.Fatalf("write synthetic credential: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(profile.ConfigDir, ".credentials.json")); err != nil {
+		t.Fatalf("symlink credential: %v", err)
+	}
+	err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected linked credential failure, got %v", err)
+	}
+	if calls := runner.Calls(); len(calls) != 0 {
+		t.Fatalf("unsafe profile triggered Claude subprocesses: %+v", calls)
 	}
 }
 

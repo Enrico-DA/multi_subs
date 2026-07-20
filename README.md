@@ -158,7 +158,7 @@ Two terminals can run `multicodex cli` with different profiles at the same time.
 
 - Session and all-model weekly usage must both be below 100%.
 - Explicit Fable requests also require an available Fable weekly window.
-- When the effective model is not explicit, routing conservatively requires Fable capacity. A Fable fallback also requires Fable capacity.
+- When the effective model is omitted or unknown, routing conservatively requires Fable capacity. A Fable or unknown fallback also requires Fable capacity.
 - Eligible managed profiles are ordered by their highest applicable usage percentage, then name.
 - Only first-party Claude Max logins with a stable organization ID are routable. Profiles that resolve to the same organization are deduplicated, including duplicates of the default reserve.
 - A non-blocking organization lock reserves the chosen account until the child exits. The child inherits the lock descriptor, so the reservation survives wrapper death.

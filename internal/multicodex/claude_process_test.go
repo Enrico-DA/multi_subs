@@ -106,7 +106,35 @@ func TestClaudeManagedEnvSetsExactlyOneDerivedConfigDir(t *testing.T) {
 	}
 }
 
+func TestClaudeEnvStripsEveryDeniedCredentialAndProviderSelector(t *testing.T) {
+	const managedDir = "/private/multicodex/providers/claude/profiles/work/config"
+	for key := range claudeDeniedEnvKeys {
+		t.Run(key, func(t *testing.T) {
+			defaultEnv := claudeEnv([]string{"PATH=/bin", key + "=untrusted"}, "")
+			if envContainsKey(defaultEnv, key) {
+				t.Fatalf("default environment retained denied key %s: %q", key, defaultEnv)
+			}
+			managedEnv := claudeEnv([]string{"PATH=/bin", key + "=untrusted"}, managedDir)
+			if key == "CLAUDE_CONFIG_DIR" {
+				if got := claudeConfigDirFromEnv(managedEnv); got != managedDir {
+					t.Fatalf("managed config dir: got %q want %q", got, managedDir)
+				}
+				return
+			}
+			if envContainsKey(managedEnv, key) {
+				t.Fatalf("managed environment retained denied key %s: %q", key, managedEnv)
+			}
+		})
+	}
+	for _, key := range []string{"CLAUDE_CODE_OAUTH_FUTURE_OVERRIDE", "CLAUDE_CODE_SKIP_FUTURE_AUTH"} {
+		if envContainsKey(claudeEnv([]string{key + "=untrusted"}, ""), key) {
+			t.Fatalf("default environment retained denied prefix key %s", key)
+		}
+	}
+}
+
 func TestClaudeArgsRequestFableParsesModelWithoutChangingArgs(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
 	if !claudeArgsRequestFable([]string{"--model", "claude-fable-latest", "prompt"}) {
 		t.Fatal("expected --model Fable to be detected")
 	}
@@ -128,6 +156,13 @@ func TestClaudeArgsRequestFableParsesModelWithoutChangingArgs(t *testing.T) {
 	}
 	if claudeArgsRequestFable([]string{"--model", "sonnet", "prompt"}) {
 		t.Fatal("explicit non-Fable model must override the environment model")
+	}
+	if !claudeArgsRequestFable([]string{"--model", "future-model", "prompt"}) {
+		t.Fatal("unknown explicit model must conservatively require Fable quota")
+	}
+	t.Setenv("ANTHROPIC_MODEL", "future-model")
+	if !claudeArgsRequestFable([]string{"prompt"}) {
+		t.Fatal("unknown environment model must conservatively require Fable quota")
 	}
 }
 

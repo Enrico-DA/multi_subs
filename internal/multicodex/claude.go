@@ -165,7 +165,7 @@ func (a *App) rejectDuplicateClaudeOrganization(profile claudeProfile, orgID str
 		}
 		other := cfg.Profiles[name]
 		if err := store.EnsureProfileReady(other); err != nil {
-			continue
+			return fmt.Errorf("Claude profile %q is unsafe: %w", name, err)
 		}
 		otherCopy := other
 		targets = append(targets, claudeTarget{Name: name, Kind: "managed", ConfigDir: other.ConfigDir, Profile: &otherCopy})
@@ -174,8 +174,14 @@ func (a *App) rejectDuplicateClaudeOrganization(profile claudeProfile, orgID str
 		ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
 		status, statusErr := fetchClaudeAuthStatus(ctx, a.claudeCommandRunner(), target.ConfigDir)
 		cancel()
-		if statusErr != nil || !status.LoggedIn || strings.TrimSpace(status.OrgID) == "" {
+		if statusErr != nil {
+			return fmt.Errorf("cannot verify Claude organization for %s %q: %w", target.Kind, target.Name, statusErr)
+		}
+		if !status.LoggedIn {
 			continue
+		}
+		if err := validateClaudeRoutingAuth(status); err != nil {
+			return fmt.Errorf("cannot verify Claude organization for %s %q: %w", target.Kind, target.Name, err)
 		}
 		if status.OrgID == orgID {
 			return &ExitError{
