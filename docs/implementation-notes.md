@@ -12,6 +12,8 @@
 - Provider primary/secondary fields are decoded only at the source boundary. The normalized model stores one weekly window for the default bucket and each model-specific bucket.
 - Exec selection metadata stores only `weekly_used_percent` for usage telemetry.
 - Non-mutating preflight and preview helpers in `internal/multicodex/doctor.go` and `internal/multicodex/dry_run.go`.
+- Claude provider commands, sidecar storage, official-CLI probes, routing, and reservations live in `internal/multicodex/claude*.go`.
+- Claude remains provider-specific: it does not reuse Codex OAuth, app-server, token parsing, or observed-session estimates.
 
 ## Data layout
 - `~/multicodex/config.json` for profile metadata.
@@ -20,6 +22,9 @@
 - `~/multicodex/profiles/<name>/codex-home/skills/` fills in missing top-level entries from the default Codex skills tree while keeping manual profile overrides.
 - `~/multicodex/heartbeat.lock` for non-overlapping heartbeat runs by default.
 - `~/multicodex/monitor/accounts.json` for optional monitor-owned account overrides.
+- `~/multicodex/providers/claude/config.json` for the versioned Claude profile registry.
+- `~/multicodex/providers/claude/profiles/<name>/config/` for managed `CLAUDE_CONFIG_DIR` state.
+- `~/multicodex/providers/claude/run/reservations/` for credential-free execution locks.
 
 ## Verification strategy
 - Unit tests for config parsing and profile validation.
@@ -35,3 +40,5 @@
 - Manual smoke tests for profile-local workflows with temporary homes.
 - Manual verification of newly added real profiles should use `multicodex status`, an optional read-only prompt in `multicodex cli <name>`, and then `multicodex status` again to confirm profile-local behavior.
 - Manual verification of heartbeat changes should confirm refreshes remain profile-local.
+- Claude tests use an injected fake official CLI runner and synthetic `/usage` envelopes. They cover sidecar isolation, path safety, environment scrubbing, usage parsing, model-aware selection, reserve policy, and lock lifetime without touching real credentials or the network.
+- Live Claude acceptance uses two locally authenticated Max accounts: concurrent Haiku calls, a Fable call, free `/usage` probes, fail-closed empty profiles, and a routing choice from the reported limits.

@@ -1,8 +1,8 @@
 # multicodex
 
-`multicodex` helps you use multiple Codex subscription accounts on one machine without changing the normal default Codex account.
+`multicodex` helps you use multiple Codex and Claude subscription accounts on one machine without changing either normal default account.
 
-It keeps non-default accounts in named local profiles. Each profile has its own `CODEX_HOME`, auth file, sessions, threads, and Codex state. The regular system Codex account remains managed by Codex itself, outside multicodex.
+Bare commands continue to manage Codex. The `multicodex claude` namespace manages Claude profiles and routes headless Claude workers. Each provider keeps its own profile registry and isolated runtime directories. The regular system accounts remain managed by the official CLIs outside multicodex.
 
 By default, each profile reuses your global Codex `config.toml` through a symlink, so model defaults, reasoning settings, permission settings, and other normal Codex config changes apply everywhere. Profile homes also inherit missing top-level skill entries from the global Codex skills directory through symlinks.
 
@@ -11,6 +11,7 @@ Profile login requires file-backed auth. If the effective Codex config does not 
 ## Status
 
 - Usable for local multi-account Codex CLI, `codex exec`, heartbeat, and usage-monitor workflows.
+- Usable for local multi-account Claude CLI, quota-aware `claude -p`, and Fable routing.
 - The command surface is intentionally narrow. Multicodex does not implement global account switching.
 
 ## Prerequisites
@@ -18,6 +19,7 @@ Profile login requires file-backed auth. If the effective Codex config does not 
 - Go 1.25 or newer for building from source.
 - Development and CI checks use the patched Go toolchain listed in `go.mod`.
 - Official `codex` CLI installed and available in `PATH`.
+- Official `claude` CLI installed and available in `PATH` for Claude commands.
 - macOS or Linux.
 
 ## Install
@@ -31,7 +33,7 @@ go build -o multicodex ./cmd/multicodex
 Or install from the public module path.
 
 ```bash
-go install github.com/olliecrow/multicodex/cmd/multicodex@latest
+go install github.com/Enrico-DA/multicodex/cmd/multicodex@latest
 ```
 
 Optional local install path.
@@ -64,6 +66,18 @@ Run `codex exec` on the best available account.
 multicodex exec -s read-only "Summarize the README in 3 bullets."
 ```
 
+Add a Claude Max account and run Fable on the best available Claude profile.
+
+```bash
+multicodex claude add personal
+multicodex claude login personal
+multicodex claude status
+multicodex claude usage
+multicodex claude exec --model claude-fable-5 "Review this change."
+```
+
+Claude login uses the official browser flow. Multicodex never reads, copies, or writes Claude credentials.
+
 Open the monitor and run checks.
 
 ```bash
@@ -83,6 +97,9 @@ multicodex dry-run
 - Profile `config.toml` defaults to a symlink from `~/multicodex/profiles/<name>/codex-home/config.toml` to the default Codex config at `~/.codex/config.toml`.
 - Profile skills fill in missing top-level entries from `~/.codex/skills` using symlinks. Manual top-level profile skill overrides are left in place.
 - To use a per-profile Codex config, replace the profile `config.toml` symlink with a regular profile-local `config.toml` file that still enables file-backed auth.
+- Claude metadata is separate at `~/multicodex/providers/claude/config.json`.
+- Managed Claude state lives under `~/multicodex/providers/claude/profiles/<name>/config`.
+- The default Claude account is a protected reserve. It is launched with `CLAUDE_CONFIG_DIR` absent; managed accounts receive exactly one profile-local `CLAUDE_CONFIG_DIR`.
 
 ## Commands
 
@@ -105,6 +122,13 @@ multicodex completion <bash|zsh|fish>
 multicodex version
 multicodex help [command [subcommand]]
 multicodex --version
+multicodex claude add <name>
+multicodex claude login <name> [claude auth login args]
+multicodex claude cli <name|default> [claude args...]
+multicodex claude exec [claude -p args...]
+multicodex claude status
+multicodex claude usage
+multicodex claude doctor
 ```
 
 ## Interactive CLI
@@ -127,6 +151,19 @@ Two terminals can run `multicodex cli` with different profiles at the same time.
 - The default Codex home is a protected reserve. It is used only when no configured profile has usable weekly usage.
 - If the default Codex home is the only remaining destination, exec uses it as the final fallback even when its usage data is unavailable or exhausted.
 - For explicit Spark model names, configured profiles need Spark usage windows to win normal routing; the default Codex home still remains the final fallback.
+
+## Claude Routing
+
+`multicodex claude exec [claude -p args...]` asks each managed Claude profile for fresh plan usage through the official, free `/usage` command.
+
+- Session and all-model weekly usage must both be below 100%.
+- Explicit Fable requests also require an available Fable weekly window.
+- Eligible managed profiles are ordered by their highest applicable usage percentage, then name.
+- A non-blocking file lock reserves the chosen account until the child exits. Concurrent workers therefore try different eligible profiles.
+- If eligible managed profiles are only busy, the command returns a busy error instead of spending the default reserve.
+- The default Claude account is used only when no managed profile has usable quota.
+- Arguments are passed to official `claude -p` unchanged. Multicodex does not inject a model.
+- A managed auth or usage failure excludes that profile. Unsafe local state is a fatal error.
 
 ## Heartbeat
 
@@ -245,10 +282,13 @@ go build -o multicodex ./cmd/multicodex
 ## Safety Model
 
 - Uses official `codex login` flows.
+- Uses official `claude auth login --claudeai`, `claude auth status --json`, and `claude -p "/usage"` flows.
 - Keeps profile auth and Codex state local to each profile `CODEX_HOME`.
+- Keeps Claude state isolated through `CLAUDE_CONFIG_DIR` and never reads Claude credential contents.
 - Does not store raw secrets in multicodex config.
-- Does not change, restore, back up, symlink, or otherwise manage the shared default Codex auth account.
+- Does not change, restore, back up, symlink, or otherwise manage either shared default auth account.
 - Scrubs inherited account-routing and account-token environment variables before launching profile-scoped Codex commands.
+- Scrubs inherited Anthropic/Claude account overrides before launching Claude commands.
 - `monitor` is read-only and does not mutate Codex account data.
 - `doctor` and `dry-run` are non-mutating helpers.
 - `doctor` includes repo leak guards for tracked sensitive files and ignore-pattern coverage.

@@ -1,0 +1,206 @@
+package multicodex
+
+import (
+	"context"
+	"errors"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestClaudeLoginUsesOfficialClaudeAIFlowForManagedProfile(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profiles := createClaudeProfiles(t, app, "work")
+	runner.run = func(_ context.Context, args, env []string) error {
+		if !reflect.DeepEqual(args, []string{"auth", "login", "--claudeai", "--email", "work@example.com"}) {
+			t.Fatalf("login args: %#v", args)
+		}
+		if got := claudeConfigDirFromEnv(env); got != profiles["work"].ConfigDir {
+			t.Fatalf("login config dir: got %q want %q", got, profiles["work"].ConfigDir)
+		}
+		return nil
+	}
+	if _, err := captureStdout(t, func() error {
+		return app.cmdClaudeLogin([]string{"work", "--email", "work@example.com"})
+	}); err != nil {
+		t.Fatalf("Claude login: %v", err)
+	}
+}
+
+func TestClaudeCLIRunsDefaultWithoutConfigAndManagedWithDerivedConfig(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profiles := createClaudeProfiles(t, app, "work")
+	var invocations int
+	runner.runInteractive = func(args, env []string) error {
+		invocations++
+		switch invocations {
+		case 1:
+			if !reflect.DeepEqual(args, []string{"--model", "sonnet", "hello"}) {
+				t.Fatalf("default CLI args: %#v", args)
+			}
+			if envContainsKey(env, "CLAUDE_CONFIG_DIR") {
+				t.Fatalf("default CLI must not set CLAUDE_CONFIG_DIR: %q", env)
+			}
+		case 2:
+			if !reflect.DeepEqual(args, []string{"--continue"}) {
+				t.Fatalf("managed CLI args: %#v", args)
+			}
+			if got := claudeConfigDirFromEnv(env); got != profiles["work"].ConfigDir {
+				t.Fatalf("managed CLI config: got %q want %q", got, profiles["work"].ConfigDir)
+			}
+		default:
+			t.Fatalf("unexpected invocation %d", invocations)
+		}
+		return nil
+	}
+	if err := app.cmdClaudeCLI([]string{"default", "--model", "sonnet", "hello"}); err != nil {
+		t.Fatalf("default CLI: %v", err)
+	}
+	if err := app.cmdClaudeCLI([]string{"work", "--continue"}); err != nil {
+		t.Fatalf("managed CLI: %v", err)
+	}
+}
+
+func TestClaudeStatusCallsOfficialJSONStatusForDefaultAndEveryManagedProfile(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profiles := createClaudeProfiles(t, app, "alpha", "beta")
+	wantEmail := map[string]string{
+		"":                          "reserve@example.com",
+		profiles["alpha"].ConfigDir: "alpha@example.com",
+		profiles["beta"].ConfigDir:  "beta@example.com",
+	}
+	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
+		if !reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			t.Fatalf("status args: %#v", args)
+		}
+		dir := claudeConfigDirFromEnv(env)
+		email, ok := wantEmail[dir]
+		if !ok {
+			t.Fatalf("unexpected status target config: %q", dir)
+		}
+		return fakeClaudeAuthJSON(true, email), nil, nil
+	}
+	out, err := captureStdout(t, func() error { return app.cmdClaudeStatus(nil) })
+	if err != nil {
+		t.Fatalf("Claude status: %v", err)
+	}
+	for _, want := range []string{"default", "alpha", "beta", "reserve@example.com", "alpha@example.com", "beta@example.com", "logged-in"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output missing %q:\n%s", want, out)
+		}
+	}
+	if calls := runner.Calls(); len(calls) != 3 {
+		t.Fatalf("status call count: got %d want 3 (%+v)", len(calls), calls)
+	}
+}
+
+func TestClaudeUsageReportsAllWindowsAndMissingFable(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	createClaudeProfiles(t, app, "work")
+	fable := 30.0
+	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
+		if !reflect.DeepEqual(args, []string{"-p", "--output-format", "json", "/usage"}) {
+			t.Fatalf("usage args: %#v", args)
+		}
+		if claudeConfigDirFromEnv(env) == "" {
+			return fakeClaudeUsageEnvelope(10, 20, &fable), nil, nil
+		}
+		return fakeClaudeUsageEnvelope(40, 50, nil), nil, nil
+	}
+	out, err := captureStdout(t, func() error { return app.cmdClaudeUsage(nil) })
+	if err != nil {
+		t.Fatalf("Claude usage: %v", err)
+	}
+	for _, want := range []string{
+		"default (reserve)",
+		"work (managed)",
+		"session: 10% used; Resets in 2 hours",
+		"weekly all models: 20% used; Resets Monday at 09:00",
+		"Fable: 30% used; Resets Tuesday at 10:00",
+		"Fable: unavailable",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("usage output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestClaudeDoctorReportsBinarySidecarAndAuthBasics(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	createClaudeProfiles(t, app, "work")
+	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+		switch {
+		case reflect.DeepEqual(args, []string{"--version"}):
+			return []byte("claude 2.0.0\n"), nil, nil
+		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
+			return fakeClaudeAuthJSON(true, "person@example.com"), nil, nil
+		default:
+			t.Fatalf("unexpected doctor args: %#v", args)
+			return nil, nil, nil
+		}
+	}
+	out, err := captureStdout(t, func() error { return app.cmdClaudeDoctor(nil) })
+	if err != nil {
+		t.Fatalf("Claude doctor: %v", err)
+	}
+	for _, want := range []string{"[ok] sidecar: version 1", "[ok] Claude binary: claude 2.0.0", "[ok] target default", "[ok] target work", "Claude doctor result: PASS"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestClaudeReadOnlyCommandsAndNamespaceHelpDoNotCreateState(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*App) error
+	}{
+		{"status", func(app *App) error { return app.cmdClaudeStatus(nil) }},
+		{"usage", func(app *App) error { return app.cmdClaudeUsage(nil) }},
+		{"doctor", func(app *App) error { return app.cmdClaudeDoctor(nil) }},
+		{"help", func(app *App) error { return app.cmdClaude([]string{"help"}) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			app, runner, _ := newClaudeTestApp(t)
+			runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+				switch {
+				case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
+					return fakeClaudeAuthJSON(false, ""), nil, nil
+				case reflect.DeepEqual(args, []string{"-p", "--output-format", "json", "/usage"}):
+					return fakeClaudeUsageEnvelope(1, 2, nil), nil, nil
+				case reflect.DeepEqual(args, []string{"--version"}):
+					return []byte("claude test\n"), nil, nil
+				default:
+					return nil, nil, errors.New("unexpected capture")
+				}
+			}
+			if _, err := captureStdout(t, func() error { return test.run(app) }); err != nil {
+				t.Fatalf("%s: %v", test.name, err)
+			}
+			if _, err := os.Stat(app.store.paths.MulticodexHome); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s created provider state: %v", test.name, err)
+			}
+		})
+	}
+}
+
+func TestClaudeCLIHelpFastPathRunsOfficialHelpWithoutLoadingSidecar(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	runner.run = func(_ context.Context, args, env []string) error {
+		if !reflect.DeepEqual(args, []string{"--help"}) {
+			t.Fatalf("CLI help args: %#v", args)
+		}
+		if envContainsKey(env, "CLAUDE_CONFIG_DIR") {
+			t.Fatalf("CLI help should use neutral Claude env: %q", env)
+		}
+		return nil
+	}
+	if err := app.cmdClaude([]string{"cli", "missing-profile", "--help"}); err != nil {
+		t.Fatalf("CLI help fast path: %v", err)
+	}
+	if _, err := os.Stat(app.store.paths.MulticodexHome); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("CLI help mutated state: %v", err)
+	}
+}

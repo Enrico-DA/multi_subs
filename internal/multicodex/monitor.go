@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/olliecrow/multicodex/internal/monitor/tui"
-	"github.com/olliecrow/multicodex/internal/monitor/usage"
+	"github.com/Enrico-DA/multicodex/internal/monitor/tui"
+	"github.com/Enrico-DA/multicodex/internal/monitor/usage"
 	"golang.org/x/term"
 )
 

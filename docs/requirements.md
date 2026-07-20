@@ -18,6 +18,11 @@
 - User can run a monitor-specific read-only doctor check.
 - User can run dry-run previews for key operations.
 - User can install shell tab-completion for command names and profile names.
+- User can create and log into named Claude profiles without changing the default Claude account.
+- User can launch interactive Claude and headless `claude -p` through the same binary.
+- Claude Fable routing uses fresh official session, all-model weekly, and Fable usage.
+- Concurrent Claude workers reserve accounts so they do not all choose the same profile.
+- Multicodex never reads or writes Claude credential contents.
 
 ## UX requirements
 - Simple command names.
@@ -40,6 +45,8 @@
 - No dependence on API-key-only mode for core workflow.
 - Preserve regular Codex CLI behavior.
 - Profile-scoped Codex launches should inherit current global Codex config by default unless the user explicitly creates a per-profile override.
+- Compatible with official Claude subscription login and `CLAUDE_CONFIG_DIR` isolation.
+- Preserve all existing bare Codex commands; Claude behavior remains under a provider namespace.
 
 ## Constraints
 - No third-party credential services.

@@ -1,4 +1,4 @@
-module github.com/olliecrow/multicodex
+module github.com/Enrico-DA/multicodex
 
 go 1.25.0
 
