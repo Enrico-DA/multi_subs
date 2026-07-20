@@ -7,8 +7,10 @@ plan/
 **/.multicodex/profiles/
 **/multicodex/config.json
 **/multicodex/profiles/
+**/multicodex/providers/claude/
 .codex/
 **/auth.json
+**/.credentials.json
 **/*.token
 **/*.secret
 **/*.backup

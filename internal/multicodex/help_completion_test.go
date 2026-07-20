@@ -87,6 +87,9 @@ func TestCompletionCommandBash(t *testing.T) {
 	if !strings.Contains(out, "cli") {
 		t.Fatalf("expected cli command in completion output")
 	}
+	if !strings.Contains(out, `compgen -W "add login cli exec status usage doctor help"`) {
+		t.Fatalf("expected Claude subcommands in completion output")
+	}
 	if !strings.Contains(out, "__complete-profiles") {
 		t.Fatalf("expected dynamic profile completion helper")
 	}

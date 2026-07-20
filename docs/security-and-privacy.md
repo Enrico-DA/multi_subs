@@ -15,10 +15,16 @@
 - Zero secret data from logs and diagnostics by default.
 - Heartbeat output must never echo raw `codex exec` stdout or stderr on failures.
 - Profile-scoped Codex subprocesses must scrub inherited Codex/OpenAI account override environment variables before setting the selected profile `CODEX_HOME`.
+- Multicodex never reads, copies, writes, exports, or refreshes Claude credentials. Official Claude commands own login and token lifecycle.
+- Managed Claude subprocesses scrub inherited Claude/Anthropic account overrides before setting the selected `CLAUDE_CONFIG_DIR`.
+- The default Claude subprocess must receive no `CLAUDE_CONFIG_DIR`; an empty value is not equivalent.
+- Claude usage inspection uses the official local `/usage` command and never calls OAuth endpoints directly.
+- Claude usage probes disable session persistence, user/project settings, and MCP servers and run from a neutral directory.
 
 ## Repository safeguards
 - `.gitignore` must ignore local auth and profile state.
 - Recommended ignore coverage includes targeted current state paths: `**/multicodex/config.json` and `**/multicodex/profiles/`.
+- Claude provider sidecars and profile state under `**/multicodex/providers/claude/` are sensitive local state and must remain untracked.
 - Legacy `.multicodex/` state paths remain sensitive and should stay ignored.
 - Tests must use synthetic fixtures only.
 - Example files must never include real credentials.
@@ -37,3 +43,8 @@
 - The system default Codex account is managed by normal Codex tooling outside multicodex.
 - `multicodex exec` may run `codex exec` with the existing default Codex home as the final protected reserve account only when no configured profile has usable weekly usage. It must not mutate default auth state or expose default auth details.
 - Monitor defaults must stay profile-focused. Normal monitor usage may start profile-scoped read-only Codex app-server sessions only for validated multicodex profile homes. Default Codex home, active `CODEX_HOME`, filesystem discovery, and extra raw app-server checks require explicit monitor flags.
+- Multicodex must not change, restore, back up, symlink, or otherwise manage the shared default Claude auth account.
+- Managed Claude accounts live in private derived config directories. Profile paths, sidecars, and reservation files reject symlinks, hard links, unsafe permissions, and paths outside the provider tree.
+- Claude routing accepts only first-party Max auth with a stable organization ID and deduplicates profiles that spend the same organization quota.
+- Claude routing locks are keyed by a one-way hash of the organization ID and contain no credentials. The official child inherits the descriptor, so the lock remains held until that child exits even if the wrapper dies.
+- On file-backed platforms, managed `.credentials.json` metadata must be a private regular single-link file. Multicodex validates metadata only and never reads its contents.

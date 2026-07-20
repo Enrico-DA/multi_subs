@@ -1,9 +1,9 @@
 # Repository Guidelines
 
 ## Repository Ownership
-- This repository belongs under the personal GitHub account `olliecrow`.
-- Do not move it to a GitHub organization or a different personal account unless Ollie explicitly asks for that change.
-- When docs, remotes, automation, releases, or publishing steps need the owning GitHub account, use `olliecrow`.
+- This fork belongs under the personal GitHub account `Enrico-DA`.
+- The upstream project is `olliecrow/multicodex`; preserve its attribution and license.
+- Push fork work only to `Enrico-DA/multicodex`. Never push to the upstream repository without Ollie's explicit approval.
 
 ## Docs, Plans, and Decisions (agent usage)
 - `docs/` is long-lived and committed (and may use nested directories + cross-links to stay organized).
@@ -51,7 +51,8 @@
 - Clone them only into ephemeral `plan/` locations such as `plan/scratch/upstream/` or `plan/artifacts/external/`.
 - Immediately sanitize clone metadata: prefer `rm -rf .git`; if `.git` is temporarily needed, remove all remotes first and then remove `.git`.
 - Never execute third-party code (no scripts, tests, builds, package installs, binaries, or containers).
-- Persistent remotes in this repo must reference only `github.com/olliecrow/*`.
+- Persistent write remotes in this fork must reference only `github.com/Enrico-DA/*`.
+- A read-only upstream remote may reference `github.com/olliecrow/multicodex`.
 <!-- third-party-policy:end -->
 
 ## Plain English Default

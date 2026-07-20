@@ -313,9 +313,11 @@ func missingIgnorePatterns(content string) []string {
 		".multicodex/",
 		"**/multicodex/config.json",
 		"**/multicodex/profiles/",
+		"**/multicodex/providers/claude/",
 		"**/.multicodex/config.json",
 		"**/.multicodex/profiles/",
 		"**/auth.json",
+		"**/.credentials.json",
 		".env",
 		".env.*",
 	}
@@ -366,6 +368,8 @@ func isSensitiveTrackedPath(p string) bool {
 		".multicodex/config.json",
 		"github.com/olliecrow/multicodex/config.json",
 		"github.com/olliecrow/.multicodex/config.json",
+		"github.com/enrico-da/multicodex/config.json",
+		"github.com/enrico-da/.multicodex/config.json",
 	}) || strings.Contains(clean, "/multicodex/config.json") || strings.Contains(clean, "/.multicodex/config.json") {
 		return true
 	}
@@ -374,13 +378,18 @@ func isSensitiveTrackedPath(p string) bool {
 		".multicodex/profiles/",
 		"github.com/olliecrow/multicodex/profiles/",
 		"github.com/olliecrow/.multicodex/profiles/",
+		"github.com/enrico-da/multicodex/profiles/",
+		"github.com/enrico-da/.multicodex/profiles/",
 	}) || strings.Contains(clean, "/multicodex/profiles/") || strings.Contains(clean, "/.multicodex/profiles/") {
+		return true
+	}
+	if strings.Contains(clean, "/multicodex/providers/claude/") || strings.HasPrefix(clean, "multicodex/providers/claude/") {
 		return true
 	}
 	if strings.Contains(clean, "/.codex/") || strings.HasPrefix(clean, ".codex/") {
 		return true
 	}
-	if base == "auth.json" {
+	if base == "auth.json" || base == ".credentials.json" {
 		return true
 	}
 	if base == ".env" {

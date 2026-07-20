@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/olliecrow/multicodex/internal/monitor/usage"
+	"github.com/Enrico-DA/multicodex/internal/monitor/usage"
 )
 
 func TestWeeklyAccountCardShowsDefaultSparkAndExactReset(t *testing.T) {

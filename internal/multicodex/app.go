@@ -14,7 +14,8 @@ import (
 
 // App wires command handlers with persistent config.
 type App struct {
-	store *Store
+	store        *Store
+	claudeRunner claudeCommandRunner
 }
 
 func NewApp() (*App, error) {
@@ -38,13 +39,16 @@ func newApp(readOnly bool) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{store: NewStore(paths)}, nil
+	return &App{store: NewStore(paths), claudeRunner: osClaudeCommandRunner{}}, nil
 }
 
 func RunCLI(args []string) error {
 	if len(args) == 0 {
 		printHelp()
 		return nil
+	}
+	if args[0] == "claude" {
+		return runClaudeCLI(args[1:])
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
@@ -136,6 +140,8 @@ func (a *App) Run(args []string) error {
 		return a.cmdDoctor(args[1:])
 	case "dry-run":
 		return a.cmdDryRun(args[1:])
+	case "claude":
+		return a.cmdClaude(args[1:])
 	default:
 		return &ExitError{Code: 2, Message: fmt.Sprintf("unknown command: %s\nrun \"multicodex help\" for available commands", args[0])}
 	}

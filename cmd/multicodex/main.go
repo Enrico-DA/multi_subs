@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/olliecrow/multicodex/internal/multicodex"
+	"github.com/Enrico-DA/multicodex/internal/multicodex"
 )
 
 func main() {

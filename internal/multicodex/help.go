@@ -16,6 +16,7 @@ var commandSummaries = []struct {
 	Name    string
 	Summary string
 }{
+	{Name: "claude <command>", Summary: "manage and route isolated Claude accounts"},
 	{Name: "init", Summary: "initialize multicodex local state"},
 	{Name: "add <name>", Summary: "add a named account profile"},
 	{Name: "login <name> [codex login args]", Summary: "login profile using official codex flow"},
@@ -36,6 +37,43 @@ var commandSummaries = []struct {
 }
 
 var commandHelpByName = map[string]commandHelp{
+	"claude": {
+		Usage:       "multicodex claude <command> [args]",
+		Description: "Manage isolated Claude profiles and route Claude print-mode work while keeping the normal Claude account as a protected reserve.",
+		Examples: []string{
+			"multicodex claude add work",
+			"multicodex claude status",
+			`multicodex claude exec "Summarize this repository."`,
+		},
+	},
+	"claude add": {
+		Usage:       "multicodex claude add <name>",
+		Description: "Create a managed Claude profile with a private, derived CLAUDE_CONFIG_DIR and register it in the Claude v1 sidecar.",
+	},
+	"claude login": {
+		Usage:       "multicodex claude login <name> [claude auth login args]",
+		Description: "Run official `claude auth login --claudeai` for one managed profile. Extra arguments such as `--email` pass through. Multicodex does not read or copy Claude credentials.",
+	},
+	"claude cli": {
+		Usage:       "multicodex claude cli <name|default> [claude args...]",
+		Description: "Run the official interactive Claude CLI with the chosen account. The built-in default target runs with CLAUDE_CONFIG_DIR absent.",
+	},
+	"claude exec": {
+		Usage:       "multicodex claude exec [claude -p args...]",
+		Description: "Run official `claude -p` after fresh profile-scoped usage checks. Managed profiles rank by their worst applicable usage percentage; default is used only when no managed profile is quota-eligible.",
+	},
+	"claude status": {
+		Usage:       "multicodex claude status",
+		Description: "Call official `claude auth status --json` for the default account and every managed profile, then show identity and authentication state.",
+	},
+	"claude usage": {
+		Usage:       "multicodex claude usage",
+		Description: "Call the free profile-scoped `/usage` command and report session, weekly all-model, and Fable limits and reset text.",
+	},
+	"claude doctor": {
+		Usage:       "multicodex claude doctor",
+		Description: "Run read-only Claude binary, sidecar, profile-path, and authentication checks.",
+	},
 	"init": {
 		Usage:       "multicodex init",
 		Description: "Create local multicodex metadata directories and config. This does not change your default Codex session.",
@@ -186,6 +224,7 @@ func printHelp() {
 	}
 	fmt.Println()
 	fmt.Println("Examples:")
+	fmt.Println("  multicodex claude status")
 	fmt.Println("  multicodex init")
 	fmt.Println("  multicodex add personal")
 	fmt.Println("  multicodex cli personal")
@@ -197,7 +236,57 @@ func printHelp() {
 	fmt.Println("  multicodex help <command> [subcommand]")
 	fmt.Println()
 	fmt.Println("Notes:")
-	fmt.Println("  - commands are profile-local and do not change shared default auth")
+	fmt.Println("  - bare commands continue to manage Codex profiles")
+	fmt.Println("  - provider commands are isolated and do not copy credentials")
+}
+
+func printClaudeHelp() {
+	fmt.Println("multicodex claude")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  multicodex claude <command> [args]")
+	fmt.Println()
+	fmt.Println("Commands:")
+	for _, item := range []struct {
+		name    string
+		summary string
+	}{
+		{"add <name>", "add a managed Claude profile"},
+		{"login <name>", "run the official Claude.ai login flow"},
+		{"cli <name|default> [claude args...]", "run the official interactive Claude CLI"},
+		{"exec [claude -p args...]", "route official Claude print mode by fresh usage"},
+		{"status", "show auth status for default and managed profiles"},
+		{"usage", "show session, weekly, and Fable usage"},
+		{"doctor", "run read-only Claude provider checks"},
+		{"help [command]", "show Claude namespace help"},
+	} {
+		fmt.Printf("  %-39s %s\n", item.name, item.summary)
+	}
+	fmt.Println()
+	fmt.Println("The default target is a protected reserve and always runs with CLAUDE_CONFIG_DIR absent.")
+}
+
+func printClaudeCommandHelp(command string) error {
+	name := "claude " + strings.TrimSpace(strings.ToLower(command))
+	topic, ok := commandHelpByName[name]
+	if !ok {
+		return &ExitError{Code: 2, Message: fmt.Sprintf("unknown Claude help topic: %s", command)}
+	}
+	fmt.Println("multicodex", name)
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Printf("  %s\n", topic.Usage)
+	fmt.Println()
+	fmt.Println("Description:")
+	fmt.Printf("  %s\n", topic.Description)
+	if len(topic.Examples) > 0 {
+		fmt.Println()
+		fmt.Println("Examples:")
+		for _, example := range topic.Examples {
+			fmt.Printf("  %s\n", example)
+		}
+	}
+	return nil
 }
 
 func (a *App) cmdHelp(args []string) error {

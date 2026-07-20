@@ -353,15 +353,15 @@ Enforcement:
 References:
 `docs/workflows.md`, `AGENTS.md`
 
-Decision: Treat this repository as belonging under the personal GitHub account `olliecrow`.
+Decision: Treat this fork as belonging under `Enrico-DA`, with `olliecrow/multicodex` as its attributed upstream.
 Context:
 Work in this workspace can span personal GitHub accounts and organization-owned repositories. A repo-level ownership note keeps docs, remotes, automation, releases, and publishing steps pointed at the right account.
 Rationale:
-A clear owner account rule cuts down avoidable confusion and keeps future repo work tied to the right GitHub home.
+A clear fork owner and upstream boundary prevents accidental writes to upstream while preserving attribution.
 Trade-offs:
 If this repository ever moves to a different owner, this note must be updated in the same change.
 Enforcement:
-`AGENTS.md` and any repo docs, remotes, automation, release, or publishing steps that need the owning GitHub account should point to `olliecrow` unless Ollie explicitly changes that ownership decision.
+`AGENTS.md`, module/install docs, releases, and publishing steps point to `Enrico-DA`; an upstream remote may remain read-only and no automation writes to it.
 References:
 `AGENTS.md`
 
@@ -376,3 +376,15 @@ Enforcement:
 `cmdCLI` repairs the profile home, checks file-backed auth, and launches Codex with the selected profile's `CODEX_HOME`. Tests run two profile-scoped CLI sessions at the same time and assert goal-related state lands in each profile home, not the shared default Codex home.
 References:
 `internal/multicodex/cli.go`, `internal/multicodex/cli_test.go`, `README.md`, `docs/command-spec.md`
+
+Decision: Add Claude as a provider-specific namespace with official-CLI-only auth and usage.
+Context:
+Cursor needs to launch Fable workers across several Claude Max subscriptions while keeping existing Codex behavior stable.
+Rationale:
+`CLAUDE_CONFIG_DIR` isolates managed accounts, and official `claude -p --output-format json /usage` exposes profile-scoped session, weekly, and Fable limits without reading tokens. A separate sidecar prevents old Codex-only binaries from erasing Claude profiles.
+Trade-offs:
+Claude usage parsing depends on the supported official CLI text contract. The default Claude account is a reserve rather than a managed profile, and concurrent eligible workers may return busy instead of spending it.
+Enforcement:
+Bare commands remain Codex commands. `multicodex claude` derives managed paths under the Claude provider tree, scrubs inherited account overrides, requires and deduplicates first-party Max organization identities, uses isolated non-persistent usage probes, and gives the official child an organization lock that survives wrapper death. It never reads or writes Claude credentials. Unit tests use fake CLI output; a live acceptance test covers two Max accounts and Fable execution.
+References:
+`internal/multicodex/claude*.go`, `README.md`, `docs/command-spec.md`, `docs/security-and-privacy.md`

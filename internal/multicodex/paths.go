@@ -9,10 +9,14 @@ import (
 
 // Paths centralizes filesystem locations used by multicodex.
 type Paths struct {
-	MulticodexHome   string
-	ConfigPath       string
-	ProfilesDir      string
-	DefaultCodexHome string
+	MulticodexHome    string
+	ConfigPath        string
+	ProfilesDir       string
+	DefaultCodexHome  string
+	ClaudeProviderDir string
+	ClaudeConfigPath  string
+	ClaudeProfilesDir string
+	ClaudeRunDir      string
 }
 
 func ResolvePaths() (Paths, error) {
@@ -45,11 +49,16 @@ func resolvePaths() (Paths, error) {
 		multicodexHome = defaultMulticodexHome
 	}
 
+	claudeProviderDir := filepath.Join(multicodexHome, "providers", "claude")
 	return Paths{
-		MulticodexHome:   multicodexHome,
-		ConfigPath:       filepath.Join(multicodexHome, "config.json"),
-		ProfilesDir:      filepath.Join(multicodexHome, "profiles"),
-		DefaultCodexHome: defaultCodexHome,
+		MulticodexHome:    multicodexHome,
+		ConfigPath:        filepath.Join(multicodexHome, "config.json"),
+		ProfilesDir:       filepath.Join(multicodexHome, "profiles"),
+		DefaultCodexHome:  defaultCodexHome,
+		ClaudeProviderDir: claudeProviderDir,
+		ClaudeConfigPath:  filepath.Join(claudeProviderDir, "config.json"),
+		ClaudeProfilesDir: filepath.Join(claudeProviderDir, "profiles"),
+		ClaudeRunDir:      filepath.Join(claudeProviderDir, "run"),
 	}, nil
 }
 
