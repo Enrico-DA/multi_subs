@@ -19,8 +19,16 @@
 - `multicodex completion <bash|zsh|fish>`
 - `multicodex help [command [subcommand]]`
 - `multicodex version` and `multicodex --version`
+- `multicodex claude add <name>`
+- `multicodex claude login <name> [claude auth login args]`
+- `multicodex claude cli <name|default> [claude args...]`
+- `multicodex claude exec [claude -p args...]`
+- `multicodex claude status`
+- `multicodex claude usage`
+- `multicodex claude doctor`
+- `multicodex claude help [command]`
 
-Multicodex intentionally has no command for changing the shared default Codex account.
+Multicodex intentionally has no command for changing either shared default account.
 
 ## Behavior Contract
 
@@ -145,6 +153,60 @@ Multicodex intentionally has no command for changing the shared default Codex ac
 `multicodex help [command [subcommand]]`
 - Prints global help when no topic is provided.
 - Prints command-specific usage, description, and examples for one topic, including nested monitor topics.
+
+## Claude Provider Contract
+
+Bare commands remain Codex commands. Claude support is isolated under `multicodex claude`.
+
+`multicodex claude add <name>`
+- Creates a private, derived config directory under `MULTICODEX_HOME/providers/claude/profiles`.
+- Records metadata in a separate versioned sidecar. It never changes the legacy Codex registry.
+- Reserves `default` for the unmanaged system Claude account.
+
+`multicodex claude login <name> [claude auth login args]`
+- Runs official `claude auth login --claudeai` with the managed profile's `CLAUDE_CONFIG_DIR`.
+- Passes extra official login arguments such as `--email` through after the required subscription-login flag.
+- Never reads, copies, stores, or refreshes Claude credentials itself.
+
+`multicodex claude cli <name|default> [claude args...]`
+- Runs the official interactive Claude CLI.
+- Managed profiles receive exactly one validated `CLAUDE_CONFIG_DIR`.
+- The default target receives no `CLAUDE_CONFIG_DIR`.
+- Preserves the child exit code.
+
+`multicodex claude status`
+- Calls official `claude auth status --json` for the default account and every managed profile.
+- Reports per-target login state and identity without reading credential contents.
+- Does not create provider state.
+
+`multicodex claude usage`
+- Calls official `claude -p --output-format json /usage` for every target.
+- Disables session persistence, user/project settings, and MCP servers for the probe and runs it from a neutral directory.
+- Parses only the top-level `result` text for session, all-model weekly, and Fable usage.
+- Treats missing Fable usage as unavailable while keeping the core windows usable.
+- Does not create provider state or send a model request.
+
+`multicodex claude exec [claude -p args...]`
+- Passes all remaining arguments unchanged after adding only the official `-p` mode.
+- Fetches fresh official usage for every managed profile before selection.
+- For non-Fable work, requires session and all-model weekly usage below 100%.
+- For explicit Fable work, also requires Fable weekly usage below 100%.
+- Treats an omitted or unknown effective model conservatively as Fable-capable; also recognizes fallback and environment model selection.
+- Requires first-party Claude Max auth with an organization ID and deduplicates profiles by organization, including the default reserve.
+- Ranks eligible profiles by their highest applicable percentage, then profile name.
+- Holds an organization-qualified, non-blocking file reservation until the child exits. The official child inherits the lock descriptor so wrapper death does not release the account early.
+- Tries another eligible managed profile when the preferred one is busy.
+- Returns a busy error when all quota-eligible managed profiles are busy; it does not spend the default reserve in that case.
+- Uses the protected default account only when no managed profile is quota-eligible.
+- Never retries on another account after child execution starts.
+
+`multicodex claude doctor`
+- Checks the official binary, sidecar integrity, managed path safety, and profile auth state.
+- Fails when two targets resolve to the same Claude organization.
+- Reports warnings for profiles that need login and fails on unsafe local state.
+- Does not create provider state.
+
+Claude subprocesses scrub inherited Claude/Anthropic auth and routing overrides before launch. Unsafe sidecars, paths, permissions, symlinks, hard links, or reservation files fail closed.
 
 ## Error Handling
 

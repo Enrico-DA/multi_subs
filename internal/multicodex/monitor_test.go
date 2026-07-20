@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/olliecrow/multicodex/internal/monitor/usage"
+	"github.com/Enrico-DA/multicodex/internal/monitor/usage"
 )
 
 func TestMonitorHelpIncludesDoctorAndTerminalUserInterfaceText(t *testing.T) {
