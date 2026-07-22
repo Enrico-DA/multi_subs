@@ -8,6 +8,49 @@ import (
 	"testing"
 )
 
+func TestCheckSourceFetchReportsUnavailableWeeklyWindow(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		weekly WindowSummary
+		want   string
+	}{
+		{
+			name:   "available",
+			weekly: WindowSummary{UsedPercent: 24},
+			want:   "plan=pro weekly=24% source=app-server",
+		},
+		{
+			name:   "unavailable",
+			weekly: unavailableWindowSummary(),
+			want:   "plan=pro weekly=unavailable source=app-server",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			check := checkSourceFetch(context.Background(), MonitorAccount{Label: "personal"}, &fakeSource{
+				name: "app-server",
+				out: &Summary{
+					PlanType:     "pro",
+					Source:       "app-server",
+					WeeklyWindow: tc.weekly,
+				},
+			})
+
+			if !check.OK {
+				t.Fatalf("expected successful check, got %q", check.Details)
+			}
+			if check.Details != tc.want {
+				t.Fatalf("Details = %q, want %q", check.Details, tc.want)
+			}
+		})
+	}
+}
+
 func TestDoctorReportStatus(t *testing.T) {
 	t.Parallel()
 
