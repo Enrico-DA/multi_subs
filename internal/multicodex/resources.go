@@ -349,6 +349,9 @@ func (s *Store) validateProfileResourceDestinations(codexHome string, policy *Pr
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
+		if entry.Name() == ".system" {
+			continue
+		}
 		if policy.Skills != nil && !isInheritableSkillName(strings.TrimSpace(entry.Name())) {
 			continue
 		}
