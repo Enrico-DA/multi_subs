@@ -29,9 +29,9 @@ var (
 )
 
 func fetchClaudeUsage(ctx context.Context, runner claudeCommandRunner, configDir string) (claudeUsage, error) {
-	stdout, stderr, err := runner.Capture(ctx, claudeUsageProbeArgs(), claudeEnv(os.Environ(), configDir))
+	stdout, _, err := runner.Capture(ctx, claudeUsageProbeArgs(), claudeEnv(os.Environ(), configDir))
 	if err != nil {
-		return claudeUsage{}, fmt.Errorf("Claude usage command failed: %s", claudeProbeFailure(ctx, err, stderr))
+		return claudeUsage{}, fmt.Errorf("Claude usage command failed: %s", claudeProbeFailure(ctx, err))
 	}
 	usage, err := parseClaudeUsageEnvelope(stdout)
 	if err != nil {

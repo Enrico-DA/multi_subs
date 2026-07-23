@@ -8,9 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
 
 const (
@@ -46,6 +47,7 @@ type MonitorAccountOptions struct {
 }
 
 type multicodexConfigFile struct {
+	Version  int `json:"version"`
 	Profiles map[string]struct {
 		Name      string `json:"name"`
 		CodexHome string `json:"codex_home"`
@@ -53,7 +55,7 @@ type multicodexConfigFile struct {
 }
 
 func loadMonitorAccounts() ([]MonitorAccount, string, error) {
-	return loadMonitorAccountsWithOptions(MonitorAccountOptions{})
+	return loadMonitorAccountsWithOptions(MonitorAccountOptions{IncludeDefault: true})
 }
 
 func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAccount, string, error) {
@@ -64,7 +66,7 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 		if err != nil {
 			return nil, "", err
 		}
-		collector.add("default", defaultHome, 50, false, false)
+		collector.add("global", defaultHome, 50, false, false)
 	}
 
 	if options.IncludeActive {
@@ -160,6 +162,9 @@ func loadAccountsFromMulticodexConfig() ([]MonitorAccount, string, error) {
 	var raw multicodexConfigFile
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, "", fmt.Errorf("decode multicodex config %s: %w", configPath, err)
+	}
+	if raw.Version != 0 && raw.Version != 1 {
+		return nil, "", fmt.Errorf("unsupported multicodex config version %d; expected 1", raw.Version)
 	}
 	if len(raw.Profiles) == 0 {
 		return nil, "", nil
@@ -322,103 +327,11 @@ func monitorConfigFileUsesFileStore(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read profile config: %w", err)
 	}
-	multilineDelimiter := ""
-	for _, rawLine := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(monitorStripTOMLComment(rawLine))
-		if line == "" {
-			continue
-		}
-		if multilineDelimiter != "" {
-			if strings.Contains(line, multilineDelimiter) {
-				multilineDelimiter = ""
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			return false, nil
-		}
-		assignIdx := monitorIndexTOMLUnquotedByte(line, '=')
-		if assignIdx == -1 || monitorTOMLKey(strings.TrimSpace(line[:assignIdx])) != "cli_auth_credentials_store" {
-			if assignIdx != -1 {
-				value := strings.TrimSpace(line[assignIdx+1:])
-				if strings.HasPrefix(value, `"""`) && strings.Count(value, `"""`)%2 == 1 {
-					multilineDelimiter = `"""`
-				} else if strings.HasPrefix(value, `'''`) && strings.Count(value, `'''`)%2 == 1 {
-					multilineDelimiter = `'''`
-				}
-			}
-			continue
-		}
-		value, ok := monitorTOMLStringValue(strings.TrimSpace(line[assignIdx+1:]))
-		if !ok {
-			return false, nil
-		}
-		return value == "file", nil
+	store, found, err := codexstate.CredentialStoreFromTOML(string(data))
+	if err != nil {
+		return false, fmt.Errorf("parse profile config: %w", err)
 	}
-	return false, nil
-}
-
-func monitorTOMLKey(raw string) string {
-	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		unquoted, err := strconv.Unquote(raw)
-		if err == nil {
-			return unquoted
-		}
-	}
-	if len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'' {
-		return raw[1 : len(raw)-1]
-	}
-	return raw
-}
-
-func monitorTOMLStringValue(raw string) (string, bool) {
-	if len(raw) < 2 {
-		return "", false
-	}
-	if raw[0] == '"' && raw[len(raw)-1] == '"' {
-		unquoted, err := strconv.Unquote(raw)
-		if err != nil {
-			return "", false
-		}
-		return unquoted, true
-	}
-	if raw[0] == '\'' && raw[len(raw)-1] == '\'' {
-		return raw[1 : len(raw)-1], true
-	}
-	return "", false
-}
-
-func monitorIndexTOMLUnquotedByte(s string, needle byte) int {
-	inDouble := false
-	inSingle := false
-	escaped := false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case escaped:
-			escaped = false
-		case inDouble:
-			if ch == '\\' {
-				escaped = true
-			} else if ch == '"' {
-				inDouble = false
-			}
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		default:
-			switch ch {
-			case '"':
-				inDouble = true
-			case '\'':
-				inSingle = true
-			case needle:
-				return i
-			}
-		}
-	}
-	return -1
+	return found && store == "file", nil
 }
 
 func monitorResolveExistingPath(path string) (string, error) {
@@ -440,39 +353,6 @@ func isMulticodexProfileHome(home string) bool {
 		return false
 	}
 	return strings.HasSuffix(rel, string(os.PathSeparator)+"codex-home")
-}
-
-func monitorStripTOMLComment(line string) string {
-	inDouble := false
-	inSingle := false
-	escaped := false
-	for i := 0; i < len(line); i++ {
-		ch := line[i]
-		switch {
-		case escaped:
-			escaped = false
-		case inDouble:
-			if ch == '\\' {
-				escaped = true
-			} else if ch == '"' {
-				inDouble = false
-			}
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		default:
-			switch ch {
-			case '"':
-				inDouble = true
-			case '\'':
-				inSingle = true
-			case '#':
-				return line[:i]
-			}
-		}
-	}
-	return line
 }
 
 func loadAccountsFromFile() ([]MonitorAccount, string, error) {
@@ -498,6 +378,9 @@ func loadAccountsFromFile() ([]MonitorAccount, string, error) {
 	var raw accountFile
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, "", fmt.Errorf("decode accounts file %s: %w", accountsPath, err)
+	}
+	if raw.Version != 0 && raw.Version != 1 {
+		return nil, "", fmt.Errorf("unsupported accounts file version %d; expected 1", raw.Version)
 	}
 	if len(raw.Accounts) == 0 {
 		return nil, fmt.Sprintf("accounts file %s is empty", accountsPath), nil
@@ -649,7 +532,7 @@ func labelForDiscoveredHome(codexHome string) string {
 		}
 	case strings.HasPrefix(base, ".codex"):
 		if base == ".codex" {
-			return "default"
+			return "global"
 		}
 		return safeLabel(strings.TrimPrefix(base, "."))
 	}
@@ -783,11 +666,7 @@ func resolveAccountsFilePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defaultPath := filepath.Join(dir, defaultAccountsFileName)
-	if fileExists(defaultPath) {
-		return defaultPath, nil
-	}
-	return defaultPath, nil
+	return filepath.Join(dir, defaultAccountsFileName), nil
 }
 
 func monitorDataDir() (string, error) {
@@ -796,14 +675,6 @@ func monitorDataDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(multicodexHome, defaultMonitorSubdirName), nil
-}
-
-func EnsureMonitorDataDir() error {
-	dir, err := monitorDataDir()
-	if err != nil {
-		return err
-	}
-	return os.MkdirAll(dir, 0o700)
 }
 
 func defaultCodexHome() (string, error) {

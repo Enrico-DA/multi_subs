@@ -9,6 +9,7 @@
 - `multicodex cli <name> [codex args...]`
 - `multicodex exec [codex exec args]`
 - `multicodex status`
+- `multicodex reconcile`
 - `multicodex heartbeat`
 - `multicodex monitor [flags]`
 - `multicodex monitor tui [flags]`
@@ -41,8 +42,9 @@ Multicodex intentionally has no command for changing either shared default accou
 - Registers a named profile.
 - Creates a profile-local `CODEX_HOME` with private permissions.
 - Defaults profile `config.toml` to a symlink to the default Codex `config.toml`.
-- Fills in missing top-level profile skill entries with symlinks to the default Codex skills tree.
-- Leaves manual profile-local config files and manual top-level skill overrides in place.
+- Applies the configured profile resource policy before saving the profile.
+- With no `profile_resources` block, fills in missing portable top-level profile skill entries from the default Codex skills tree and leaves guidance untouched. Runtime-managed `.system` content stays profile-local.
+- Leaves regular profile-local config, guidance, and skill overrides in place.
 
 `multicodex login <name> [codex login args]`
 - Runs official `codex login` in the selected profile context.
@@ -86,6 +88,15 @@ Multicodex intentionally has no command for changing either shared default accou
 `multicodex status`
 - Shows all profiles and each profile login status.
 - Does not manage or inspect the default Codex account as a multicodex profile.
+- Remains auth-only: it does not validate, reconcile, or claim readiness for configured profile resources.
+
+`multicodex reconcile`
+- Reconciles managed setup, guidance, and skill resources for every registered profile in sorted order.
+- Uses the same profile path, permission, config, and no-clobber rules as profile-scoped commands.
+- May create missing profile directories, repair multicodex-generated `config.toml` state, and create, retarget, or remove multicodex-owned resource links.
+- Preserves regular profile guidance, config, auth, and skill overrides.
+- Does not inspect auth, launch Codex, create Codex sessions, or change the default Codex home.
+- Continues through independent profile failures, reports every failure, and exits non-zero if any profile fails.
 
 `multicodex heartbeat`
 - Runs `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello` for each logged-in profile.
@@ -104,8 +115,9 @@ Multicodex intentionally has no command for changing either shared default accou
 - Runs a live terminal UI for Codex subscription usage.
 - Defaults to the integrated monitor UI when no monitor subcommand is provided.
 - Defaults both poll interval and per-poll fetch timeout to 60 seconds.
-- By default, builds account candidates only from monitor-owned account overrides and configured multicodex profiles.
-- Supports opt-in account sources with `--include-default`, `--include-active`, and `--discover`.
+- By default, builds account candidates from the global Codex home, monitor-owned account overrides, and configured multicodex profiles.
+- Labels the global Codex home `global` and accepts `--include-default=false` to omit it for one run.
+- Supports opt-in account sources with `--include-active` and `--discover`.
 - Uses Codex app-server usage fetches for validated multicodex profile homes, with direct OAuth as fallback.
 - Uses direct OAuth for other monitor account homes unless they dedupe with a validated profile home.
 - Extracts official weekly windows by their declared 10,080-minute duration, with a narrow older-response fallback that treats an undeclared secondary window as weekly.
@@ -126,9 +138,10 @@ Multicodex intentionally has no command for changing either shared default accou
 `multicodex monitor doctor`
 - Runs read-only monitor setup and source checks.
 - Supports JSON output.
-- Checks configured monitor accounts and configured multicodex profiles by default.
+- Reports successful source checks as `plan=<plan> weekly=<used>% source=<source>`, using `weekly=unavailable` when the provider supplies no weekly window.
+- Checks the global Codex home, configured monitor accounts, and configured multicodex profiles by default.
 - Uses the normal source policy by default: app-server first for validated profile homes, direct OAuth for other homes.
-- Adds default Codex home, active `CODEX_HOME`, filesystem discovery, or raw app-server checks only when the caller passes `--include-default`, `--include-active`, `--discover`, or `--app-server`.
+- Accepts `--include-default=false` to omit the global Codex home, and adds active `CODEX_HOME`, filesystem discovery, or raw app-server checks only when the caller passes `--include-active`, `--discover`, or `--app-server`.
 - Exits success when at least one usage fetch works and fails when no usage fetch works.
 - Reports degraded status when at least one usage fetch works but another usage fetch or setup check fails.
 
@@ -141,10 +154,24 @@ Multicodex intentionally has no command for changing either shared default accou
 - Reports `ok`, `warn`, and `fail` checks with a final pass or fail summary.
 - Supports JSON output.
 - Includes repository leak-guard checks for auth homes in git worktrees, recommended ignore patterns, and tracked sensitive-looking files.
+- Resolves and validates configured profile resource sources without reconciling profile files.
 
 `multicodex dry-run`
 - Prints planned operations without executing commands or mutating files.
 - Supports an operation-specific preview for `login <name>`.
+- Resolves configured profile resource paths and shows the effective policy and planned reconciliation.
+
+## Profile Resource Reconciliation
+
+- `profile_resources` is an optional version-1 config block. Its omission preserves the established guidance no-op and strict default-skill reconciliation exactly.
+- Present `guidance` and `skills` objects require a boolean `inherit`. Unknown keys inside the resource block are errors; unrelated top-level config keys remain permissive.
+- Guidance uses one source directory and manages only `AGENTS.md` and `AGENTS.override.md`. Either regular profile file overrides the whole inherited pair.
+- Skills use ordered source directories with first-source-wins merging. Sources that overlap multicodex-owned state or the default Codex home are rejected, except for the canonical default Codex skills directory. Inherited top-level entries must resolve to skill directories. Runtime-managed `.system` content is excluded from both inheritance and reconciliation, and regular top-level profile entries override inherited entries.
+- Explicit resource management owns symlinks at its managed profile positions, including pre-existing symlinks, except for `.system`. It may retarget or remove owned links and reports old targets. Regular files and directories are preserved.
+- `inherit: false` removes managed symlinks. Populated source fields are invalid in this mode.
+- `~` expands to the user home. Relative paths resolve from the config file directory. Custom source directories must exist and pass boundary and entry-type validation before reconciliation starts.
+- `add`, `login`, `login-all`, `cli`, `exec`, and `heartbeat` reconcile resources before a profile-scoped Codex launch. `reconcile` applies the same managed profile state to all profiles without launching Codex. `doctor`, `dry-run`, `status`, and `monitor` do not mutate profile resources.
+- Resource changes use normal command output, except `exec` writes them to standard error so Codex's standard output remains safe for scripts.
 
 `multicodex completion <shell>`
 - Prints tab-completion script for bash, zsh, or fish.
@@ -152,7 +179,10 @@ Multicodex intentionally has no command for changing either shared default accou
 
 `multicodex help [command [subcommand]]`
 - Prints global help when no topic is provided.
-- Prints command-specific usage, description, and examples for one topic, including nested monitor topics.
+- Prints command-specific usage, description, and examples for one topic, including nested Claude and monitor topics.
+
+`multicodex version`
+- Prints the build version on one line. Tagged release binaries report their tag; untagged source builds report a development version.
 
 ## Claude Provider Contract
 
@@ -206,12 +236,18 @@ Bare commands remain Codex commands. Claude support is isolated under `multicode
 - Reports warnings for profiles that need login and fails on unsafe local state.
 - Does not create provider state.
 
+`multicodex claude help [command]`
+- Prints Claude namespace help or command-specific Claude help.
+- Does not create provider state.
+
 Claude subprocesses scrub inherited Claude/Anthropic auth and routing overrides before launch. Unsafe sidecars, paths, permissions, symlinks, hard links, or reservation files fail closed.
 
 ## Error Handling
 
 - Fail fast with actionable messages.
+- Reject undocumented positional arguments with exit code `2` instead of silently ignoring them.
 - Never dump secret content in errors.
+- External failures report safe status or exit codes and allowlisted recovery guidance, not raw provider bodies, app-server messages, or subprocess failure output.
 - Use deterministic exit codes where practical.
 
 ## Profile Naming

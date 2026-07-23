@@ -20,7 +20,7 @@ type claudeAuthStatus struct {
 }
 
 func fetchClaudeAuthStatus(ctx context.Context, runner claudeCommandRunner, configDir string) (claudeAuthStatus, error) {
-	stdout, stderr, err := runner.Capture(ctx, []string{"auth", "status", "--json"}, claudeEnv(os.Environ(), configDir))
+	stdout, _, err := runner.Capture(ctx, []string{"auth", "status", "--json"}, claudeEnv(os.Environ(), configDir))
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
@@ -29,7 +29,7 @@ func fetchClaudeAuthStatus(ctx context.Context, runner claudeCommandRunner, conf
 				return status, nil
 			}
 		}
-		return claudeAuthStatus{}, fmt.Errorf("Claude auth status failed: %s", claudeProbeFailure(ctx, err, stderr))
+		return claudeAuthStatus{}, fmt.Errorf("Claude auth status failed: %s", claudeProbeFailure(ctx, err))
 	}
 	status, err := parseClaudeAuthStatus(stdout)
 	if err != nil {

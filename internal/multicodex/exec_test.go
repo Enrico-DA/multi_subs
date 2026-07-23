@@ -46,6 +46,40 @@ func TestCmdExecRunsCodexExecWithSelectedProfile(t *testing.T) {
 	}
 }
 
+func TestCmdExecPreservesCustomResourcePolicyThroughSelection(t *testing.T) {
+	app, _ := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	source := filepath.Join(t.TempDir(), "skills")
+	if err := os.MkdirAll(filepath.Join(source, "custom-skill"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := app.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inherit := true
+	sources := []string{source}
+	cfg.ProfileResources = &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
+	if err := app.store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error) {
+		return usage.SelectedAccount{Account: usage.MonitorAccount{Label: "alpha"}}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+	out, err := captureStdout(t, func() error { return app.Run([]string{"exec", "hello"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "profile resource:") {
+		t.Fatalf("resource reporting polluted exec stdout: %q", out)
+	}
+	profile := cfg.Profiles["alpha"]
+	assertLinkTarget(t, filepath.Join(profile.CodexHome, "skills", "custom-skill"), filepath.Join(source, "custom-skill"))
+}
+
 func TestCmdExecRunsCodexExecWithDefaultReserveAccount(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
@@ -968,7 +1002,7 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}" == "untrusted" && "${5:-}" == "app-server" ]]; then
-  python3 -c '
+  exec python3 -c '
 import json
 import os
 import sys
