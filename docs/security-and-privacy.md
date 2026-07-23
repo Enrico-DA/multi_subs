@@ -15,7 +15,7 @@
 - Zero secret data from logs and diagnostics by default.
 - User-visible diagnostics must never echo raw provider response bodies, app-server error messages, or Codex subprocess failure output. Preserve only safe status codes and allowlisted recovery guidance.
 - Profile-scoped Codex subprocesses must scrub inherited Codex/OpenAI account override environment variables before setting the selected profile `CODEX_HOME`.
-- Every managed-profile Codex child must receive `-c 'cli_auth_credentials_store="file"'` as the final CLI override before standalone `--`. User config and profile arguments remain present but cannot override this enforced credential store. Default-account exec and exact exec-help delegation must not receive it.
+- Every managed-profile Codex child must receive `-c 'cli_auth_credentials_store="file"'` as the final CLI override before standalone `--`. This includes monitor app-server sessions only when `MonitorAccount.UseAppServer` records a validated multicodex profile. User config and profile arguments remain present but cannot override this enforced credential store. Default-account exec, exact exec-help delegation, and explicit raw app-server diagnostics must not receive it.
 - Multicodex never reads, copies, writes, exports, or refreshes Claude credentials. Official Claude commands own login and token lifecycle.
 - Managed Claude subprocesses scrub inherited Claude/Anthropic account overrides before setting the selected `CLAUDE_CONFIG_DIR`.
 - The default Claude subprocess must receive no `CLAUDE_CONFIG_DIR`; an empty value is not equivalent.
@@ -40,7 +40,7 @@
 - Multicodex must not change, restore, back up, symlink, lock, or otherwise manage the shared default Codex auth account.
 - The system default Codex account is managed by normal Codex tooling outside multicodex.
 - `multicodex exec` may run `codex exec` with the existing default Codex home as the final protected reserve account only when no configured profile has usable weekly usage. It must not mutate default auth state or expose default auth details.
-- Monitor defaults include the global Codex home through direct read-only usage requests. Normal monitor usage may start profile-scoped read-only Codex app-server sessions only for validated multicodex profile homes. Active `CODEX_HOME`, filesystem discovery, and extra raw app-server checks require explicit monitor flags; `--include-default=false` omits the global home.
+- Monitor defaults include the global Codex home through direct read-only usage requests. Normal monitor usage may start profile-scoped read-only Codex app-server sessions only for validated multicodex profile homes, and those managed sessions force file-backed auth. Active `CODEX_HOME`, filesystem discovery, and extra raw app-server checks require explicit monitor flags; those homes are not inferred to be managed from `CODEX_HOME`, raw checks stay unforced, and `--include-default=false` omits the global home.
 - Multicodex must not change, restore, back up, symlink, or otherwise manage the shared default Claude auth account.
 - Managed Claude accounts live in private derived config directories. Profile paths, sidecars, and reservation files reject symlinks, hard links, unsafe permissions, and paths outside the provider tree.
 - Claude routing accepts only first-party Max auth with a stable organization ID and deduplicates profiles that spend the same organization quota.

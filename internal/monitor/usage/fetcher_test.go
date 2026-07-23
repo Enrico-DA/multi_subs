@@ -447,6 +447,10 @@ func TestReplaceAccountFetchersUsesAppServerWithOAuthFallbackForVerifiedAccounts
 	if f.accounts[0].primary == nil || f.accounts[0].primary.Name() != "app-server" {
 		t.Fatalf("expected app-server primary source, got %#v", f.accounts[0].primary)
 	}
+	appServer, ok := f.accounts[0].primary.(*AppServerSource)
+	if !ok || !appServer.managedProfile {
+		t.Fatalf("expected managed app-server primary source, got %#v", f.accounts[0].primary)
+	}
 	if f.accounts[0].fallback == nil || f.accounts[0].fallback.Name() != "oauth" {
 		t.Fatalf("expected oauth fallback source, got %#v", f.accounts[0].fallback)
 	}
