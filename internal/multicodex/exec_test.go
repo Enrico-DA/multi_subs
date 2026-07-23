@@ -1010,7 +1010,7 @@ if [[ "${1:-}" == "--version" ]]; then
   echo "codex-cli fake"
   exit 0
 fi
-if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}" == "untrusted" && "${5:-}" == "app-server" ]]; then
+if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}" == "untrusted" && "${5:-}" == "-c" && "${6:-}" == 'cli_auth_credentials_store="file"' && "${7:-}" == "app-server" ]]; then
   exec python3 -c '
 import json
 import os

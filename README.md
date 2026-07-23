@@ -6,7 +6,7 @@ Bare commands continue to manage Codex. The `multicodex claude` namespace manage
 
 By default, each profile reuses your global Codex `config.toml` through a symlink, so model defaults, reasoning settings, permission settings, and other normal Codex config changes apply everywhere. Profile homes also inherit missing top-level skill entries from the global Codex skills directory through symlinks.
 
-Profile login requires file-backed auth. If the effective Codex config does not set `cli_auth_credentials_store = "file"`, profile login and profile-scoped Codex execution fail with a setup error instead of sharing global auth state. Every managed-profile Codex child also receives a final `-c 'cli_auth_credentials_store="file"'` override before any standalone `--`, so user config or profile flags cannot change the effective credential store. Default-account exec and exact exec-help delegation do not receive this override.
+Profile login requires file-backed auth. If the effective Codex config does not set `cli_auth_credentials_store = "file"`, profile login and profile-scoped Codex execution fail with a setup error instead of sharing global auth state. Every managed-profile Codex child also receives a final `-c 'cli_auth_credentials_store="file"'` override before any standalone `--`, so user config or profile flags cannot change the effective credential store. Default-account exec, exact exec-help delegation, and explicit raw app-server diagnostics do not receive this override.
 
 ## Status
 
@@ -253,11 +253,11 @@ Additional sources are opt-in:
 
 - `--include-active` includes the active `CODEX_HOME`
 - `--discover` scans compatible Codex homes from the local filesystem
-- `multicodex monitor doctor --app-server` also checks the raw Codex app-server source separately
+- `multicodex monitor doctor --app-server` also checks the raw Codex app-server source separately without forcing managed-profile auth settings
 
 Pass `--include-default=false` to omit the global Codex home for one run. Explicit account-file labels and configured profile labels take priority when they point to the same home, so duplicate cards are not shown.
 
-For validated multicodex profile homes, the monitor asks the Codex app-server for usage first and falls back to direct OAuth from the profile home. This matches Codex CLI auth handling for logged-in profiles whose access token can still be refreshed. Other monitor account homes use direct OAuth unless they dedupe with a validated profile home.
+For validated multicodex profile homes, the monitor asks the Codex app-server for usage first, forces the final file-backed-auth override on that managed child, and falls back to direct OAuth from the profile home. This matches Codex CLI auth handling for logged-in profiles whose access token can still be refreshed. Other monitor account homes use direct OAuth unless they dedupe with a validated profile home.
 
 Successful `multicodex monitor doctor` source checks report `plan=<plan> weekly=<used>% source=<source>`. When the provider supplies no weekly window, doctor reports `weekly=unavailable` instead of exposing an internal numeric marker.
 

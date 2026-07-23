@@ -411,7 +411,7 @@ func newAccountFetcher(account MonitorAccount) accountFetcher {
 		primary: NewOAuthSourceForHome(account.CodexHome),
 	}
 	if account.UseAppServer {
-		fetcher.primary = NewAppServerSourceForHome(account.CodexHome)
+		fetcher.primary = newManagedAppServerSourceForHome(account.CodexHome)
 		fetcher.fallback = NewOAuthSourceForHome(account.CodexHome)
 	}
 	return fetcher

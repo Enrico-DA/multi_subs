@@ -16,37 +16,22 @@ var isInteractiveTerminalAttached = func() bool {
 	return fileIsTerminal(os.Stdin) && fileIsTerminal(os.Stdout) && fileIsTerminal(os.Stderr)
 }
 
-const managedCodexAuthConfig = `cli_auth_credentials_store="file"`
-
-func withManagedCodexAuthOverride(args []string) []string {
-	insertAt := len(args)
-	for i, arg := range args {
-		if arg == "--" {
-			insertAt = i
-			break
-		}
-	}
-	out := make([]string, 0, len(args)+2)
-	out = append(out, args[:insertAt]...)
-	out = append(out, "-c", managedCodexAuthConfig)
-	out = append(out, args[insertAt:]...)
-	return out
-}
+const managedCodexAuthConfig = codexstate.ManagedAuthConfig
 
 func RunCodexLogin(codexHome string, extraArgs []string) error {
 	args := append([]string{"login"}, extraArgs...)
-	return runCommandWithEnv("codex", withManagedCodexAuthOverride(args), profileCodexEnv(os.Environ(), codexHome, ""), "codex login failed")
+	return runCommandWithEnv("codex", codexstate.WithManagedAuthOverride(args), profileCodexEnv(os.Environ(), codexHome, ""), "codex login failed")
 }
 
 func RunCodexWithProfile(codexHome, profile string, args []string) error {
 	if profile != "" {
-		args = withManagedCodexAuthOverride(args)
+		args = codexstate.WithManagedAuthOverride(args)
 	}
 	return runCommandWithEnv("codex", args, profileCodexEnv(os.Environ(), codexHome, profile), "codex command failed")
 }
 
 func RunInteractiveCodexWithProfile(codexHome, profile string, args []string) error {
-	args = withManagedCodexAuthOverride(args)
+	args = codexstate.WithManagedAuthOverride(args)
 	env := profileCodexEnv(os.Environ(), codexHome, profile)
 	if isInteractiveTerminalAttached() {
 		path, err := execLookPath("codex")

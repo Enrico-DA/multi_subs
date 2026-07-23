@@ -55,6 +55,7 @@ type AppServerSource struct {
 	session *appServerSession
 
 	codexHome         string
+	managedProfile    bool
 	authFingerprint   string
 	authFingerprintFn func() (string, error)
 }
@@ -65,7 +66,18 @@ func NewAppServerSource() *AppServerSource {
 }
 
 func NewAppServerSourceForHome(codexHome string) *AppServerSource {
-	return &AppServerSource{codexHome: strings.TrimSpace(codexHome)}
+	return newAppServerSourceForHome(codexHome, false)
+}
+
+func newManagedAppServerSourceForHome(codexHome string) *AppServerSource {
+	return newAppServerSourceForHome(codexHome, true)
+}
+
+func newAppServerSourceForHome(codexHome string, managedProfile bool) *AppServerSource {
+	return &AppServerSource{
+		codexHome:      strings.TrimSpace(codexHome),
+		managedProfile: managedProfile,
+	}
 }
 
 func (s *AppServerSource) Name() string {
@@ -124,7 +136,7 @@ func (s *AppServerSource) Close() error {
 func (s *AppServerSource) ensureSession(ctx context.Context) (*appServerSession, error) {
 	s.mu.Lock()
 	if s.session == nil {
-		s.session = newAppServerSession(s.codexHome)
+		s.session = newAppServerSession(s.codexHome, s.managedProfile)
 	}
 	session := s.session
 	s.mu.Unlock()
@@ -205,7 +217,8 @@ type appServerSession struct {
 	done    chan struct{}
 	doneErr error
 
-	codexHome string
+	codexHome      string
+	managedProfile bool
 }
 
 type accountReadResultRaw struct {
@@ -217,11 +230,20 @@ type accountReadAccountRaw struct {
 	Email string `json:"email"`
 }
 
-func newAppServerSession(codexHome string) *appServerSession {
+func newAppServerSession(codexHome string, managedProfile bool) *appServerSession {
 	return &appServerSession{
-		pending:   make(map[int]chan rpcMessage),
-		codexHome: strings.TrimSpace(codexHome),
+		pending:        make(map[int]chan rpcMessage),
+		codexHome:      strings.TrimSpace(codexHome),
+		managedProfile: managedProfile,
 	}
+}
+
+func (s *appServerSession) commandArgs() []string {
+	args := []string{"-s", "read-only", "-a", "untrusted"}
+	if s.managedProfile {
+		args = codexstate.WithManagedAuthOverride(args)
+	}
+	return append(args, "app-server")
 }
 
 func (s *appServerSession) ensureStarted() error {
@@ -237,7 +259,7 @@ func (s *appServerSession) ensureStarted() error {
 		}
 	}
 
-	cmd := exec.Command("codex", "-s", "read-only", "-a", "untrusted", "app-server")
+	cmd := exec.Command("codex", s.commandArgs()...)
 	env := withoutCodexProfileEnv(os.Environ())
 	if s.codexHome != "" {
 		env = upsertEnvVar(env, "CODEX_HOME", s.codexHome)

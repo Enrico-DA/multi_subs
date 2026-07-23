@@ -121,7 +121,7 @@ Multicodex intentionally has no command for changing either shared default accou
 - By default, builds account candidates from the global Codex home, monitor-owned account overrides, and configured multicodex profiles.
 - Labels the global Codex home `global` and accepts `--include-default=false` to omit it for one run.
 - Supports opt-in account sources with `--include-active` and `--discover`.
-- Uses Codex app-server usage fetches for validated multicodex profile homes, with direct OAuth as fallback.
+- Uses Codex app-server usage fetches for validated multicodex profile homes, forcing the final file-backed-auth override on that managed child, with direct OAuth as fallback.
 - Uses direct OAuth for other monitor account homes unless they dedupe with a validated profile home.
 - Extracts official weekly windows by their declared 10,080-minute duration, with a narrow older-response fallback that treats an undeclared secondary window as weekly.
 - Remains read-only with respect to Codex account state.
@@ -143,8 +143,8 @@ Multicodex intentionally has no command for changing either shared default accou
 - Supports JSON output.
 - Reports successful source checks as `plan=<plan> weekly=<used>% source=<source>`, using `weekly=unavailable` when the provider supplies no weekly window.
 - Checks the global Codex home, configured monitor accounts, and configured multicodex profiles by default.
-- Uses the normal source policy by default: app-server first for validated profile homes, direct OAuth for other homes.
-- Accepts `--include-default=false` to omit the global Codex home, and adds active `CODEX_HOME`, filesystem discovery, or raw app-server checks only when the caller passes `--include-active`, `--discover`, or `--app-server`.
+- Uses the normal source policy by default: managed app-server with the final file-backed-auth override first for validated profile homes, direct OAuth for other homes.
+- Accepts `--include-default=false` to omit the global Codex home, and adds active `CODEX_HOME`, filesystem discovery, or raw app-server checks only when the caller passes `--include-active`, `--discover`, or `--app-server`. The explicit raw app-server check does not force managed-profile auth settings.
 - Exits success when at least one usage fetch works and fails when no usage fetch works.
 - Reports degraded status when at least one usage fetch works but another usage fetch or setup check fails.
 

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
 
 var codexHeartbeatTimeout = 60 * time.Second
@@ -196,7 +198,7 @@ func runCodexHeartbeat(codexHome string, settings heartbeatSettings) (string, er
 	ctx, cancel := context.WithTimeout(context.Background(), settings.Timeout)
 	defer cancel()
 
-	args := withManagedCodexAuthOverride([]string{
+	args := codexstate.WithManagedAuthOverride([]string{
 		"exec",
 		"--skip-git-repo-check",
 		"--ephemeral",

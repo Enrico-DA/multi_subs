@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
 
 type profileStatus struct {
@@ -140,7 +142,7 @@ func codexLoginStatus(codexHome string) (state, account, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), codexLoginStatusTimeout)
 	defer cancel()
 
-	args := withManagedCodexAuthOverride([]string{"login", "status"})
+	args := codexstate.WithManagedAuthOverride([]string{"login", "status"})
 	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.WaitDelay = 500 * time.Millisecond
 	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")
