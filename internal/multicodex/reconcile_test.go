@@ -44,11 +44,6 @@ func TestReconcileAppliesResourcesForAllProfiles(t *testing.T) {
 		Guidance: &GuidanceResources{Inherit: &inherit},
 		Skills:   &SkillResources{Inherit: &inherit},
 	}
-	type systemEntrySnapshot struct {
-		entryType os.FileMode
-		target    string
-	}
-	systemEntriesBefore := map[string]systemEntrySnapshot{}
 	for _, name := range []string{"zeta", "alpha"} {
 		profileHome := filepath.Join(app.store.paths.ProfilesDir, name, "codex-home")
 		if err := os.MkdirAll(filepath.Join(profileHome, "skills"), 0o700); err != nil {
@@ -57,25 +52,15 @@ func TestReconcileAppliesResourcesForAllProfiles(t *testing.T) {
 		if err := os.Symlink(filepath.Join(defaultSkills, "retired"), filepath.Join(profileHome, "skills", "retired")); err != nil {
 			t.Fatalf("link retired skill: %v", err)
 		}
-		runtimeSystemTarget := filepath.Join(profileHome, "runtime-system-skills")
-		if err := os.Mkdir(runtimeSystemTarget, 0o700); err != nil {
-			t.Fatalf("mkdir runtime system skills: %v", err)
-		}
 		systemPath := filepath.Join(profileHome, "skills", ".system")
-		if err := os.Symlink(runtimeSystemTarget, systemPath); err != nil {
-			t.Fatalf("link system skills: %v", err)
-		}
-		systemInfo, err := os.Lstat(systemPath)
-		if err != nil {
-			t.Fatalf("lstat system skills: %v", err)
-		}
-		systemTarget, err := os.Readlink(systemPath)
-		if err != nil {
-			t.Fatalf("read system skills link: %v", err)
-		}
-		systemEntriesBefore[name] = systemEntrySnapshot{
-			entryType: systemInfo.Mode().Type(),
-			target:    systemTarget,
+		if name == "alpha" {
+			if err := os.Mkdir(systemPath, 0o700); err != nil {
+				t.Fatalf("mkdir profile-local system skills: %v", err)
+			}
+		} else {
+			if err := os.Symlink(filepath.Join(defaultSkills, ".system"), systemPath); err != nil {
+				t.Fatalf("link inherited system skills: %v", err)
+			}
 		}
 		cfg.Profiles[name] = Profile{Name: name, CodexHome: profileHome}
 	}
@@ -104,20 +89,13 @@ func TestReconcileAppliesResourcesForAllProfiles(t *testing.T) {
 			t.Fatalf("expected retired skill link removed for %s, stat err=%v", name, err)
 		}
 		systemPath := filepath.Join(profileHome, "skills", ".system")
-		systemInfo, err := os.Lstat(systemPath)
-		if err != nil {
-			t.Fatalf("expected runtime-managed .system entry preserved for %s: %v", name, err)
-		}
-		systemBefore := systemEntriesBefore[name]
-		if got := systemInfo.Mode().Type(); got != systemBefore.entryType {
-			t.Fatalf("runtime-managed .system entry type changed for %s: before=%v after=%v", name, systemBefore.entryType, got)
-		}
-		systemTarget, err := os.Readlink(systemPath)
-		if err != nil {
-			t.Fatalf("read preserved runtime-managed .system link for %s: %v", name, err)
-		}
-		if systemTarget != systemBefore.target {
-			t.Fatalf("runtime-managed .system link target changed for %s: before=%q after=%q", name, systemBefore.target, systemTarget)
+		if name == "alpha" {
+			systemInfo, err := os.Lstat(systemPath)
+			if err != nil || !systemInfo.IsDir() {
+				t.Fatalf("profile-local .system directory changed for %s: info=%v err=%v", name, systemInfo, err)
+			}
+		} else if _, err := os.Lstat(systemPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inherited .system link was not removed for %s: %v", name, err)
 		}
 	}
 	defaultEntriesAfter, err := os.ReadDir(defaultHome)
@@ -141,6 +119,61 @@ func TestReconcileAppliesResourcesForAllProfiles(t *testing.T) {
 	}
 	if !strings.Contains(second, "reconcile result: PASS (0 change(s))") {
 		t.Fatalf("expected idempotent second run, got:\n%s", second)
+	}
+}
+
+func TestReconcileRejectsUnsafeSystemSkillLinksWithoutMutation(t *testing.T) {
+	for _, targetKind := range []string{"external", "broken"} {
+		t.Run(targetKind, func(t *testing.T) {
+			app := newTestAppForCLI(t)
+			if err := app.store.EnsureBaseDirs(); err != nil {
+				t.Fatalf("ensure dirs: %v", err)
+			}
+			writeDefaultFileStoreConfig(t, app)
+			defaultSystemPath := filepath.Join(app.store.paths.DefaultCodexHome, "skills", ".system")
+			if err := os.MkdirAll(defaultSystemPath, 0o700); err != nil {
+				t.Fatalf("mkdir default system skills: %v", err)
+			}
+
+			profileHome := filepath.Join(app.store.paths.ProfilesDir, "work", "codex-home")
+			systemPath := filepath.Join(profileHome, "skills", ".system")
+			if err := os.MkdirAll(filepath.Dir(systemPath), 0o700); err != nil {
+				t.Fatalf("mkdir profile skills: %v", err)
+			}
+			target := filepath.Join(t.TempDir(), ".system")
+			if targetKind == "external" {
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatalf("mkdir external system skills: %v", err)
+				}
+			}
+			if err := os.Symlink(target, systemPath); err != nil {
+				t.Fatalf("link unsafe system skills: %v", err)
+			}
+
+			inherit := false
+			cfg := DefaultConfig()
+			cfg.ProfileResources = &ProfileResources{Skills: &SkillResources{Inherit: &inherit}}
+			cfg.Profiles["work"] = Profile{Name: "work", CodexHome: profileHome}
+			if err := app.store.Save(cfg); err != nil {
+				t.Fatalf("save config: %v", err)
+			}
+
+			_, err := captureStdout(t, func() error { return app.Run([]string{"reconcile"}) })
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+				t.Fatalf("expected reconcile failure, got %T (%v)", err, err)
+			}
+			gotTarget, readErr := os.Readlink(systemPath)
+			if readErr != nil {
+				t.Fatalf("unsafe system skills link changed: %v", readErr)
+			}
+			if gotTarget != target {
+				t.Fatalf("unsafe system skills target changed: got=%q want=%q", gotTarget, target)
+			}
+			if _, statErr := os.Lstat(filepath.Join(profileHome, "config.toml")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("unsafe system skills validation mutated profile config: %v", statErr)
+			}
+		})
 	}
 }
 

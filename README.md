@@ -30,19 +30,13 @@ Build from source.
 go build -o multicodex ./cmd/multicodex
 ```
 
-Or install from the public module path.
-
-```bash
-go install github.com/Enrico-DA/multicodex/cmd/multicodex@latest
-```
+This fork does not publish version tags or release archives before the planned product and module rename. Install-from-module and release-download instructions are therefore not valid for `Enrico-DA/multi_subs`; build a checked-out source tree for now. The imported release workflow remains in the repository, but its guard allows publication only from `olliecrow/multicodex`.
 
 Optional local install path.
 
 ```bash
 mv ./multicodex ~/.local/bin/multicodex
 ```
-
-Tagged releases publish checksummed macOS and Linux archives for AMD64 and ARM64. Release binaries report their tag through `multicodex version`; untagged source builds report a development version. Verify an archive against `SHA256SUMS` before installing it.
 
 Contributor setup, required checks, and the release process are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -100,7 +94,7 @@ multicodex dry-run
 - Profile sessions, threads, and `/goal` state stay under that profile's `codex-home`.
 - Multicodex state directories, profile directories, profile `codex-home`, profile skills directories, `auth.json`, selected-profile metadata under `MULTICODEX_HOME/run`, heartbeat lock files, and config lock files must be profile-local regular filesystem entries with local-user-only directory permissions. Symlinks and hard links are rejected where they could cross account boundaries.
 - Profile `config.toml` defaults to a symlink from `~/multicodex/profiles/<name>/codex-home/config.toml` to the default Codex config at `~/.codex/config.toml`.
-- Unless configured otherwise, profile skills fill in missing portable top-level entries from `~/.codex/skills` using symlinks. Runtime-managed `.system` content is excluded, and manual top-level profile skill overrides are left in place.
+- Unless configured otherwise, profile skills fill in missing portable top-level entries from `~/.codex/skills` using symlinks. Runtime-managed `.system` content is never inherited, and manual top-level profile skill overrides are left in place. A regular profile-local `.system` directory is preserved. A stale `.system` symlink that resolves safely under the default skills tree is removed; broken, external, cross-profile, or malformed `.system` symlinks are rejected unchanged.
 - To use a per-profile Codex config, replace the profile `config.toml` symlink with a regular profile-local `config.toml` file that still enables file-backed auth.
 - Claude metadata is separate at `~/multicodex/providers/claude/config.json`.
 - Managed Claude state lives under `~/multicodex/providers/claude/profiles/<name>/config`.
@@ -128,12 +122,12 @@ The optional `profile_resources` block in `~/multicodex/config.json` controls sh
 ```
 
 - `guidance.inherit: true` links the source directory's `AGENTS.md` and `AGENTS.override.md`. An omitted or empty `source` uses the default Codex home.
-- `skills.inherit: true` merges portable top-level entries from ordered `sources`; the first source wins name conflicts. Runtime-managed `.system` content is excluded. An omitted `sources` key uses the default Codex skills directory. An explicit empty list is invalid.
+- `skills.inherit: true` merges portable top-level entries from ordered `sources`; the first source wins name conflicts. Runtime-managed `.system` content is excluded from every source and follows the profile-local rules above. An omitted `sources` key uses the default Codex skills directory. An explicit empty list is invalid.
 - `inherit: false` removes symlinks managed at that resource's profile locations. It never removes regular files or directories.
 - Either regular profile guidance file makes both guidance names a local override. Regular top-level profile skill entries override inherited entries with the same name.
 - `~` expands to the user home. Relative paths resolve from the directory containing `config.json`, normally `~/multicodex`, not from the current working directory.
 - Custom skill sources must exist outside multicodex-owned state and the default Codex home; the canonical default Codex skills directory is the only default-home exception. Each inherited top-level skill entry must resolve to a directory. Resource blocks require a correctly spelled boolean `inherit` and reject unknown nested keys.
-- When explicit management is enabled, symlinks at the two guidance names and directly under the profile `skills/` directory are multicodex-owned, except for `.system`. Retargeting or removal reports the old target.
+- When explicit management is enabled, symlinks at the two guidance names and directly under the profile `skills/` directory are multicodex-owned. `.system` is narrower: only a stale symlink that resolves safely under the default skills tree is removed, while a regular local directory is preserved and every unsafe link fails closed. Retargeting or removal reports the old target.
 - Codex's existing user-wide `$HOME/.agents/skills` and repository `.agents/skills` discovery stays separate and continues to work normally.
 
 Use `multicodex doctor` to validate configured sources and `multicodex dry-run` to see the effective policy and planned reconciliation without changing files. To recover from a bad link policy, set the affected `inherit` value to `false` and remove its `source` or `sources` field, run `multicodex reconcile`, then remove the optional block to return to the original unmanaged-guidance and default-skill behavior.
