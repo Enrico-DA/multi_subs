@@ -630,6 +630,9 @@ func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPat
 		return fmt.Errorf("read profile skills dir: %w", err)
 	}
 	for _, entry := range entries {
+		if entry.Name() == ".system" {
+			continue
+		}
 		profileEntryPath := filepath.Join(profileSkillsPath, entry.Name())
 		info, err := os.Lstat(profileEntryPath)
 		if err != nil {
