@@ -196,9 +196,7 @@ func runCodexHeartbeat(codexHome string, settings heartbeatSettings) (string, er
 	ctx, cancel := context.WithTimeout(context.Background(), settings.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(
-		ctx,
-		"codex",
+	args := withManagedCodexAuthOverride([]string{
 		"exec",
 		"--skip-git-repo-check",
 		"--ephemeral",
@@ -207,7 +205,8 @@ func runCodexHeartbeat(codexHome string, settings heartbeatSettings) (string, er
 		"--color",
 		"never",
 		heartbeatPrompt,
-	)
+	})
+	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Dir = codexHome
 	cmd.WaitDelay = 500 * time.Millisecond
 	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")

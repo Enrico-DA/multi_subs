@@ -140,7 +140,8 @@ func codexLoginStatus(codexHome string) (state, account, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), codexLoginStatusTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "codex", "login", "status")
+	args := withManagedCodexAuthOverride([]string{"login", "status"})
+	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.WaitDelay = 500 * time.Millisecond
 	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")
 	var out bytes.Buffer

@@ -22,6 +22,9 @@ func TestCmdExecHelpClearsStaleProfileEnv(t *testing.T) {
 	if !strings.Contains(log, "args=exec --help") {
 		t.Fatalf("expected help passthrough args, got %q", log)
 	}
+	if strings.Contains(log, managedCodexAuthConfig) {
+		t.Fatalf("exact help delegation received managed auth override: %q", log)
+	}
 	if !strings.Contains(log, "profile=\n") {
 		t.Fatalf("expected active profile to be cleared, got %q", log)
 	}

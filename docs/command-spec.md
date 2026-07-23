@@ -48,7 +48,7 @@ Multicodex intentionally has no command for changing either shared default accou
 
 `multicodex login <name> [codex login args]`
 - Runs official `codex login` in the selected profile context.
-- Passes extra login args through to `codex login`.
+- Preserves extra login args in order, then adds `-c 'cli_auth_credentials_store="file"'` as the final CLI override before any standalone `--`.
 - Requires the effective profile config to enable `cli_auth_credentials_store = "file"`.
 - Normalizes regular profile `auth.json` permissions to `0600` after login.
 
@@ -60,17 +60,20 @@ Multicodex intentionally has no command for changing either shared default accou
 - Runs the interactive official Codex CLI with the selected profile's `CODEX_HOME`.
 - Does not inject model, reasoning, sandbox, approval, or search defaults.
 - Uses shared Codex config defaults unless the caller passes explicit Codex args.
+- Preserves every user argument and its relative order, then inserts only the final file-backed-auth override before any standalone `--`.
 - Re-checks file-backed auth isolation before launch.
 - Replaces the multicodex process with `codex` when stdin, stdout, and stderr are real terminals.
 - Keeps auth, threads, sessions, and `/goal` state profile-local.
 - Leaves the default Codex account untouched.
 
 `multicodex exec [codex exec args]`
-- Runs `codex exec` with all remaining arguments passed through unchanged.
+- Preserves all remaining arguments and their relative order.
+- Adds the final file-backed-auth override before any standalone `--` only when the selected account is a configured managed profile.
 - Delegates exact help requests (`--help`, `-h`, or `help`) directly to `codex exec` without requiring profiles.
 - Automatically selects among configured multicodex profiles first.
 - Includes the default Codex home as a built-in reserve account after configured profiles.
 - Can run with no configured profiles by using the default Codex home as the only available account.
+- Does not add the managed auth override to default-account exec or exact help delegation.
 - Re-checks file-backed auth isolation before launching configured profiles.
 - Parses model selection arguments (`--model`, `--model=`, and `-m`) for routing.
 - If the model contains `spark` case-insensitively, selects Spark weekly usage when available.
@@ -99,7 +102,7 @@ Multicodex intentionally has no command for changing either shared default accou
 - Continues through independent profile failures, reports every failure, and exits non-zero if any profile fails.
 
 `multicodex heartbeat`
-- Runs `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello` for each logged-in profile.
+- Runs the fixed `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello` keepalive for each logged-in profile and adds the same final file-backed-auth override as every managed Codex child.
 - Does not persist Codex session files.
 - Skips logged-out profiles.
 - Re-checks file-backed auth isolation before per-profile execution.
@@ -163,11 +166,12 @@ Multicodex intentionally has no command for changing either shared default accou
 
 ## Profile Resource Reconciliation
 
-- `profile_resources` is an optional version-1 config block. Its omission preserves the established guidance no-op and strict default-skill reconciliation exactly.
+- `profile_resources` is an optional version-1 config block. Its omission preserves the established guidance no-op and uses strict, canonical default-skill reconciliation.
 - Present `guidance` and `skills` objects require a boolean `inherit`. Unknown keys inside the resource block are errors; unrelated top-level config keys remain permissive.
 - Guidance uses one source directory and manages only `AGENTS.md` and `AGENTS.override.md`. Either regular profile file overrides the whole inherited pair.
-- Skills use ordered source directories with first-source-wins merging. Sources that overlap multicodex-owned state or the default Codex home are rejected, except for the canonical default Codex skills directory. Inherited top-level entries must resolve to skill directories. Runtime-managed `.system` content is never inherited. A regular profile-local `.system` directory is preserved; a stale `.system` symlink that resolves safely under the default skills tree is removed; broken, external, cross-profile, and malformed `.system` symlinks fail closed and remain unchanged. Regular top-level profile entries override inherited entries.
+- Skills fully resolve ordered source directories and each selected top-level entry before first-source-wins merging. Sources that overlap multicodex-owned state or the default Codex home are rejected, except for the canonical default Codex skills directory. Managed profile links point to the final canonical entry directories, including when `sources` is omitted or the legacy default-inheritance path is used. Retargeted aliases affect an existing profile link only after a later reconciliation validates and adopts the new target; a forbidden target fails before changing the old pin. Runtime-managed `.system` content is never inherited. A regular profile-local `.system` directory is preserved; a stale `.system` symlink that resolves safely under the default skills tree is removed; broken, external, cross-profile, and malformed `.system` symlinks fail closed and remain unchanged. Regular top-level profile entries override inherited entries.
 - Explicit resource management owns symlinks at its managed profile positions, including pre-existing symlinks. `.system` uses only the narrower reconciliation rule above. Other owned links may be retargeted or removed and report old targets. Regular files and directories are preserved.
+- On the legacy default-inheritance path, a symlink at a skill name currently supplied by the default source is a managed inherited position and may be retargeted to the canonical entry. Unrelated symlinks retain the narrower default-tree validation. Regular entries remain local overrides.
 - `inherit: false` removes managed symlinks. Populated source fields are invalid in this mode.
 - `~` expands to the user home. Relative paths resolve from the config file directory. Custom source directories must exist and pass boundary and entry-type validation before reconciliation starts.
 - `add`, `login`, `login-all`, `cli`, `exec`, and `heartbeat` reconcile resources before a profile-scoped Codex launch. `reconcile` applies the same managed profile state to all profiles without launching Codex. `doctor`, `dry-run`, `status`, and `monitor` do not mutate profile resources.

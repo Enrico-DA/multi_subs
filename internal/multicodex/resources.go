@@ -142,10 +142,15 @@ type resolvedSkillResources struct {
 
 // ResolveProfileResources validates configured resource paths without changing profile state.
 func (s *Store) ResolveProfileResources(resources *ProfileResources) (*resolvedProfileResources, error) {
-	if resources == nil {
-		return nil, nil
-	}
 	resolved := &resolvedProfileResources{}
+	if resources == nil {
+		skills, err := s.resolveDefaultSkillResources()
+		if err != nil {
+			return nil, err
+		}
+		resolved.skills = skills
+		return resolved, nil
+	}
 	if resources.Guidance != nil {
 		guidance, err := s.resolveGuidanceResources(resources.Guidance)
 		if err != nil {
@@ -159,8 +164,19 @@ func (s *Store) ResolveProfileResources(resources *ProfileResources) (*resolvedP
 			return nil, err
 		}
 		resolved.skills = skills
+	} else {
+		skills, err := s.resolveDefaultSkillResources()
+		if err != nil {
+			return nil, err
+		}
+		resolved.skills = skills
 	}
 	return resolved, nil
+}
+
+func (s *Store) resolveDefaultSkillResources() (*resolvedSkillResources, error) {
+	inherit := true
+	return s.resolveSkillResources(&SkillResources{Inherit: &inherit})
 }
 
 func (s *Store) resolveGuidanceResources(settings *GuidanceResources) (*resolvedGuidanceResources, error) {
@@ -215,37 +231,58 @@ func (s *Store) resolveSkillResources(settings *SkillResources) (*resolvedSkillR
 		}
 		return resolved, nil
 	}
-	if settings.Sources == nil {
-		resolved.sources = []string{filepath.Join(s.paths.DefaultCodexHome, "skills")}
-	} else {
+	defaultSkillsPath := filepath.Join(s.paths.DefaultCodexHome, "skills")
+	sourcePaths := []string{defaultSkillsPath}
+	sourceLabels := []string{defaultSkillsPath}
+	allowMissingDefault := settings.Sources == nil
+	if settings.Sources != nil {
 		if len(*settings.Sources) == 0 {
 			return nil, errors.New("profile_resources.skills.sources must not be empty")
 		}
-		seen := map[string]bool{}
+		sourcePaths = make([]string, 0, len(*settings.Sources))
+		sourceLabels = make([]string, 0, len(*settings.Sources))
 		for i, source := range *settings.Sources {
 			path, err := s.resolveResourcePath(source)
 			if err != nil {
 				return nil, fmt.Errorf("resolve profile_resources.skills.sources[%d]: %w", i, err)
 			}
-			defaultSkillsPath := filepath.Join(s.paths.DefaultCodexHome, "skills")
-			if err := s.validateSkillSourcePath(path, sameProfilePath(path, defaultSkillsPath)); err != nil {
-				return nil, fmt.Errorf("validate profile_resources.skills.sources[%d]: %w", i, err)
-			}
-			canonical := canonicalProfilePath(path)
-			if seen[canonical] {
-				return nil, fmt.Errorf("profile_resources.skills.sources[%d] duplicates an earlier source: %s", i, source)
-			}
-			seen[canonical] = true
-			resolved.sources = append(resolved.sources, path)
+			sourcePaths = append(sourcePaths, path)
+			sourceLabels = append(sourceLabels, source)
 		}
 	}
-	for i, source := range resolved.sources {
-		defaultSkillsPath := filepath.Join(s.paths.DefaultCodexHome, "skills")
-		sourceUsesDefaultSkills := sameProfilePath(source, defaultSkillsPath)
-		entries, err := os.ReadDir(source)
-		if errors.Is(err, os.ErrNotExist) && settings.Sources == nil {
+
+	seen := map[string]bool{}
+	for i, sourcePath := range sourcePaths {
+		canonicalSource, err := resolveExistingPath(sourcePath)
+		if errors.Is(err, os.ErrNotExist) && allowMissingDefault {
 			continue
 		}
+		if err != nil {
+			if settings.Sources == nil {
+				return nil, fmt.Errorf("resolve default skill source %s: %w", sourcePath, err)
+			}
+			return nil, fmt.Errorf("resolve profile_resources.skills.sources[%d]: %w", i, err)
+		}
+		if err := requireDirectory(canonicalSource, "skill source"); err != nil {
+			return nil, err
+		}
+		sourceUsesDefaultSkills := sameProfilePath(canonicalSource, defaultSkillsPath)
+		if err := s.validateSkillSourcePath(canonicalSource, sourceUsesDefaultSkills); err != nil {
+			if settings.Sources == nil {
+				return nil, fmt.Errorf("validate default skill source: %w", err)
+			}
+			return nil, fmt.Errorf("validate profile_resources.skills.sources[%d]: %w", i, err)
+		}
+		if seen[canonicalSource] {
+			return nil, fmt.Errorf("profile_resources.skills.sources[%d] duplicates an earlier source: %s", i, sourceLabels[i])
+		}
+		seen[canonicalSource] = true
+		resolved.sources = append(resolved.sources, canonicalSource)
+	}
+
+	for _, source := range resolved.sources {
+		sourceUsesDefaultSkills := sameProfilePath(source, defaultSkillsPath)
+		entries, err := os.ReadDir(source)
 		if err != nil {
 			return nil, fmt.Errorf("read skill source %s: %w", source, err)
 		}
@@ -254,19 +291,23 @@ func (s *Store) resolveSkillResources(settings *SkillResources) (*resolvedSkillR
 			if !isInheritableSkillName(name) {
 				continue
 			}
-			path := filepath.Join(resolved.sources[i], name)
-			info, err := os.Stat(path)
+			path := filepath.Join(source, name)
+			canonicalEntry, err := resolveExistingPath(path)
 			if err != nil {
-				return nil, fmt.Errorf("inspect skill source entry %s: %w", path, err)
+				return nil, fmt.Errorf("resolve skill source entry %s: %w", path, err)
+			}
+			info, err := os.Stat(canonicalEntry)
+			if err != nil {
+				return nil, fmt.Errorf("inspect skill source entry %s: %w", canonicalEntry, err)
 			}
 			if !info.IsDir() {
-				return nil, fmt.Errorf("skill source entry is not a directory: %s", path)
+				return nil, fmt.Errorf("skill source entry is not a directory: %s", canonicalEntry)
 			}
-			if err := s.validateSkillSourcePath(path, sourceUsesDefaultSkills); err != nil {
-				return nil, fmt.Errorf("validate skill source entry %s: %w", path, err)
+			if err := s.validateSkillSourcePath(canonicalEntry, sourceUsesDefaultSkills); err != nil {
+				return nil, fmt.Errorf("validate skill source entry %s: %w", canonicalEntry, err)
 			}
 			if _, exists := resolved.desired[name]; !exists {
-				resolved.desired[name] = path
+				resolved.desired[name] = canonicalEntry
 			}
 		}
 	}
@@ -349,7 +390,7 @@ func inspectProfileSystemSkill(defaultSkillsPath, systemPath string) (string, bo
 
 // validateProfileResourceDestinations checks profile-owned positions before any
 // profile setup or resource reconciliation changes the filesystem.
-func (s *Store) validateProfileResourceDestinations(codexHome string, policy *ProfileResources) error {
+func (s *Store) validateProfileResourceDestinations(codexHome string, policy *ProfileResources, resolved *resolvedProfileResources) error {
 	if policy != nil && policy.Guidance != nil {
 		if err := validateOwnedLinkPositions(codexHome, guidanceNames, "profile guidance"); err != nil {
 			return err
@@ -357,8 +398,8 @@ func (s *Store) validateProfileResourceDestinations(codexHome string, policy *Pr
 	}
 	defaultSkillsPath := filepath.Join(s.paths.DefaultCodexHome, "skills")
 	if policy == nil || policy.Skills == nil {
-		if _, err := os.ReadDir(defaultSkillsPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("read default skills dir: %w", err)
+		if resolved != nil && resolved.skills != nil && len(resolved.skills.sources) > 0 {
+			defaultSkillsPath = resolved.skills.sources[0]
 		}
 	}
 
@@ -422,7 +463,17 @@ func (s *Store) validateProfileResourceDestinations(codexHome string, policy *Pr
 			return fmt.Errorf("resolve profile skill symlink %s: %w", path, err)
 		}
 		if !pathIsInsideRoot(defaultSkillsPath, target) {
-			return fmt.Errorf("profile skill symlink must point under default skills directory: %s", path)
+			_, wanted := resolved.skills.desired[name]
+			if !wanted {
+				return fmt.Errorf("profile skill symlink must point under default skills directory: %s", path)
+			}
+			allowDefaultSkillsTree := pathIsInsideRoot(defaultSkillsPath, target)
+			if err := s.validateSkillSourcePath(target, allowDefaultSkillsTree); err != nil {
+				return fmt.Errorf("validate existing profile skill symlink %s: %w", path, err)
+			}
+			if err := requireDirectory(target, "existing profile skill target"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -485,7 +536,7 @@ func requireDirectory(path, label string) error {
 
 func (s *Store) reconcileProfileResources(codexHome string, policy *ProfileResources, resolved *resolvedProfileResources) ([]ResourceChange, error) {
 	if policy == nil {
-		return nil, s.ensureProfileSkills(codexHome)
+		return nil, s.ensureProfileSkills(codexHome, resolved.skills)
 	}
 	var changes []ResourceChange
 	if resolved.guidance != nil {
@@ -495,8 +546,8 @@ func (s *Store) reconcileProfileResources(codexHome string, policy *ProfileResou
 		}
 		changes = append(changes, guidanceChanges...)
 	}
-	if resolved.skills == nil {
-		if err := s.ensureProfileSkills(codexHome); err != nil {
+	if policy.Skills == nil {
+		if err := s.ensureProfileSkills(codexHome, resolved.skills); err != nil {
 			return nil, err
 		}
 	} else {
@@ -576,7 +627,7 @@ func reconcileExplicitSkills(codexHome, defaultSkillsPath string, resolved *reso
 	if !resolved.inherit {
 		desired = map[string]string{}
 	}
-	skillChanges, err := reconcileOwnedLinks(profileSkillsPath, names, desired, "profile skill")
+	skillChanges, err := reconcileSkillLinks(profileSkillsPath, names, desired, "profile skill")
 	if err != nil {
 		return nil, err
 	}
@@ -603,6 +654,14 @@ func reconcileProfileSystemSkill(defaultSkillsPath, profileSkillsPath string) ([
 }
 
 func reconcileOwnedLinks(root string, names []string, desired map[string]string, label string) ([]ResourceChange, error) {
+	return reconcileOwnedLinksWithTargetMatch(root, names, desired, label, false)
+}
+
+func reconcileSkillLinks(root string, names []string, desired map[string]string, label string) ([]ResourceChange, error) {
+	return reconcileOwnedLinksWithTargetMatch(root, names, desired, label, true)
+}
+
+func reconcileOwnedLinksWithTargetMatch(root string, names []string, desired map[string]string, label string, exactTarget bool) ([]ResourceChange, error) {
 	var changes []ResourceChange
 	for _, name := range names {
 		path := filepath.Join(root, name)
@@ -617,8 +676,12 @@ func reconcileOwnedLinks(root string, names []string, desired map[string]string,
 				return nil, fmt.Errorf("read %s symlink %s: %w", label, path, err)
 			}
 			if wanted {
-				resolvedOld := resolveLinkTarget(path, oldTarget)
-				if canonicalProfilePath(resolvedOld) == canonicalProfilePath(want) {
+				targetMatches := oldTarget == want
+				if !exactTarget {
+					resolvedOld := resolveLinkTarget(path, oldTarget)
+					targetMatches = canonicalProfilePath(resolvedOld) == canonicalProfilePath(want)
+				}
+				if targetMatches {
 					continue
 				}
 			}

@@ -120,6 +120,47 @@ func TestCmdLoginRejectsAuthSymlinkBeforeRunningCodex(t *testing.T) {
 	}
 }
 
+func TestManagedLoginCommandsForceFileBackedAuth(t *testing.T) {
+	tests := []struct {
+		name    string
+		run     func(*App) error
+		wantArg string
+	}{
+		{
+			name: "login",
+			run: func(app *App) error {
+				return app.cmdLogin([]string{"alpha", "-c", `cli_auth_credentials_store="keyring"`, "-p", "unsafe"})
+			},
+			wantArg: `args=login -c cli_auth_credentials_store="keyring" -p unsafe -c ` + managedCodexAuthConfig,
+		},
+		{
+			name: "login-all",
+			run: func(app *App) error {
+				return app.cmdLoginAll()
+			},
+			wantArg: "args=login -c " + managedCodexAuthConfig,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			app, logPath := newExecTestApp(t)
+			createExecProfiles(t, app, "alpha")
+			if err := test.run(app); err != nil {
+				t.Fatalf("%s failed: %v", test.name, err)
+			}
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("read codex log: %v", err)
+			}
+			if !strings.Contains(string(data), test.wantArg+"\n") {
+				t.Fatalf("expected child args %q, got %q", test.wantArg, data)
+			}
+		})
+	}
+}
+
 func TestEnsureProfileCodexExecutionReadyRejectsAuthSymlink(t *testing.T) {
 	app := newTestAppForCLI(t)
 	writeDefaultFileStoreConfig(t, app)
