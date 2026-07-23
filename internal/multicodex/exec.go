@@ -59,9 +59,6 @@ func (a *App) cmdExec(args []string) error {
 		return err
 	}
 	if selected.IsProfile {
-		if err := a.store.EnsureProfileDir(selected.Profile); err != nil {
-			return err
-		}
 		if err := ensureProfileCodexExecutionReady(a.store.paths, selected.Profile); err != nil {
 			return err
 		}
@@ -79,11 +76,14 @@ func (a *App) cmdExec(args []string) error {
 
 func (a *App) execReadyConfig(cfg *Config) (*Config, error) {
 	ready := DefaultConfig()
+	ready.ProfileResources = cfg.ProfileResources
 	for _, name := range sortedProfileNames(cfg) {
 		profile := cfg.Profiles[name]
-		if err := a.store.EnsureProfileDir(profile); err != nil {
+		changes, err := a.store.EnsureProfileDir(profile, cfg.ProfileResources)
+		if err != nil {
 			return nil, err
 		}
+		printResourceChangesToStderr(changes)
 		if err := ensureProfileCodexExecutionReady(a.store.paths, profile); err != nil {
 			return nil, err
 		}

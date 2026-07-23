@@ -24,6 +24,7 @@ var commandSummaries = []struct {
 	{Name: "cli <name> [codex args...]", Summary: "run the interactive Codex CLI with one profile"},
 	{Name: "exec [codex exec args]", Summary: "run codex exec on the best available account"},
 	{Name: "status", Summary: "show all profile auth states"},
+	{Name: "reconcile", Summary: "reconcile resources for all profiles"},
 	{Name: "heartbeat", Summary: "send a minimal keepalive hello for logged-in profiles"},
 	{Name: "monitor [flags]", Summary: "show live subscription usage across accounts"},
 	{Name: "monitor tui [flags]", Summary: "run the monitor terminal UI explicitly"},
@@ -91,7 +92,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"login": {
 		Usage:       "multicodex login <name> [codex login args]",
-		Description: "Run official codex login inside the selected profile context.",
+		Description: "Run official codex login inside the selected profile context. User arguments keep their order, followed by the enforced file-backed-auth config override.",
 		Examples: []string{
 			"multicodex login personal",
 			"multicodex login personal --device-auth",
@@ -106,7 +107,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"cli": {
 		Usage:       "multicodex cli <name> [codex args...]",
-		Description: "Run the interactive Codex CLI with the selected profile. Codex defaults such as model, reasoning, approvals, and sandbox come from the shared Codex config unless you pass explicit Codex args.",
+		Description: "Run the interactive Codex CLI with the selected profile. Codex defaults such as model, reasoning, approvals, and sandbox come from the shared Codex config unless you pass explicit Codex args. Multicodex adds only the enforced file-backed-auth config override.",
 		Examples: []string{
 			"multicodex cli personal",
 			`multicodex cli work "check this repo"`,
@@ -114,7 +115,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"exec": {
 		Usage:       "multicodex exec [codex exec args]",
-		Description: "Run `codex exec` after automatically selecting the best available account. Configured profiles are considered before the protected default reserve account. Profiles at 100% weekly usage are skipped, and known weekly resets are tried soonest first. The default Codex home is used only when no configured profile has usable weekly usage left, and remains the final fallback when it is the only destination.",
+		Description: "Run `codex exec` after automatically selecting the best available account. A configured-profile child receives the enforced file-backed-auth config override; default-reserve exec and exact help do not. Configured profiles are considered before the protected default reserve account. Profiles at 100% weekly usage are skipped, and known weekly resets are tried soonest first. The default Codex home is used only when no configured profile has usable weekly usage left, and remains the final fallback when it is the only destination.",
 		Examples: []string{
 			`multicodex exec -s read-only "Summarize the README in 3 bullets."`,
 			"multicodex exec --skip-git-repo-check -C /path/to/repo \"Review the latest diff.\"",
@@ -127,6 +128,13 @@ var commandHelpByName = map[string]commandHelp{
 			"multicodex status",
 		},
 	},
+	"reconcile": {
+		Usage:       "multicodex reconcile",
+		Description: "Reconcile configured guidance and skill resources for every profile. This does not inspect auth, launch Codex, or change the default Codex home.",
+		Examples: []string{
+			"multicodex reconcile",
+		},
+	},
 	"heartbeat": {
 		Usage:       "multicodex heartbeat",
 		Description: "Fire-and-forget ephemeral keepalive across logged-in profiles with cron-safe locking, retry/backoff, and per-profile summary output. Heartbeat requests do not persist Codex session files.",
@@ -136,7 +144,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"monitor": {
 		Usage:       "multicodex monitor [--interval 60s] [--timeout 60s] [--no-color] [--no-alt-screen] [--include-default] [--include-active] [--discover]",
-		Description: "Run the live subscription-usage terminal UI. By default, the monitor reads explicit monitor account overrides and configured multicodex profiles. Default Codex home, active CODEX_HOME, and filesystem discovery are opt-in. If one refresh loses official window data for every account, the last good official window cards stay visible and are marked stale.",
+		Description: "Run the live subscription-usage terminal UI. By default, the monitor reads the global Codex home, explicit monitor account overrides, and configured multicodex profiles. Active CODEX_HOME and filesystem discovery are opt-in. If one refresh loses official window data for every account, the last good official window cards stay visible and are marked stale.",
 		Examples: []string{
 			"multicodex monitor",
 			"multicodex monitor --interval 30s",
@@ -145,7 +153,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"monitor doctor": {
 		Usage:       "multicodex monitor doctor [--json] [--timeout 60s] [--include-default] [--include-active] [--discover] [--app-server]",
-		Description: "Run read-only monitor checks against explicit monitor account overrides and configured multicodex profiles. Validated profile homes use app-server first with direct OAuth fallback; other homes use direct OAuth unless they dedupe with a validated profile. Default Codex home, active CODEX_HOME, filesystem discovery, and extra raw app-server checks are opt-in. The command succeeds when at least one usage source works and reports degraded status when another fetch or setup check fails.",
+		Description: "Run read-only monitor checks against the global Codex home, explicit monitor account overrides, and configured multicodex profiles. Validated profile homes use app-server first with direct OAuth fallback; other homes use direct OAuth unless they dedupe with a validated profile. Active CODEX_HOME, filesystem discovery, and extra raw app-server checks are opt-in. The command succeeds when at least one usage source works and reports degraded status when another fetch or setup check fails.",
 		Examples: []string{
 			"multicodex monitor doctor",
 			"multicodex monitor doctor --json",
@@ -206,6 +214,7 @@ var commandHelpByName = map[string]commandHelp{
 		Examples: []string{
 			"multicodex help",
 			"multicodex help heartbeat",
+			"multicodex help claude exec",
 			"multicodex help monitor doctor",
 			"multicodex help monitor tui",
 		},
@@ -230,6 +239,7 @@ func printHelp() {
 	fmt.Println("  multicodex cli personal")
 	fmt.Println("  multicodex monitor")
 	fmt.Println("  multicodex heartbeat")
+	fmt.Println("  multicodex reconcile")
 	fmt.Println(`  eval "$(multicodex completion zsh)"`)
 	fmt.Println()
 	fmt.Println("Help:")

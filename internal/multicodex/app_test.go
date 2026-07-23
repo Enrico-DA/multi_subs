@@ -11,7 +11,7 @@ import (
 func TestEnsureProfileDirMigratesGeneratedProfileConfig(t *testing.T) {
 	app, profile, defaultConfigPath := newTestAppWithGeneratedProfileConfig(t)
 
-	if err := app.store.EnsureProfileDir(profile); err != nil {
+	if _, err := app.store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 
@@ -97,7 +97,7 @@ func TestCmdLoginRejectsAuthSymlinkBeforeRunningCodex(t *testing.T) {
 	if err := app.store.Save(cfg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := app.store.EnsureProfileDir(profile); err != nil {
+	if _, err := app.store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 	target := filepath.Join(t.TempDir(), "shared-auth.json")
@@ -120,6 +120,47 @@ func TestCmdLoginRejectsAuthSymlinkBeforeRunningCodex(t *testing.T) {
 	}
 }
 
+func TestManagedLoginCommandsForceFileBackedAuth(t *testing.T) {
+	tests := []struct {
+		name    string
+		run     func(*App) error
+		wantArg string
+	}{
+		{
+			name: "login",
+			run: func(app *App) error {
+				return app.cmdLogin([]string{"alpha", "-c", `cli_auth_credentials_store="keyring"`, "-p", "unsafe"})
+			},
+			wantArg: `args=login -c cli_auth_credentials_store="keyring" -p unsafe -c ` + managedCodexAuthConfig,
+		},
+		{
+			name: "login-all",
+			run: func(app *App) error {
+				return app.cmdLoginAll()
+			},
+			wantArg: "args=login -c " + managedCodexAuthConfig,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			app, logPath := newExecTestApp(t)
+			createExecProfiles(t, app, "alpha")
+			if err := test.run(app); err != nil {
+				t.Fatalf("%s failed: %v", test.name, err)
+			}
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("read codex log: %v", err)
+			}
+			if !strings.Contains(string(data), test.wantArg+"\n") {
+				t.Fatalf("expected child args %q, got %q", test.wantArg, data)
+			}
+		})
+	}
+}
+
 func TestEnsureProfileCodexExecutionReadyRejectsAuthSymlink(t *testing.T) {
 	app := newTestAppForCLI(t)
 	writeDefaultFileStoreConfig(t, app)
@@ -128,7 +169,7 @@ func TestEnsureProfileCodexExecutionReadyRejectsAuthSymlink(t *testing.T) {
 	if err := os.MkdirAll(profile.CodexHome, 0o700); err != nil {
 		t.Fatalf("mkdir profile codex home: %v", err)
 	}
-	if err := app.store.EnsureProfileDir(profile); err != nil {
+	if _, err := app.store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 	target := filepath.Join(t.TempDir(), "shared-auth.json")
@@ -166,6 +207,46 @@ func TestCmdCLIFailsWhenSharedConfigDoesNotUseFileStoreFromApp(t *testing.T) {
 	}
 	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected codex to not be invoked, stat err=%v", err)
+	}
+}
+
+func TestProfileCommandsApplyCustomResourcePolicy(t *testing.T) {
+	for _, command := range []string{"add", "login", "login-all", "cli"} {
+		t.Run(command, func(t *testing.T) {
+			app, _ := newExecTestApp(t)
+			if command != "add" {
+				createExecProfiles(t, app, "alpha")
+			}
+			source := filepath.Join(t.TempDir(), "skills")
+			if err := os.MkdirAll(filepath.Join(source, "shared"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := app.loadOrInitConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			inherit := true
+			sources := []string{source}
+			cfg.ProfileResources = &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
+			if err := app.store.Save(cfg); err != nil {
+				t.Fatal(err)
+			}
+
+			switch command {
+			case "add":
+				err = app.cmdAdd([]string{"alpha"})
+			case "login":
+				err = app.cmdLogin([]string{"alpha"})
+			case "login-all":
+				err = app.cmdLoginAll()
+			case "cli":
+				err = app.cmdCLI([]string{"alpha"})
+			}
+			if err != nil {
+				t.Fatalf("%s failed: %v", command, err)
+			}
+			assertLinkTarget(t, filepath.Join(app.store.paths.ProfilesDir, "alpha", "codex-home", "skills", "shared"), filepath.Join(source, "shared"))
+		})
 	}
 }
 

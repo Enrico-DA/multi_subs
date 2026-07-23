@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
 
 type profileStatus struct {
@@ -140,7 +142,8 @@ func codexLoginStatus(codexHome string) (state, account, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), codexLoginStatusTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "codex", "login", "status")
+	args := codexstate.WithManagedAuthOverride([]string{"login", "status"})
+	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.WaitDelay = 500 * time.Millisecond
 	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")
 	var out bytes.Buffer
@@ -177,12 +180,12 @@ func codexLoginStatus(codexHome string) (state, account, detail string) {
 			return "error", account, fmt.Sprintf("codex login status timed out after %s", codexLoginStatusTimeout)
 		}
 		if loginStatusTextIndicatesLoggedOut(lower) {
-			return "logged-out", account, firstLineOrDash(all)
+			return "logged-out", account, "not logged in"
 		}
-		return "error", account, firstLineOrDash(all)
+		return "error", account, fmt.Sprintf("codex login status failed with exit code %d", ee.ExitCode())
 	}
 
-	return "error", account, err.Error()
+	return "error", account, "codex login status could not be started"
 }
 
 func loginStatusTextIndicatesLoggedOut(lower string) bool {

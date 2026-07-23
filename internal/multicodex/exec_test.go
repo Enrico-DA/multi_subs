@@ -41,9 +41,43 @@ func TestCmdExecRunsCodexExecWithSelectedProfile(t *testing.T) {
 	if !strings.Contains(log, "profile=beta") {
 		t.Fatalf("expected beta profile in log, got %q", log)
 	}
-	if !strings.Contains(log, "args=exec --skip-git-repo-check hello") {
+	if !strings.Contains(log, "args=exec --skip-git-repo-check hello -c "+managedCodexAuthConfig) {
 		t.Fatalf("expected exec args in log, got %q", log)
 	}
+}
+
+func TestCmdExecPreservesCustomResourcePolicyThroughSelection(t *testing.T) {
+	app, _ := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	source := filepath.Join(t.TempDir(), "skills")
+	if err := os.MkdirAll(filepath.Join(source, "custom-skill"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := app.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inherit := true
+	sources := []string{source}
+	cfg.ProfileResources = &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
+	if err := app.store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error) {
+		return usage.SelectedAccount{Account: usage.MonitorAccount{Label: "alpha"}}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+	out, err := captureStdout(t, func() error { return app.Run([]string{"exec", "hello"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "profile resource:") {
+		t.Fatalf("resource reporting polluted exec stdout: %q", out)
+	}
+	profile := cfg.Profiles["alpha"]
+	assertLinkTarget(t, filepath.Join(profile.CodexHome, "skills", "custom-skill"), filepath.Join(source, "custom-skill"))
 }
 
 func TestCmdExecRunsCodexExecWithDefaultReserveAccount(t *testing.T) {
@@ -98,6 +132,12 @@ func TestCmdExecRunsCodexExecWithDefaultReserveAccount(t *testing.T) {
 	}
 	if !strings.Contains(log, "codex_home="+normalizeExecCodexHome(app.store.paths.DefaultCodexHome)) {
 		t.Fatalf("expected default reserve exec to use default Codex home, got %q", log)
+	}
+	if !strings.Contains(log, "args=exec --skip-git-repo-check hello\n") {
+		t.Fatalf("expected default reserve exec args to stay unchanged, got %q", log)
+	}
+	if strings.Contains(log, managedCodexAuthConfig) {
+		t.Fatalf("default reserve exec received managed auth override: %q", log)
 	}
 }
 
@@ -164,6 +204,9 @@ func TestCmdExecHelpWorksWithoutProfiles(t *testing.T) {
 	}
 	if !strings.Contains(log, "args=exec --help") {
 		t.Fatalf("expected exec --help passthrough, got %q", log)
+	}
+	if strings.Contains(log, managedCodexAuthConfig) {
+		t.Fatalf("exact help delegation received managed auth override: %q", log)
 	}
 }
 
@@ -573,7 +616,7 @@ func TestCmdExecTreatsFlagsAfterTerminatorAsPromptText(t *testing.T) {
 	if !strings.Contains(log, "profile=alpha") {
 		t.Fatalf("expected alpha profile in log, got %q", log)
 	}
-	if !strings.Contains(log, "args=exec -- -m=gpt-5-codex-spark --help") {
+	if !strings.Contains(log, "args=exec -c "+managedCodexAuthConfig+" -- -m=gpt-5-codex-spark --help") {
 		t.Fatalf("expected args after -- to pass through unchanged, got %q", log)
 	}
 }
@@ -967,8 +1010,8 @@ if [[ "${1:-}" == "--version" ]]; then
   echo "codex-cli fake"
   exit 0
 fi
-if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}" == "untrusted" && "${5:-}" == "app-server" ]]; then
-  python3 -c '
+if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}" == "untrusted" && "${5:-}" == "-c" && "${6:-}" == 'cli_auth_credentials_store="file"' && "${7:-}" == "app-server" ]]; then
+  exec python3 -c '
 import json
 import os
 import sys

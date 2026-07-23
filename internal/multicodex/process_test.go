@@ -95,7 +95,7 @@ func TestRunInteractiveCodexWithProfileExecsWhenTerminalAttached(t *testing.T) {
 	if gotPath != "/tmp/fake-codex" {
 		t.Fatalf("unexpected exec path: %q", gotPath)
 	}
-	if want := []string{"codex", "--version"}; strings.Join(gotArgs, "\x00") != strings.Join(want, "\x00") {
+	if want := []string{"codex", "--version", "-c", managedCodexAuthConfig}; strings.Join(gotArgs, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("unexpected exec args: got=%q want=%q", gotArgs, want)
 	}
 	env := strings.Join(gotEnv, "\n")

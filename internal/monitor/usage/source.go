@@ -20,9 +20,16 @@ func NewUsageSourceForHome(codexHome string) *UsageSource {
 	}
 }
 
+func newManagedUsageSourceForHome(codexHome string) *UsageSource {
+	return &UsageSource{
+		primary:  newManagedAppServerSourceForHome(codexHome),
+		fallback: NewOAuthSourceForHome(codexHome),
+	}
+}
+
 func NewUsageSourceForAccount(account MonitorAccount) Source {
 	if account.UseAppServer {
-		return NewUsageSourceForHome(account.CodexHome)
+		return newManagedUsageSourceForHome(account.CodexHome)
 	}
 	return NewOAuthSourceForHome(account.CodexHome)
 }

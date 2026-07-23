@@ -120,6 +120,39 @@ func TestClaudeExecFailsClosedWhenDefaultIdentityIsUnknown(t *testing.T) {
 	}
 }
 
+func TestClaudeExecDefaultUsageFailureHidesMalformedProviderResultText(t *testing.T) {
+	const marker = "synthetic-provider-result-marker"
+	app, runner, _ := newClaudeTestApp(t)
+	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+		switch {
+		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
+			return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
+		case reflect.DeepEqual(args, claudeUsageProbeArgs()):
+			return fakeMalformedClaudeUsageEnvelope(marker), nil, nil
+		default:
+			t.Fatalf("unexpected capture args: %#v", args)
+			return nil, nil, nil
+		}
+	}
+
+	err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("expected default usage failure, got %T (%v)", err, err)
+	}
+	if strings.Contains(exitErr.Message, marker) {
+		t.Fatalf("default usage failure exposed provider result text: %s", exitErr.Message)
+	}
+	if !strings.Contains(exitErr.Message, "parse Claude usage result: multiple percentages in one line") {
+		t.Fatalf("default usage failure omitted structural parse category: %s", exitErr.Message)
+	}
+	for _, call := range runner.Calls() {
+		if call.Kind == "run" {
+			t.Fatalf("malformed default usage started child: %+v", call)
+		}
+	}
+}
+
 func TestClaudeExecUsesDefaultOnlyWhenNoManagedProfileIsQuotaEligible(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "exhausted", "broken")

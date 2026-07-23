@@ -1,53 +1,27 @@
-# Decision Capture Policy
+# Durable decisions
 
-This document defines how to record fixes and important decisions so future work does not re-litigate the same questions. It is written to stay accurate over time.
+This log records cross-cutting product rationale that is not clearer in code, tests, the command contract, or the security contract.
 
-## When to record
-- Any fix for a confirmed bug, regression, or safety issue.
-- Any deliberate behavior choice that differs from intuitive defaults.
-- Any trade-off decision that affects reliability, security, or user workflow.
-- Any change that affects external behavior, invariants, or public interfaces.
-
-## Where to record
-Use the smallest, most local place that makes the decision obvious:
-- Code comments near behavior when rationale is not obvious.
-- Tests with names and assertions that encode the invariant.
-- Docs when a decision is cross-cutting.
-
-Prefer updating an existing note over creating a new file.
-
-## What to record
-- Decision
-- Context
-- Rationale
-- Trade-offs
-- Enforcement
-- References
-
-## Template
-```
-Decision:
-Context:
-Rationale:
-Trade-offs:
-Enforcement:
-References:
-```
-
-## Current decisions for this repo
 Decision: Use Go for multicodex implementation.
 Context: Tool needs a secure, fast, low-dependency local CLI with strong filesystem control.
 Rationale: Go provides a static binary, mature stdlib, and simple packaging for macOS and Linux.
 Trade-offs: Slightly more verbose than shell scripts, but safer and easier to test. Windows is intentionally unsupported.
 Enforcement: Build and test pipeline will run Go tooling only.
-References: `docs/requirements.md`, `docs/security-and-privacy.md`
+References: `go.mod`, `docs/security-and-privacy.md`
+
+Decision: Retain the imported tag release workflow, but do not publish fork tags before the product and module rename.
+Context: The fork repository is `Enrico-DA/multi_subs`, while the imported product and module names are still transitional. Publishing now would create install paths and release artifacts with conflicting identities.
+Rationale: Keeping the upstream workflow eases the later rename, while a repository guard prevents accidental fork publication during this sync.
+Trade-offs: The fork has no valid install-from-module or release-download path until the rename is complete; users must build a checked-out source tree.
+Enforcement: Do not create fork version tags. `.github/workflows/release.yml` stays guarded to `olliecrow/multicodex` for this upstream sync and must not publish from `Enrico-DA/multi_subs`.
+References: `internal/buildinfo/version.go`, `.github/workflows/release.yml`, `README.md`, `CONTRIBUTING.md`
 
 Decision: Keep account use profile-local and never switch the shared default Codex account.
 Context: The default Codex account is normal system Codex state and must stay outside multicodex ownership.
 Rationale: Binding non-default accounts to profile-local `CODEX_HOME` values reduces the chance that one account workflow changes another account's auth, sessions, threads, `/goal`, or remote-control state.
 Trade-offs: Users must launch profile-scoped commands explicitly instead of changing a global account.
 Enforcement: `multicodex cli`, `multicodex exec`, and `multicodex heartbeat` route Codex subprocesses through profile-local `CODEX_HOME` values and scrub inherited account-routing environment. No command changes, restores, or manages the shared default Codex auth account.
-References: `docs/requirements.md`, `docs/command-spec.md`
+References: `docs/command-spec.md`, `docs/security-and-privacy.md`
 
 Decision: Never handle raw secrets directly in multicodex internals unless unavoidable.
 Context: Strong privacy and confidentiality requirements.
@@ -99,25 +73,18 @@ Enforcement: Core path resolution normalizes `MULTICODEX_HOME` and `MULTICODEX_D
 References: `internal/multicodex/paths.go`, `internal/multicodex/paths_test.go`, `internal/multicodex/doctor.go`, `internal/multicodex/doctor_test.go`
 
 Decision: Bound profile status latency with per-call timeout and parallel profile checks.
-Context: Battle tests showed `status` and `doctor` could become slow with multiple profiles or hanging `codex login status` calls.
+Context: End-to-end checks showed `status` and `doctor` could become slow with multiple profiles or hanging `codex login status` calls.
 Rationale: Timeout plus bounded parallelism keeps CLI responsive while preserving deterministic output ordering.
 Trade-offs: More concurrent subprocesses and slightly more code complexity.
 Enforcement: Timeout handling in status logic, worker-limited parallel collection, and timeout regression tests.
 References: `internal/multicodex/status.go`, `internal/multicodex/status_timeout_test.go`, `internal/multicodex/doctor.go`
 
-Decision: Add a profile-scoped `heartbeat` keepalive command using minimal Codex calls.
-Context: Users want a simple fire-and-forget way to keep subscription windows active and verify each logged-in profile still works.
-Rationale: Running `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello` inside each profile context is simple, independent, compatible with official auth flows, and avoids polluting session history.
-Trade-offs: Heartbeat sends a tiny real request for each logged-in profile, so there is a small per-run usage cost.
-Enforcement: `multicodex heartbeat` first checks login state per profile, skips logged-out profiles, and exits non-zero for failures or no logged-in profiles.
-References: `internal/multicodex/heartbeat.go`, `internal/multicodex/heartbeat_test.go`, `README.md`, `docs/command-spec.md`
-
-Decision: Redact heartbeat failure details from raw CLI output.
-Context: Raw `codex exec` failure text may include sensitive strings and should not be reflected in multicodex output.
-Rationale: Returning deterministic, non-sensitive status text lowers leakage risk while preserving actionable diagnostics.
-Trade-offs: Less verbose error context in the CLI output.
-Enforcement: Heartbeat failure details use generic messages with timeout or exit code metadata only; known safe diagnostics (for example missing `codex` binary) are explicit; table output truncates long profile names to keep terminal output readable; tests assert secret-like output is not surfaced.
-References: `internal/multicodex/heartbeat.go`, `internal/multicodex/heartbeat_test.go`, `docs/security-and-privacy.md`
+Decision: Keep heartbeat profile-scoped, minimal, cron-safe, and safe to report.
+Context: Users want a fire-and-forget keepalive that verifies logged-in profiles, tolerates transient failures, and is safe to schedule.
+Rationale: A fixed `hello` through ephemeral, read-only `codex exec` preserves official auth flows without persistent sessions or workspace mutation. Local locking and one bounded retry avoid overlapping or needlessly failed runs, while safe status text prevents raw subprocess output from leaking credentials.
+Trade-offs: Each logged-in profile sends a tiny real request; retries can delay final failure; redacted diagnostics contain less provider detail.
+Enforcement: Heartbeat uses each profile's `CODEX_HOME`, skips logged-out profiles, acquires a non-blocking lock under multicodex home, and runs `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello` with bounded retry. Failures expose only safe timeout, exit-code, or startup guidance, and the command exits non-zero for failures or no logged-in profiles.
+References: `internal/multicodex/heartbeat.go`, `internal/multicodex/heartbeat_test.go`, `README.md`, `docs/command-spec.md`, `docs/security-and-privacy.md`
 
 Decision: Add built-in command help topics and shell completion generation.
 Context: Users need fast command discovery and low-friction tab completion for daily usage.
@@ -131,14 +98,14 @@ Context: Users may run multiple checkouts and worktrees; one stable home-level s
 Rationale: A single predictable directory improves safety and operational consistency without moving unrelated local state.
 Trade-offs: Users who want a different state location must set `MULTICODEX_HOME` explicitly.
 Enforcement: `ResolvePaths` defaults to `~/multicodex` and tests cover defaulting, explicit override behavior, and non-mutation of hidden local state.
-References: `internal/multicodex/paths.go`, `internal/multicodex/paths_test.go`, `README.md`, `docs/implementation-notes.md`
+References: `internal/multicodex/paths.go`, `internal/multicodex/paths_test.go`, `README.md`
 
 Decision: Use Go `cmd/` and `internal/` layout for public-facing maintainability while preserving behavior.
 Context: The initial implementation was flat in the repo root and had become harder to scan as command surface and checks expanded.
 Rationale: `cmd/multicodex` for entrypoint and `internal/multicodex` for implementation aligns with common Go conventions and improves contributor onboarding without changing user-visible behavior.
 Trade-offs: File moves add short-term churn in docs and references.
-Enforcement: Entrypoint lives in `cmd/multicodex/main.go`; implementation and tests live in `internal/multicodex`; battletest plus unit/race/vet checks validate parity after refactor.
-References: `cmd/multicodex/main.go`, `internal/multicodex/`, `README.md`, `docs/implementation-notes.md`
+Enforcement: Entrypoint lives in `cmd/multicodex/main.go`; implementation and tests live in `internal/multicodex`; end-to-end, unit, race, and vet checks validate parity after refactors.
+References: `cmd/multicodex/main.go`, `internal/multicodex/`, `README.md`
 
 Decision: Prefer targeted multicodex state ignore patterns over broad `multicodex/` path ignores.
 Context: After introducing `internal/multicodex`, a broad `multicodex/` ignore rule risked masking source directories and weakening review safety.
@@ -152,35 +119,21 @@ Context: `codex login status` proves auth is present, but the narrowed command s
 Rationale: Keeping verification inside existing supported commands avoids reintroducing broad process-launch capability while still checking profile wiring.
 Trade-offs: A profile-specific live request is now done through `multicodex cli <name>` instead of a one-shot generic wrapper; `multicodex exec` remains auto-routed across configured profiles.
 Enforcement: Manual verification uses `multicodex status`, an optional `multicodex cli <name>` read-only prompt, and a follow-up `multicodex status` check. Automated exec routing is covered through `multicodex exec` tests.
-References: `README.md`, `docs/implementation-notes.md`, `docs/command-spec.md`
-
-Decision: Make heartbeat cron-safe with local locking, bounded retries, and read-only execution.
-Context: Scheduled keepalive runs should not overlap, should tolerate transient failures, and should never need to mutate the current workspace or the default Codex account.
-Rationale: A local OS lock avoids duplicate overlapping work, one retry with linear backoff handles short-lived provider hiccups, and forcing `codex exec` into ephemeral read-only mode avoids session-history pollution and reduces accidental side effects during automated refresh runs.
-Trade-offs: Slightly more heartbeat code and a small delay before final failure when retries are used.
-Enforcement: `multicodex heartbeat` acquires a non-blocking lock under multicodex home, retries failed profile heartbeats, runs `codex exec` with `--ephemeral --sandbox read-only`, and keeps all auth routing profile-scoped via `CODEX_HOME`. Exact-argv tests prevent persistent execution from returning accidentally.
-References: `internal/multicodex/heartbeat.go`, `internal/multicodex/heartbeat_test.go`, `README.md`, `docs/command-spec.md`
+References: `README.md`, `docs/command-spec.md`
 
 Decision: Fold subscription usage monitoring into multicodex under a namespaced `monitor` command.
 Context: Users choose between multiple Codex accounts based on both account isolation and remaining subscription headroom, so keeping switching and monitoring in separate products created an avoidable split workflow.
 Rationale: One product with a dedicated `monitor` namespace matches the real user workflow while keeping usage visibility clearly separated from mutating account-management commands.
 Trade-offs: The repo and CLI gain more code and dependencies, so the monitor must stay modular and avoid bloating the root command surface.
-Enforcement: The integrated monitor lives under `internal/monitor/`; the primary user entrypoint is `multicodex monitor`; default monitor account candidates come only from monitor-owned account overrides and configured multicodex profiles. The default Codex home, the active `CODEX_HOME`, filesystem discovery, and extra raw app-server diagnostics are explicit opt-ins. When the same Codex home appears more than once, labels and source details prefer monitor-owned overrides, then multicodex profiles, then any opt-in sources by their configured priority.
-References: `internal/multicodex/monitor.go`, `internal/monitor/usage/accounts.go`, `internal/monitor/tui/model.go`, `README.md`, `docs/command-spec.md`, `docs/implementation-notes.md`
-
-Decision: Keep monitor helper subcommands under the `monitor` namespace.
-Context: Users need monitor-specific help, terminal UI launch, setup checks, and shell completion from the same namespaced command group.
-Rationale: Keeping these helpers under `multicodex monitor` makes the monitor workflow discoverable without adding more top-level commands.
-Trade-offs: Slightly more command-surface and completion/help maintenance.
-Enforcement: `multicodex monitor completion [shell]` remains available with bash default; explicit UI command `multicodex monitor tui` remains help-addressable; help topics and shell completion include nested monitor topics such as `monitor doctor`, `monitor completion`, and `monitor tui`.
-References: `internal/multicodex/monitor.go`, `internal/multicodex/help.go`, `internal/multicodex/completion.go`, `internal/multicodex/monitor_test.go`, `README.md`, `docs/command-spec.md`
+Enforcement: The integrated monitor lives under `internal/monitor/`; its UI, doctor, completion, and help entrypoints remain under `multicodex monitor`. Default account candidates include the global Codex home, monitor-owned overrides, and configured profiles. The global home can be omitted with `--include-default=false`; active `CODEX_HOME`, filesystem discovery, and extra raw app-server diagnostics remain opt-ins. Duplicate homes prefer monitor-owned labels, then multicodex profiles, then the global home and other optional sources.
+References: `internal/multicodex/monitor.go`, `internal/multicodex/help.go`, `internal/multicodex/completion.go`, `internal/multicodex/monitor_test.go`, `internal/monitor/usage/accounts.go`, `internal/monitor/tui/model.go`, `README.md`, `docs/command-spec.md`
 
 Decision: Default profile config to the shared global Codex config, while preserving explicit per-profile overrides.
 Context: Users expect Codex feature settings such as search or model defaults to stay consistent across regular Codex usage and multicodex profile usage without copying config files into each profile.
 Rationale: A profile-local symlink to the default Codex `config.toml` keeps settings current automatically as the global config changes, while leaving any non-generated profile-local config file intact preserves an escape hatch for account-specific customization.
 Trade-offs: Auth isolation now depends more directly on the default Codex config using file-backed credentials; profile login must fail clearly when the effective config would not use file-backed auth; doctor output must explain shared-config states clearly.
 Enforcement: New profiles create a `config.toml` symlink to the default Codex config; generated profile configs stay aligned with that symlink policy; manually maintained profile config files are preserved as overrides; `multicodex login`, `multicodex status`, and profile-scoped Codex execution paths reject configs that do not enable file-backed auth before exporting profile env or running Codex.
-References: `internal/multicodex/config.go`, `internal/multicodex/config_test.go`, `internal/multicodex/doctor.go`, `README.md`, `docs/implementation-notes.md`
+References: `internal/multicodex/config.go`, `internal/multicodex/config_test.go`, `internal/multicodex/doctor.go`, `README.md`
 
 Decision: Present monitor identities and timestamps for operator readability while keeping internal timekeeping canonical.
 Context: The monitor aggregates account usage across multiple Codex homes, but raw email addresses and UTC timestamps with seconds make the TUI harder to scan during live account selection.
@@ -200,15 +153,15 @@ Decision: Add `multicodex exec` as an auto-routing wrapper around `codex exec`.
 Context: Users often want the convenience of `codex exec` without manually choosing which logged-in subscription account currently has the most weekly headroom.
 Rationale: A dedicated `multicodex exec` command preserves a simple, familiar interface while keeping account-selection policy explicit and local to multicodex.
 Trade-offs: Selection is snapshot-based, so simultaneous launches can still choose the same account and the chosen account may change between invocations. The protected default account can also be used as the final fallback even when its usage data is unavailable or exhausted; that accepts possible Codex-side failure to satisfy the rule that a prompt should be sent somewhere when any destination exists.
-Enforcement: `multicodex exec` forwards all arguments directly to `codex exec`, bypasses profile selection only for exact help requests, and excludes configured profiles at 100% weekly usage. Exec orders configured profiles by selection priority, then known weekly reset soonest, then unknown weekly reset, with randomness only for exact ties. The default Codex home is a protected reserve and is used only when no configured profile has usable weekly usage, including when there are no configured profiles. If the default Codex home is the only remaining destination, exec uses it as the final fallback even when its weekly usage is unavailable or exhausted. Unsafe configured profile paths still fail before routing instead of being hidden by global fallback. Tests assert weekly exhaustion and missing-data handling, reset ordering, exact ties, protected reserve execution, no-profile reserve execution, and final reserve fallback.
+Enforcement: `multicodex exec` preserves all user arguments and bypasses profile selection only for exact help requests. A selected managed profile receives the shared final file-backed-auth override before standalone `--`; default-reserve exec and exact help do not. Routing excludes configured profiles at 100% weekly usage, orders configured profiles by selection priority, then known weekly reset soonest, then unknown weekly reset, and uses randomness only for exact ties. The default Codex home is a protected reserve and is used only when no configured profile has usable weekly usage, including when there are no configured profiles. If the default Codex home is the only remaining destination, exec uses it as the final fallback even when its weekly usage is unavailable or exhausted. Unsafe configured profile paths still fail before routing instead of being hidden by global fallback. Tests assert argument boundaries, weekly exhaustion and missing-data handling, reset ordering, exact ties, protected reserve execution, no-profile reserve execution, and final reserve fallback.
 References: `internal/multicodex/exec.go`, `internal/multicodex/exec_test.go`, `internal/monitor/usage/select.go`, `internal/monitor/usage/select_test.go`, `README.md`, `docs/command-spec.md`
 
 Decision: Parse `cli_auth_credentials_store` by exact key instead of substring matching.
 Context: Shared profile configs rely on the default Codex `config.toml`, so auth-isolation checks must inspect the real credential-store setting rather than unrelated comments or strings.
 Rationale: A small exact-key parser removes false positives without adding a TOML dependency and keeps login, doctor, exec, heartbeat, and profile-scoped Codex checks aligned.
 Trade-offs: Slightly more parsing code to maintain, but much lower risk of silently misclassifying auth isolation.
-Enforcement: All file-store checks route through the shared parser and regression tests cover comments, unrelated strings, and nested tables.
-References: `internal/multicodex/config.go`, `internal/multicodex/config_test.go`, `internal/multicodex/doctor.go`, `internal/multicodex/app.go`
+Enforcement: All disk preflight checks route through the shared parser, and every managed login, interactive CLI, configured-profile exec, heartbeat, and validated-profile app-server child also receives the shared final `-c 'cli_auth_credentials_store="file"'` override before standalone `--`. The argument helper belongs to `internal/codexstate` so CLI and monitor callers share one implementation. Default-account exec, exact exec-help delegation, and explicit raw app-server diagnostics do not receive the override. Regression tests cover parser edge cases, user config and profile overrides, delimiter placement, each managed launch path, and the raw/default exclusions.
+References: `internal/codexstate/args.go`, `internal/codexstate/args_test.go`, `internal/multicodex/config.go`, `internal/multicodex/config_test.go`, `internal/multicodex/doctor.go`, `internal/multicodex/app.go`, `internal/monitor/usage/appserver.go`, `internal/monitor/usage/appserver_test.go`
 
 Decision: Keep read-only command discovery from changing local state.
 Context: Help, completion, status, doctor, monitor, dry-run, and unknown commands are often used for inspection or shell setup. Running them should not move local multicodex state.
@@ -216,6 +169,13 @@ Rationale: Read-only commands need to be safe probes, especially while the defau
 Trade-offs: Mutating setup happens only in commands that explicitly create or update multicodex-owned state.
 Enforcement: `RunCLI` handles top-level help, direct command help such as `cli --help`, version, and `exec --help` before path resolution, validates unknown commands before path resolution, and uses read-only path resolution for read-only commands. `status` loads existing config without creating a fresh home, and monitor commands no longer create the monitor data dir just to inspect usage. Tests cover help, unknown commands, status, command help, and `exec --help` leaving local state untouched.
 References: `cmd/multicodex/main.go`, `internal/multicodex/app.go`, `internal/multicodex/monitor.go`, `internal/multicodex/run_cli_test.go`, `internal/multicodex/paths.go`, `internal/multicodex/paths_test.go`
+
+Decision: Provide explicit all-profile reconciliation without auth or Codex execution.
+Context: Resource policies must be applied by unattended setup and refresh workflows, while status and diagnostic commands need to remain safe read-only probes.
+Rationale: One narrow `multicodex reconcile` command reuses the established profile setup and no-clobber rules instead of making `status` mutate state or forcing each deployment to duplicate profile ownership logic.
+Trade-offs: Reconciliation is an explicit mutating command and may repair multicodex-managed profile directories and config links in addition to guidance and skill links. It does not inspect auth, launch Codex, or change the default Codex home.
+Enforcement: The command processes registered profiles in sorted order under the config lock, continues after independent profile failures, and returns non-zero when any profile fails. Tests cover resource changes, idempotence, partial failure, auth preservation, empty state, and invalid arguments.
+References: `internal/multicodex/reconcile.go`, `internal/multicodex/reconcile_test.go`, `docs/command-spec.md`
 
 Decision: Clear stale profile and account environment for Codex subprocesses.
 Context: Commands can be launched from a shell that still has profile-scoped `CODEX_HOME`, multicodex metadata, or account-token environment variables.
@@ -228,8 +188,8 @@ Decision: Use Codex app-server first for validated multicodex profile homes, wit
 Context: Direct OAuth usage fetches fail when a profile's access token has expired, even if the profile is still logged in and Codex app-server can read usage through the normal Codex auth path.
 Rationale: Validated multicodex profile homes are already checked for profile-local file-backed auth, so the monitor can safely match Codex CLI auth handling for those profiles instead of treating refreshable credentials as logged out. Unvalidated monitor account homes stay on direct OAuth so app-server does not follow a different credential store than the local `auth.json` path.
 Trade-offs: Normal monitor refreshes may start profile-scoped read-only Codex app-server sessions for validated profile homes. This is heavier than direct OAuth, but it avoids false `auth expired` rows for profiles that Codex itself can still use while preserving stricter boundaries for monitor account overrides and discovered homes.
-Enforcement: Account discovery marks validated multicodex profile homes as app-server-safe; account fetchers use app-server first only for those homes and use direct OAuth for other homes unless they dedupe with a validated profile home. `monitor doctor` checks the same normal usage path by default and only adds separate raw app-server checks when `--app-server` is passed. Exit status succeeds when at least one usage fetch works, with degraded status when another fetch or setup check fails.
-References: `internal/monitor/usage/accounts.go`, `internal/monitor/usage/fetcher.go`, `internal/monitor/usage/source.go`, `internal/monitor/usage/doctor.go`, `internal/monitor/usage/accounts_test.go`, `internal/monitor/usage/fetcher_test.go`, `README.md`, `docs/command-spec.md`
+Enforcement: Account discovery marks validated multicodex profile homes as app-server-safe through `MonitorAccount.UseAppServer`; normal account sources and account fetchers use the managed app-server path only when that flag is true, force the shared final file-backed-auth override before `app-server`, and keep direct OAuth as fallback. Other homes stay on direct OAuth unless they dedupe with a validated profile home. A non-empty `CODEX_HOME` does not prove managed status. `monitor doctor` checks the same normal usage path by default and only adds separate unforced raw app-server checks when `--app-server` is passed. Exit status succeeds when at least one usage fetch works, with degraded status when another fetch or setup check fails.
+References: `internal/codexstate/args.go`, `internal/monitor/usage/accounts.go`, `internal/monitor/usage/appserver.go`, `internal/monitor/usage/fetcher.go`, `internal/monitor/usage/source.go`, `internal/monitor/usage/doctor.go`, `internal/monitor/usage/accounts_test.go`, `internal/monitor/usage/appserver_test.go`, `internal/monitor/usage/fetcher_test.go`, `internal/monitor/usage/source_test.go`, `README.md`, `docs/command-spec.md`
 
 Decision: Keep last good official monitor window cards visible during full refresh outages, and prioritize concrete fetch failures in diagnostics.
 Context: The monitor can hit short periods where every official usage fetch fails together even though the last good official data is still useful and the local token estimate still refreshes. In that state, blanking every window card to `unavailable` is noisy and hides the more useful fetch error.
@@ -261,9 +221,9 @@ References: `internal/monitor/usage/fetcher.go`, `internal/monitor/usage/fetcher
 
 Decision: Prefer a plain-English re-login warning when monitor fetches fail because a profile token expired.
 Context: The monitor can detect expired profile auth from both the app-server path and the oauth fallback, but the raw provider error is long and easy to miss in the TUI diagnostics line.
-Rationale: A short warning such as `account "work" auth expired; sign in again` tells the operator what to do next without hiding the underlying failure from deeper debug output.
-Trade-offs: The top-level warning is less literal than the raw provider response, so the account row still keeps the original error text for debugging and tests.
-Enforcement: Multi-account monitor summaries collapse token-expired fetch errors into plain-English account warnings, and the TUI diagnostics priority prefers those re-login warnings ahead of generic account fetch failures when no active-window warning is present.
+Rationale: A short warning such as `account "work" auth expired; sign in again` tells the operator what to do next without exposing arbitrary external text.
+Trade-offs: Diagnostics retain safe HTTP, RPC, and process status codes but omit raw provider and subprocess failure details.
+Enforcement: Usage sources classify known auth failures at their trust boundary, expose only allowlisted recovery guidance, and never copy raw provider response bodies or app-server messages into monitor output.
 References: `internal/monitor/usage/fetcher.go`, `internal/monitor/usage/fetcher_test.go`, `internal/monitor/tui/model.go`, `internal/monitor/tui/model_test.go`, `README.md`, `docs/command-spec.md`
 
 Decision: Declared weekly-only provider responses stay visible and usable.
@@ -277,29 +237,22 @@ Decision: Use weekly usage as the only normalized account limit.
 Context: The provider's useful current account signal is the weekly default or Spark bucket. Keeping an obsolete shorter window in routing, estimates, metadata, and the monitor adds noise and can choose a worse account.
 Rationale: One explicit weekly model makes eligibility, reset ordering, local estimates, metadata, tests, and the TUI agree on the same account-selection contract.
 Trade-offs: Selected-profile metadata now emits only `weekly_used_percent`; consumers of the two older optional percent names must update. Raw primary/secondary fields remain only while decoding provider payloads and supporting the narrow older positional fallback.
-Enforcement: Normalized summaries and model buckets expose one weekly window. Routing orders by selection priority, known weekly reset soonest, then unknown reset, and randomizes only exact ties. Local session estimates use one seven-day cutoff. The TUI renders one full-width weekly card per account with default and Spark lines. Selected-profile metadata emits only `weekly_used_percent`.
-References: `internal/monitor/usage/model.go`, `internal/monitor/usage/raw_types.go`, `internal/monitor/usage/select.go`, `internal/monitor/usage/observed_tokens.go`, `internal/multicodex/exec.go`, `internal/monitor/tui/model.go`, `README.md`, `docs/command-spec.md`
-
-Decision: Default-branch-first day-to-day workflow is acceptable in this personal repo.
-Context: This repository is part of the user's personal GitHub portfolio and often supports experimental or fast-iteration work. The user explicitly prefers to work directly on the default branch for normal day-to-day changes unless there is a task-specific reason to branch.
-Rationale: Working directly on the default branch keeps personal-repo execution simple and fast. Branches remain available when they materially help with coordination, isolation, or review.
-Trade-offs: There is less branch isolation by default, so targeted staging, small checkpoints, and verification still matter.
-Enforcement: Agents may use the repository's default branch for normal personal-repo work unless the user requests a separate branch or the task clearly benefits from one.
-References: `AGENTS.md`, `docs/workflows.md`, `README.md`
+Enforcement: Normalized summaries and model buckets expose one weekly window. Routing orders by selection priority, known weekly reset soonest, then unknown reset, and randomizes only exact ties. Local session estimates use one seven-day cutoff. The TUI renders one full-width weekly card per account with default and Spark lines. Doctor renders missing weekly data as unavailable rather than exposing the internal numeric marker. Selected-profile metadata emits only `weekly_used_percent`.
+References: `internal/monitor/usage/model.go`, `internal/monitor/usage/raw_types.go`, `internal/monitor/usage/select.go`, `internal/monitor/usage/observed_tokens.go`, `internal/monitor/usage/doctor.go`, `internal/monitor/usage/doctor_test.go`, `internal/multicodex/exec.go`, `internal/monitor/tui/model.go`, `README.md`, `docs/command-spec.md`
 
 Decision: `multicodex cli <profile>` uses shared Codex config defaults instead of injecting multicodex defaults.
 Context: The user's default model, reasoning level, permissions, and other Codex config should stay shared across normal Codex and multicodex profile sessions.
 Rationale: Letting Codex read the shared `config.toml` keeps config behavior simple and avoids multicodex becoming another source of model or permission defaults.
 Trade-offs: Users who want command-specific overrides must pass normal Codex CLI args explicitly.
-Enforcement: `multicodex cli <profile> [codex args...]` launches `codex` in the selected profile context and forwards only user-supplied args. In real interactive terminals it hands off directly into `codex`. Tests cover args, profile env, the interactive handoff path, help, concurrent profile-local state, and auth-isolation preflight.
+Enforcement: `multicodex cli <profile> [codex args...]` launches `codex` in the selected profile context, preserves all user-supplied args, and adds only the shared final file-backed-auth override. In real interactive terminals it hands off directly into `codex` with the same enforced arguments. Tests cover args, profile env, the interactive handoff path, help, concurrent profile-local state, and both auth-isolation checks.
 References: `internal/multicodex/cli.go`, `internal/multicodex/cli_test.go`, `README.md`, `docs/command-spec.md`
 
-Decision: Profile homes inherit missing top-level skills from the shared default Codex skills tree.
-Context: Some multicodex profile homes were created before newer shared skills existed, which let profile-scoped Codex runs miss skills that were still present in `~/.codex/skills`.
-Rationale: Filling in only missing top-level entries keeps shared skills available across profiles without copying skill trees or overwriting explicit per-profile overrides.
-Trade-offs: Profile homes now depend a bit more on the shared default skills tree for inherited skills, but manual profile-local top-level overrides still work.
-Enforcement: Profile creation and profile-directory repair both fill in missing top-level `skills` entries from the default Codex home while leaving existing profile entries untouched. Tests cover both missing-entry repair and manual-override preservation.
-References: `internal/multicodex/config.go`, `internal/multicodex/config_test.go`, `README.md`, `docs/command-spec.md`, `docs/implementation-notes.md`
+Decision: Keep profile resource sharing optional and preserve the established policy when it is omitted.
+Context: Profiles already inherit missing portable top-level skills from the default Codex skills tree, while profile guidance is unmanaged. Runtime-managed `.system` content remains profile-local. Some users also need shared guidance or more than one skill source without a second config system or copied trees.
+Rationale: One optional `profile_resources` block adds explicit guidance and ordered skill sources while keeping every old config and omitted setting on the original path. Required booleans and strict nested decoding prevent a typo from becoming destructive isolation.
+Trade-offs: Explicit management owns symlinks at the documented profile positions, so another pre-existing custom symlink can be retargeted or removed. `.system` uses a narrower rule because the runtime must create profile-local state there. Regular files and directories remain overrides, and every reported removal or retarget includes the old target.
+Enforcement: Config loading checks resource shape and contradictions without filesystem access. A shared read-only resolver expands `~`, resolves relative paths from `config.json`, fully resolves every configured or default skill source and selected entry, rejects canonical targets that overlap managed or default account state except for the canonical default skills directory, and requires inherited entries to end at directories. Reconciliation validates the full desired set first, pins skill links to canonical entry directories, migrates alias-form managed links by exact target text, treats either regular guidance file as a whole-pair override, and merges skill sources in order. The omitted-source and legacy default-inheritance paths use the same pinning. Every policy excludes `.system` from inheritance, preserves a regular profile-local `.system` directory, removes only a safely resolved stale default-tree link, and rejects unsafe or broken `.system` links unchanged.
+References: `internal/multicodex/resources.go`, `internal/multicodex/resources_test.go`, `internal/multicodex/config.go`, `README.md`, `docs/command-spec.md`, `docs/security-and-privacy.md`
 
 Decision: Route `multicodex exec` model-aware to Spark buckets when the model name requests Spark.
 Context: A subscription snapshot can include both default (`codex`) and Spark (`codex_bengalfox`/Spark-name) weekly buckets, and Spark model names should use Spark quota.
@@ -313,21 +266,21 @@ Context: The monitor needs to make weekly usage easy to scan without spending sp
 Rationale: One full-width card per account gives the default and Spark lines enough room for percent used, a restrained progress bar, reset countdown, and exact local reset time where useful.
 Trade-offs: Optional decoration is hidden in narrow terminals so core weekly values and countdowns remain readable.
 Enforcement: `internal/monitor/tui/model.go` renders one weekly card per account, adds Spark as a second line when present, and drops progress and exact time before core values at narrow widths. Layout tests cover narrow, standard, wide, short, many-account, stale, loading, partial, error, color, and no-color states.
-References: `internal/monitor/tui/model.go`, `internal/monitor/tui/model_test.go`, `internal/monitor/usage/model.go`, `docs/command-spec.md`, `docs/implementation-notes.md`
+References: `internal/monitor/tui/model.go`, `internal/monitor/tui/model_test.go`, `internal/monitor/usage/model.go`, `docs/command-spec.md`
 
 Decision: This public repository keeps always-on public-readiness and safety/privacy/security discipline.
 Context: The repository is currently public on GitHub and the user wants public personal repositories to continue following stronger public-surface safety, security, privacy, and publication standards during normal maintenance work.
 Rationale: Public repositories have an external audience and external blast radius, so public-readiness hygiene should remain active continuously rather than only during one-off release work.
 Trade-offs: Day-to-day maintenance carries more process overhead than it would in a private-only repo.
 Enforcement: Keep public-surface safety, security, privacy, and publication checks active for normal maintenance work in this repository.
-References: `AGENTS.md`, `docs/workflows.md`, `README.md`
+References: `AGENTS.md`, `README.md`, `docs/security-and-privacy.md`
 
 Decision: This personal repository uses only official, reputable, and well-supported third-party dependencies and services by default.
 Context: The user explicitly does not want dodgy or non-reputable third-party services, APIs, MCPs, packages, frameworks, libraries, modules, or similar tooling introduced here, regardless of whether the repository is public or private.
 Rationale: Favoring official vendor offerings and reputable, popular, well-supported dependencies reduces supply-chain, maintenance, abandonment, and trust risk while keeping the repository easier to maintain.
 Trade-offs: Some niche or experimental tools will be skipped unless they later earn a stronger trust/support profile or the user explicitly approves them.
 Enforcement: Prefer official APIs, official MCPs, official SDKs, and reputable well-maintained third-party services, packages, frameworks, libraries, and modules. Do not add obscure, weakly maintained, questionable, or low-trust dependencies or integrations without explicit user approval.
-References: `docs/decisions.md`
+References: `AGENTS.md`, `CONTRIBUTING.md`
 
 Decision: Plain English and clear naming are the default for this repository.
 Context:
@@ -349,11 +302,11 @@ Small, evidence-backed changes are easier to verify and less likely to hide fail
 Trade-offs:
 Some requests may stop with a clear error instead of continuing through a permissive fallback.
 Enforcement:
-`docs/workflows.md` defines the active change discipline: make only high-confidence changes, keep one clear current path, avoid speculative fallbacks, treat docs and command contracts as behavior, verify close to the change before broader checks, and keep scratch planning out of committed docs.
+`AGENTS.md` defines the active change discipline: make only high-confidence changes, keep one clear current path, avoid speculative fallbacks, treat docs and command contracts as behavior, verify close to the change before broader checks, and keep scratch planning out of committed docs.
 References:
-`docs/workflows.md`, `AGENTS.md`
+`AGENTS.md`, `docs/command-spec.md`, `docs/security-and-privacy.md`
 
-Decision: Treat this fork as belonging under `Enrico-DA`, with `olliecrow/multicodex` as its attributed upstream.
+Decision: Treat `Enrico-DA/multi_subs` as the fork repository, with `olliecrow/multicodex` as its attributed upstream.
 Context:
 Work in this workspace can span personal GitHub accounts and organization-owned repositories. A repo-level ownership note keeps docs, remotes, automation, releases, and publishing steps pointed at the right account.
 Rationale:
@@ -361,7 +314,7 @@ A clear fork owner and upstream boundary prevents accidental writes to upstream 
 Trade-offs:
 If this repository ever moves to a different owner, this note must be updated in the same change.
 Enforcement:
-`AGENTS.md`, module/install docs, releases, and publishing steps point to `Enrico-DA`; an upstream remote may remain read-only and no automation writes to it.
+`AGENTS.md` directs fork pushes only to `Enrico-DA/multi_subs`; the current product and module keep the `multicodex` name during this upstream sync; an upstream remote may remain read-only and no automation writes to it.
 References:
 `AGENTS.md`
 
@@ -385,6 +338,6 @@ Rationale:
 Trade-offs:
 Claude usage parsing depends on the supported official CLI text contract. The default Claude account is a reserve rather than a managed profile, and concurrent eligible workers may return busy instead of spending it.
 Enforcement:
-Bare commands remain Codex commands. `multicodex claude` derives managed paths under the Claude provider tree, scrubs inherited account overrides, requires and deduplicates first-party Max organization identities, uses isolated non-persistent usage probes, and gives the official child an organization lock that survives wrapper death. It never reads or writes Claude credentials. Unit tests use fake CLI output; a live acceptance test covers two Max accounts and Fable execution.
+Bare commands remain Codex commands. `multicodex claude` derives managed paths under the Claude provider tree, scrubs inherited account overrides, requires and deduplicates first-party Max organization identities, uses isolated non-persistent usage probes with deterministic failure categories, and gives the official child an organization lock that survives wrapper death. It never reads or writes Claude credentials or exposes captured probe diagnostics. Unit tests use fake CLI output; a live acceptance test covers two Max accounts and Fable execution.
 References:
 `internal/multicodex/claude*.go`, `README.md`, `docs/command-spec.md`, `docs/security-and-privacy.md`

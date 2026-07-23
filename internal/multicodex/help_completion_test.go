@@ -29,6 +29,12 @@ func TestHelpCommandGlobal(t *testing.T) {
 	if !strings.Contains(out, "cli <name>") {
 		t.Fatalf("expected cli command in help output")
 	}
+	if !strings.Contains(out, "reconcile") {
+		t.Fatalf("expected reconcile command in help output")
+	}
+	if !strings.Contains(out, "claude <command>") {
+		t.Fatalf("expected Claude namespace in help output")
+	}
 	if !strings.Contains(out, "multicodex help <command>") {
 		t.Fatalf("expected help topic usage in help output")
 	}
@@ -47,6 +53,19 @@ func TestHelpCommandTopic(t *testing.T) {
 	}
 	if !strings.Contains(out, "do not persist Codex session files") {
 		t.Fatalf("expected ephemeral session guarantee in heartbeat help: %s", out)
+	}
+}
+
+func TestHelpCommandClaudeTopic(t *testing.T) {
+	app := newTestAppForCLI(t)
+	out, err := captureStdout(t, func() error {
+		return app.Run([]string{"help", "claude", "exec"})
+	})
+	if err != nil {
+		t.Fatalf("Claude help topic failed: %v", err)
+	}
+	if !strings.Contains(out, "multicodex claude exec") || !strings.Contains(out, "fresh profile-scoped usage checks") {
+		t.Fatalf("unexpected Claude help topic output: %s", out)
 	}
 }
 
@@ -90,11 +109,55 @@ func TestCompletionCommandBash(t *testing.T) {
 	if !strings.Contains(out, `compgen -W "add login cli exec status usage doctor help"`) {
 		t.Fatalf("expected Claude subcommands in completion output")
 	}
+	if !strings.Contains(out, "reconcile") {
+		t.Fatalf("expected reconcile command in completion output")
+	}
 	if !strings.Contains(out, "__complete-profiles") {
 		t.Fatalf("expected dynamic profile completion helper")
 	}
 	if !strings.Contains(out, "monitor\\ tui") {
 		t.Fatalf("expected nested monitor tui help topic in bash completion output")
+	}
+}
+
+func TestCompletionScriptsIncludeIntegratedCommandSurface(t *testing.T) {
+	tests := []struct {
+		name              string
+		output            string
+		topLevelCommands  string
+		claudeSubcommands string
+		claudeHelpTopic   string
+	}{
+		{
+			name:              "bash",
+			output:            renderBashCompletion(),
+			topLevelCommands:  `local commands="claude init add login login-all cli exec status reconcile`,
+			claudeSubcommands: `compgen -W "add login cli exec status usage doctor help"`,
+			claudeHelpTopic:   `claude\ exec`,
+		},
+		{
+			name:              "zsh",
+			output:            renderZshCompletion(),
+			topLevelCommands:  `local commands="claude init add login login-all cli exec status reconcile`,
+			claudeSubcommands: "compadd -- add login cli exec status usage doctor help",
+			claudeHelpTopic:   `"claude exec"`,
+		},
+		{
+			name:              "fish",
+			output:            renderFishCompletion(),
+			topLevelCommands:  "-a 'claude init add login login-all cli exec status reconcile",
+			claudeSubcommands: "__fish_seen_subcommand_from claude' -a 'add login cli exec status usage doctor help'",
+			claudeHelpTopic:   `"claude exec"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, want := range []string{test.topLevelCommands, test.claudeSubcommands, test.claudeHelpTopic} {
+				if !strings.Contains(test.output, want) {
+					t.Errorf("completion output missing %q", want)
+				}
+			}
+		})
 	}
 }
 
@@ -109,6 +172,27 @@ func TestCompletionCommandUnsupportedShell(t *testing.T) {
 	}
 	if exitErr.Code != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitErr.Code)
+	}
+}
+
+func TestCompletionDoesNotSuggestExistingProfilesForAdd(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		bad  string
+		good string
+	}{
+		{name: "bash", out: renderBashCompletion(), bad: "add|login|cli)", good: "login|cli)"},
+		{name: "zsh", out: renderZshCompletion(), bad: "add|login|cli)", good: "login|cli)"},
+		{name: "fish", out: renderFishCompletion(), bad: "__fish_seen_subcommand_from add login cli", good: "__fish_seen_subcommand_from login cli"},
+	}
+	for _, test := range tests {
+		if strings.Contains(test.out, test.bad) {
+			t.Errorf("%s completion still suggests existing profiles for add", test.name)
+		}
+		if !strings.Contains(test.out, test.good) {
+			t.Errorf("%s completion no longer suggests profiles for login and cli", test.name)
+		}
 	}
 }
 

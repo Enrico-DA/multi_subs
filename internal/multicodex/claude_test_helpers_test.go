@@ -113,6 +113,16 @@ func fakeClaudeUsageEnvelope(session, weekly float64, fable *float64) []byte {
 	return payload
 }
 
+func fakeMalformedClaudeUsageEnvelope(marker string) []byte {
+	payload, _ := json.Marshal(map[string]any{
+		"type":     "result",
+		"is_error": false,
+		"result": "Current session\n10% used " + marker + " 20% used\nResets in 2 hours\n\n" +
+			"Current week (all models)\n30% used\nResets Monday at 09:00",
+	})
+	return payload
+}
+
 func fakeClaudeAuthJSON(loggedIn bool, email string) []byte {
 	return fakeClaudeAuthJSONWithOrg(loggedIn, email, "org-"+email)
 }

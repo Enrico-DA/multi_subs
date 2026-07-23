@@ -3,9 +3,76 @@ package usage
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
+
+func TestRawAndDefaultAppServerArgsDoNotForceManagedAuth(t *testing.T) {
+	t.Parallel()
+
+	for name, source := range map[string]*AppServerSource{
+		"default": NewAppServerSource(),
+		"raw":     NewAppServerSourceForHome("/raw"),
+	} {
+		source := source
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if source.managedProfile {
+				t.Fatal("raw app-server source marked as managed")
+			}
+			got := newAppServerSession(source.codexHome, source.managedProfile).commandArgs()
+			want := []string{"-s", "read-only", "-a", "untrusted", "app-server"}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("raw app-server args: got %#v want %#v", got, want)
+			}
+			for _, arg := range got {
+				if arg == codexstate.ManagedAuthConfig {
+					t.Fatalf("raw app-server args received managed auth override: %#v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestManagedAppServerArgsForceOneAuthOverrideBeforeSubcommand(t *testing.T) {
+	t.Parallel()
+
+	source := newManagedAppServerSourceForHome("/managed")
+	if !source.managedProfile {
+		t.Fatal("managed app-server source not marked as managed")
+	}
+	got := newAppServerSession(source.codexHome, source.managedProfile).commandArgs()
+	want := []string{
+		"-s", "read-only",
+		"-a", "untrusted",
+		"-c", codexstate.ManagedAuthConfig,
+		"app-server",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("managed app-server args: got %#v want %#v", got, want)
+	}
+	overrideCount := 0
+	overrideIndex := -1
+	appServerIndex := -1
+	for i, arg := range got {
+		switch arg {
+		case codexstate.ManagedAuthConfig:
+			overrideCount++
+			overrideIndex = i
+		case "app-server":
+			appServerIndex = i
+		}
+	}
+	if overrideCount != 1 {
+		t.Fatalf("managed auth override count: got %d in %#v", overrideCount, got)
+	}
+	if overrideIndex == -1 || appServerIndex == -1 || overrideIndex >= appServerIndex {
+		t.Fatalf("managed auth override must precede app-server: %#v", got)
+	}
+}
 
 func TestRefreshAuthStateFirstFingerprintNoWarning(t *testing.T) {
 	s := &AppServerSource{

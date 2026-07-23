@@ -2,6 +2,7 @@ package multicodex
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,6 +131,40 @@ func TestClaudeEnvStripsEveryDeniedCredentialAndProviderSelector(t *testing.T) {
 		if envContainsKey(claudeEnv([]string{key + "=untrusted"}, ""), key) {
 			t.Fatalf("default environment retained denied prefix key %s", key)
 		}
+	}
+}
+
+func TestClaudeProbeFailureUsesDeterministicCategories(t *testing.T) {
+	const marker = "synthetic-secret-marker"
+	expiredContext, cancel := context.WithTimeout(context.Background(), 0)
+	defer cancel()
+
+	tests := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want string
+	}{
+		{name: "timeout", ctx: expiredContext, err: errors.New(marker), want: "timed out"},
+		{
+			name: "launch failure",
+			ctx:  context.Background(),
+			err:  &os.PathError{Op: "fork/exec", Path: marker, Err: errors.New(marker)},
+			want: "launch failure",
+		},
+		{name: "unknown failure", ctx: context.Background(), err: errors.New(marker), want: "unknown failure"},
+		{name: "nil error", ctx: context.Background(), want: "unknown failure"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := claudeProbeFailure(test.ctx, test.err)
+			if got != test.want {
+				t.Fatalf("failure category: got %q want %q", got, test.want)
+			}
+			if strings.Contains(got, marker) {
+				t.Fatalf("failure category exposed synthetic secret: %q", got)
+			}
+		})
 	}
 }
 

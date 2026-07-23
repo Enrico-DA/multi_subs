@@ -29,6 +29,9 @@ func (a *App) cmdMonitor(args []string) error {
 	case "completion":
 		return a.runMonitorCompletion(args[1:])
 	case "help", "-h", "--help":
+		if err := rejectArguments(args[1:], "usage: multicodex monitor help"); err != nil {
+			return err
+		}
 		printMonitorUsage()
 		return nil
 	default:
@@ -44,7 +47,7 @@ func (a *App) runMonitorDoctor(args []string) error {
 	fs.SetOutput(os.Stderr)
 	jsonOutput := fs.Bool("json", false, "output doctor report as JSON")
 	timeout := fs.Duration("timeout", 60*time.Second, "doctor timeout")
-	includeDefault := fs.Bool("include-default", false, "include the default Codex home")
+	includeDefault := fs.Bool("include-default", true, "include the global Codex home")
 	includeActive := fs.Bool("include-active", false, "include the active CODEX_HOME")
 	discover := fs.Bool("discover", false, "discover compatible Codex homes from the filesystem")
 	appServer := fs.Bool("app-server", false, "also check the raw Codex app-server source separately")
@@ -52,6 +55,9 @@ func (a *App) runMonitorDoctor(args []string) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
+		return &ExitError{Code: 2, Message: "usage: multicodex monitor doctor [--json] [--timeout 60s] [--include-default] [--include-active] [--discover] [--app-server]"}
+	}
+	if fs.NArg() != 0 {
 		return &ExitError{Code: 2, Message: "usage: multicodex monitor doctor [--json] [--timeout 60s] [--include-default] [--include-active] [--discover] [--app-server]"}
 	}
 	if *timeout <= 0 {
@@ -106,13 +112,16 @@ func (a *App) runMonitorTUI(args []string) error {
 	timeout := fs.Duration("timeout", 60*time.Second, "per-poll fetch timeout")
 	noColor := fs.Bool("no-color", false, "disable color styling")
 	noAltScreen := fs.Bool("no-alt-screen", false, "disable alternate screen mode")
-	includeDefault := fs.Bool("include-default", false, "include the default Codex home")
+	includeDefault := fs.Bool("include-default", true, "include the global Codex home")
 	includeActive := fs.Bool("include-active", false, "include the active CODEX_HOME")
 	discover := fs.Bool("discover", false, "discover compatible Codex homes from the filesystem")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
+		return &ExitError{Code: 2, Message: "usage: multicodex monitor [--interval 60s] [--timeout 60s] [--no-color] [--no-alt-screen] [--include-default] [--include-active] [--discover]"}
+	}
+	if fs.NArg() != 0 {
 		return &ExitError{Code: 2, Message: "usage: multicodex monitor [--interval 60s] [--timeout 60s] [--no-color] [--no-alt-screen] [--include-default] [--include-active] [--discover]"}
 	}
 	if *interval <= 0 {
@@ -193,7 +202,7 @@ func printMonitorUsage() {
 	fmt.Println("Monitor doctor flags:")
 	fmt.Println("  --json            Output report as JSON")
 	fmt.Println("  --timeout 60s     Doctor timeout")
-	fmt.Println("  --include-default Include the default Codex home")
+	fmt.Println("  --include-default Include the global Codex home (default true)")
 	fmt.Println("  --include-active  Include the active CODEX_HOME")
 	fmt.Println("  --discover        Discover compatible Codex homes from the filesystem")
 	fmt.Println("  --app-server      Also check the raw Codex app-server source separately")
@@ -203,7 +212,7 @@ func printMonitorUsage() {
 	fmt.Println("  --timeout 60s     Per-poll fetch timeout")
 	fmt.Println("  --no-color        Disable color styling")
 	fmt.Println("  --no-alt-screen   Disable alternate screen mode")
-	fmt.Println("  --include-default Include the default Codex home")
+	fmt.Println("  --include-default Include the global Codex home (default true)")
 	fmt.Println("  --include-active  Include the active CODEX_HOME")
 	fmt.Println("  --discover        Discover compatible Codex homes from the filesystem")
 }
