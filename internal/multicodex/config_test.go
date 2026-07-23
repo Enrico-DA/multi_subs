@@ -104,6 +104,84 @@ func TestStoreLoadRejectsMismatchedStoredProfileName(t *testing.T) {
 	}
 }
 
+func TestStoreLoadRejectsMalformedProfileResourcesWithoutProfileMutation(t *testing.T) {
+	root := t.TempDir()
+	paths := Paths{
+		MulticodexHome:   filepath.Join(root, "multi"),
+		ConfigPath:       filepath.Join(root, "multi", "config.json"),
+		ProfilesDir:      filepath.Join(root, "multi", "profiles"),
+		DefaultCodexHome: filepath.Join(root, "codex"),
+	}
+	store := NewStore(paths)
+	if err := store.EnsureBaseDirs(); err != nil {
+		t.Fatal(err)
+	}
+	cases := []string{
+		`{"version":1,"profile_resources":{"guidance":{"inhert":true}},"profiles":{}}`,
+		`{"version":1,"profile_resources":{"skills":{}},"profiles":{}}`,
+		`{"version":1,"profile_resources":{"unknown":{}},"profiles":{}}`,
+	}
+	for i, raw := range cases {
+		if err := os.WriteFile(paths.ConfigPath, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Load(); err == nil {
+			t.Fatalf("case %d: expected malformed resource config to fail", i)
+		}
+		entries, err := os.ReadDir(paths.ProfilesDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("case %d: malformed config touched profile files: %v", i, entries)
+		}
+	}
+}
+
+func TestStoreLoadKeepsUnrelatedTopLevelFieldsPermissive(t *testing.T) {
+	root := t.TempDir()
+	paths := Paths{MulticodexHome: filepath.Join(root, "multi"), ConfigPath: filepath.Join(root, "multi", "config.json"), ProfilesDir: filepath.Join(root, "multi", "profiles")}
+	store := NewStore(paths)
+	if err := store.EnsureBaseDirs(); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"version":1,"future_top_level":true,"profiles":{}}`
+	if err := os.WriteFile(paths.ConfigPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("unrelated top-level field should remain permissive: %v", err)
+	}
+}
+
+func TestStoreLoadRejectsUnsupportedVersionWithoutRewritingConfig(t *testing.T) {
+	root := t.TempDir()
+	paths := Paths{
+		MulticodexHome: filepath.Join(root, "multi"),
+		ConfigPath:     filepath.Join(root, "multi", "config.json"),
+		ProfilesDir:    filepath.Join(root, "multi", "profiles"),
+	}
+	store := NewStore(paths)
+	if err := store.EnsureBaseDirs(); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"version":2,"future_field":{"keep":true},"profiles":{}}`
+	if err := os.WriteFile(paths.ConfigPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Load(); err == nil || !strings.Contains(err.Error(), "unsupported config version 2") {
+		t.Fatalf("expected unsupported-version error, got %v", err)
+	}
+	after, err := os.ReadFile(paths.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != raw {
+		t.Fatalf("unsupported config was rewritten: %q", after)
+	}
+}
+
 func TestStoreSaveDoesNotWriteThroughPredictableTempSymlink(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MULTICODEX_HOME", filepath.Join(root, "multicodex"))
@@ -200,7 +278,7 @@ func TestCreateProfileLinksProfileConfigToDefaultConfig(t *testing.T) {
 		t.Fatalf("write default config: %v", err)
 	}
 
-	profile, err := store.CreateProfile("work")
+	profile, _, err := store.CreateProfile("work", nil)
 	if err != nil {
 		t.Fatalf("CreateProfile: %v", err)
 	}
@@ -255,7 +333,7 @@ func TestEnsureProfileDirRejectsSymlinkedProfileDir(t *testing.T) {
 	}
 	profile := Profile{Name: "work", CodexHome: filepath.Join(profileDir, "codex-home")}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected symlinked profile dir to fail")
 	}
@@ -286,7 +364,7 @@ func TestEnsureProfileDirRejectsGroupReadableProfileRoot(t *testing.T) {
 	profileDir := filepath.Join(paths.ProfilesDir, "work")
 	profile := Profile{Name: "work", CodexHome: filepath.Join(profileDir, "codex-home")}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected group-readable profile root to fail")
 	}
@@ -317,7 +395,7 @@ func TestCreateProfileRejectsSymlinkedProfileDir(t *testing.T) {
 		t.Fatalf("symlink profile dir: %v", err)
 	}
 
-	_, err = store.CreateProfile("work")
+	_, _, err = store.CreateProfile("work", nil)
 	if err == nil {
 		t.Fatal("expected symlinked profile dir to fail")
 	}
@@ -414,7 +492,7 @@ func TestEnsureProfileDirRejectsStoredSymlinkedCodexHomeAlias(t *testing.T) {
 	}
 	profile := Profile{Name: "work", CodexHome: aliasHome}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected symlinked stored codex home alias to fail")
 	}
@@ -443,7 +521,7 @@ func TestEnsureProfileDirRejectsStoredCodexHomeOutsideProfilesDir(t *testing.T) 
 	}
 	profile := Profile{Name: "work", CodexHome: filepath.Join(aliasProfilesDir, "work", "codex-home")}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected profile path outside profiles dir to fail")
 	}
@@ -465,7 +543,7 @@ func TestEnsureProfileDirRejectsUncleanStoredCodexHome(t *testing.T) {
 	uncleanHome := paths.ProfilesDir + string(os.PathSeparator) + "work" + string(os.PathSeparator) + "link" + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "codex-home"
 	profile := Profile{Name: "work", CodexHome: uncleanHome}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected unclean stored codex home to fail")
 	}
@@ -500,7 +578,7 @@ func TestEnsureProfileDirRejectsSymlinkedSkillsDir(t *testing.T) {
 		t.Fatalf("symlink profile skills: %v", err)
 	}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected symlinked profile skills dir to fail")
 	}
@@ -534,7 +612,7 @@ func TestEnsureProfileDirRejectsSymlinkedSkillsDirWithoutDefaultSkills(t *testin
 		t.Fatalf("symlink profile skills: %v", err)
 	}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected symlinked profile skills dir to fail")
 	}
@@ -570,7 +648,7 @@ func TestEnsureProfileDirMigratesGeneratedConfigToDefaultConfig(t *testing.T) {
 		t.Fatalf("write generated profile config: %v", err)
 	}
 
-	if err := store.EnsureProfileDir(profile); err != nil {
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 
@@ -605,7 +683,7 @@ func TestEnsureProfileDirPreservesManualProfileConfig(t *testing.T) {
 		t.Fatalf("write manual profile config: %v", err)
 	}
 
-	if err := store.EnsureProfileDir(profile); err != nil {
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 
@@ -655,7 +733,7 @@ func TestEnsureProfileDirRejectsProfileConfigSymlinkOutsideDefaultConfig(t *test
 		t.Fatalf("symlink profile config: %v", err)
 	}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected unsafe profile config symlink to fail")
 	}
@@ -701,7 +779,7 @@ func TestEnsureProfileDirRejectsProfileConfigSymlinkWithTraversalThroughSymlink(
 		t.Fatalf("symlink profile config: %v", err)
 	}
 
-	err = store.EnsureProfileDir(profile)
+	_, err = store.EnsureProfileDir(profile, nil)
 	if err == nil {
 		t.Fatal("expected traversal-through-symlink profile config to fail")
 	}
@@ -727,8 +805,8 @@ func TestEnsureProfileDirLinksMissingDefaultSkillsEntries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte("model = \"gpt-5\"\n"), 0o600); err != nil {
 		t.Fatalf("write default config: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "battletest"), 0o700); err != nil {
-		t.Fatalf("mkdir default battletest skill: %v", err)
+	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "shared-skill"), 0o700); err != nil {
+		t.Fatalf("mkdir default shared skill: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "codex-primary-runtime", "slides"), 0o700); err != nil {
 		t.Fatalf("mkdir default runtime skill family: %v", err)
@@ -738,11 +816,11 @@ func TestEnsureProfileDirLinksMissingDefaultSkillsEntries(t *testing.T) {
 	}
 
 	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
-	if err := store.EnsureProfileDir(profile); err != nil {
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 
-	for _, name := range []string{"battletest", "codex-primary-runtime", ".system"} {
+	for _, name := range []string{"shared-skill", "codex-primary-runtime"} {
 		profilePath := filepath.Join(profile.CodexHome, "skills", name)
 		info, err := os.Lstat(profilePath)
 		if err != nil {
@@ -755,10 +833,13 @@ func TestEnsureProfileDirLinksMissingDefaultSkillsEntries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("readlink %s: %v", name, err)
 		}
-		want := filepath.Join(paths.DefaultCodexHome, "skills", name)
+		want := mustResolveExistingPath(t, filepath.Join(paths.DefaultCodexHome, "skills", name))
 		if target != want {
 			t.Fatalf("unexpected symlink target for %s. got=%q want=%q", name, target, want)
 		}
+	}
+	if _, err := os.Lstat(filepath.Join(profile.CodexHome, "skills", ".system")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime-managed .system must not be inherited, stat err=%v", err)
 	}
 }
 
@@ -778,7 +859,7 @@ func TestEnsureProfileDirSecuresExistingProfileSkillsDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte("model = \"gpt-5\"\n"), 0o600); err != nil {
 		t.Fatalf("write default config: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "battletest"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "shared-skill"), 0o700); err != nil {
 		t.Fatalf("mkdir default skill: %v", err)
 	}
 
@@ -797,7 +878,7 @@ func TestEnsureProfileDirSecuresExistingProfileSkillsDir(t *testing.T) {
 		t.Fatalf("chmod profile skills: %v", err)
 	}
 
-	if err := store.EnsureProfileDir(profile); err != nil {
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 	info, err := os.Stat(profileSkillsPath)
@@ -826,17 +907,17 @@ func TestEnsureProfileDirPreservesManualProfileSkillOverride(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte("model = \"gpt-5\"\n"), 0o600); err != nil {
 		t.Fatalf("write default config: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "battletest"), 0o700); err != nil {
-		t.Fatalf("mkdir default battletest skill: %v", err)
+	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "shared-skill"), 0o700); err != nil {
+		t.Fatalf("mkdir default shared skill: %v", err)
 	}
 
 	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
-	manualSkillPath := filepath.Join(profile.CodexHome, "skills", "battletest")
+	manualSkillPath := filepath.Join(profile.CodexHome, "skills", "shared-skill")
 	if err := os.MkdirAll(manualSkillPath, 0o700); err != nil {
 		t.Fatalf("mkdir manual profile skill override: %v", err)
 	}
 
-	if err := store.EnsureProfileDir(profile); err != nil {
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 
@@ -849,7 +930,7 @@ func TestEnsureProfileDirPreservesManualProfileSkillOverride(t *testing.T) {
 	}
 }
 
-func TestEnsureProfileDirRejectsProfileSkillSymlinkOutsideDefaultSkills(t *testing.T) {
+func TestEnsureProfileDirRetargetsSameNamedSkillSymlinkToPinnedDefaultEntry(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MULTICODEX_HOME", filepath.Join(root, "multicodex"))
 	t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
@@ -859,8 +940,8 @@ func TestEnsureProfileDirRejectsProfileSkillSymlinkOutsideDefaultSkills(t *testi
 		t.Fatalf("ResolvePaths: %v", err)
 	}
 	store := NewStore(paths)
-	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "battletest"), 0o700); err != nil {
-		t.Fatalf("mkdir default battletest skill: %v", err)
+	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "shared-skill"), 0o700); err != nil {
+		t.Fatalf("mkdir default shared skill: %v", err)
 	}
 
 	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
@@ -872,61 +953,169 @@ func TestEnsureProfileDirRejectsProfileSkillSymlinkOutsideDefaultSkills(t *testi
 	if err := os.MkdirAll(otherSkill, 0o700); err != nil {
 		t.Fatalf("mkdir other skill: %v", err)
 	}
-	if err := os.Symlink(otherSkill, filepath.Join(profileSkillDir, "battletest")); err != nil {
+	if err := os.Symlink(otherSkill, filepath.Join(profileSkillDir, "shared-skill")); err != nil {
 		t.Fatalf("symlink profile skill: %v", err)
 	}
 
-	err = store.EnsureProfileDir(profile)
-	if err == nil {
-		t.Fatal("expected unsafe profile skill symlink to fail")
+	if _, err = store.EnsureProfileDir(profile, nil); err != nil {
+		t.Fatalf("EnsureProfileDir: %v", err)
 	}
-	if !strings.Contains(err.Error(), "must point under default skills directory") {
-		t.Fatalf("expected default skills symlink error, got %v", err)
-	}
+	canonicalDefaultSkill := mustResolveExistingPath(t, filepath.Join(paths.DefaultCodexHome, "skills", "shared-skill"))
+	assertExactLinkTarget(t, filepath.Join(profileSkillDir, "shared-skill"), canonicalDefaultSkill)
 }
 
-func TestEnsureProfileDirRejectsProfileSkillSymlinkWithTraversalThroughSymlink(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("MULTICODEX_HOME", filepath.Join(root, "multicodex"))
-	t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
+func TestEnsureProfileDirKeepsSystemSkillsProfileLocalForEveryPolicy(t *testing.T) {
+	policies := []struct {
+		name      string
+		resources func() *ProfileResources
+	}{
+		{
+			name: "nil policy",
+			resources: func() *ProfileResources {
+				return nil
+			},
+		},
+		{
+			name: "guidance-only policy",
+			resources: func() *ProfileResources {
+				inherit := false
+				return &ProfileResources{
+					Guidance: &GuidanceResources{Inherit: &inherit},
+				}
+			},
+		},
+		{
+			name: "explicit skill policy",
+			resources: func() *ProfileResources {
+				inherit := false
+				return &ProfileResources{
+					Skills: &SkillResources{Inherit: &inherit},
+				}
+			},
+		},
+	}
+	entries := []struct {
+		name        string
+		wantRemoved bool
+		wantError   bool
+	}{
+		{name: "regular local directory"},
+		{name: "default skills tree", wantRemoved: true},
+		{name: "outside default skills tree", wantError: true},
+		{name: "cross profile", wantError: true},
+		{name: "malformed parent traversal", wantError: true},
+		{name: "broken", wantError: true},
+		{name: "traversal through symlink", wantError: true},
+	}
 
-	paths, err := ResolvePaths()
-	if err != nil {
-		t.Fatalf("ResolvePaths: %v", err)
-	}
-	store := NewStore(paths)
-	defaultSkillsPath := filepath.Join(paths.DefaultCodexHome, "skills")
-	if err := os.MkdirAll(filepath.Join(defaultSkillsPath, ".system"), 0o700); err != nil {
-		t.Fatalf("mkdir default system skill: %v", err)
-	}
-	outsideDir := filepath.Join(root, "outside")
-	outsideChild := filepath.Join(outsideDir, "child")
-	if err := os.MkdirAll(filepath.Join(outsideDir, ".system"), 0o700); err != nil {
-		t.Fatalf("mkdir outside system skill: %v", err)
-	}
-	if err := os.MkdirAll(outsideChild, 0o700); err != nil {
-		t.Fatalf("mkdir outside child: %v", err)
-	}
-	if err := os.Symlink(outsideChild, filepath.Join(defaultSkillsPath, "pivot")); err != nil {
-		t.Fatalf("symlink default skills pivot: %v", err)
-	}
+	for _, policy := range policies {
+		for _, entry := range entries {
+			t.Run(policy.name+"/"+entry.name, func(t *testing.T) {
+				root := t.TempDir()
+				t.Setenv("MULTICODEX_HOME", filepath.Join(root, "multicodex"))
+				t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
 
-	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
-	profileSkillDir := filepath.Join(profile.CodexHome, "skills")
-	if err := os.MkdirAll(profileSkillDir, 0o700); err != nil {
-		t.Fatalf("mkdir profile skills: %v", err)
-	}
-	rawTarget := defaultSkillsPath + string(os.PathSeparator) + "pivot" + string(os.PathSeparator) + ".." + string(os.PathSeparator) + ".system"
-	if err := os.Symlink(rawTarget, filepath.Join(profileSkillDir, ".system")); err != nil {
-		t.Fatalf("symlink profile system skill: %v", err)
-	}
+				paths, err := ResolvePaths()
+				if err != nil {
+					t.Fatalf("ResolvePaths: %v", err)
+				}
+				store := NewStore(paths)
+				defaultSkillsPath := filepath.Join(paths.DefaultCodexHome, "skills")
+				if err := os.MkdirAll(filepath.Join(defaultSkillsPath, ".system"), 0o700); err != nil {
+					t.Fatalf("mkdir default system skill: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte("model = \"gpt-5\"\n"), 0o600); err != nil {
+					t.Fatalf("write default config: %v", err)
+				}
 
-	err = store.EnsureProfileDir(profile)
-	if err == nil {
-		t.Fatal("expected traversal-through-symlink profile skill to fail")
-	}
-	if !strings.Contains(err.Error(), "must point under default skills directory") {
-		t.Fatalf("expected default skills symlink error, got %v", err)
+				profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
+				systemPath := filepath.Join(profile.CodexHome, "skills", ".system")
+				if err := os.MkdirAll(filepath.Dir(systemPath), 0o700); err != nil {
+					t.Fatalf("mkdir profile skills: %v", err)
+				}
+
+				rawTarget := ""
+				switch entry.name {
+				case "regular local directory":
+					if err := os.Mkdir(systemPath, 0o700); err != nil {
+						t.Fatalf("mkdir local system skills: %v", err)
+					}
+				case "default skills tree":
+					rawTarget = filepath.Join(defaultSkillsPath, ".system")
+				case "outside default skills tree":
+					rawTarget = filepath.Join(root, "outside", ".system")
+					if err := os.MkdirAll(rawTarget, 0o700); err != nil {
+						t.Fatalf("mkdir outside system skill: %v", err)
+					}
+				case "cross profile":
+					rawTarget = filepath.Join(paths.ProfilesDir, "other", "codex-home", "skills", ".system")
+					if err := os.MkdirAll(rawTarget, 0o700); err != nil {
+						t.Fatalf("mkdir other profile system skill: %v", err)
+					}
+				case "malformed parent traversal":
+					rawTarget = "../../../../../codex-default/skills/.system"
+				case "broken":
+					rawTarget = filepath.Join(root, "missing-system")
+				case "traversal through symlink":
+					outside := filepath.Join(root, "outside-via-link")
+					if err := os.MkdirAll(filepath.Join(outside, ".system"), 0o700); err != nil {
+						t.Fatalf("mkdir traversal target: %v", err)
+					}
+					if err := os.Symlink(outside, filepath.Join(defaultSkillsPath, "escape")); err != nil {
+						t.Fatalf("symlink default skill escape: %v", err)
+					}
+					rawTarget = filepath.Join(defaultSkillsPath, "escape", ".system")
+				default:
+					t.Fatalf("unknown entry kind %q", entry.name)
+				}
+
+				if rawTarget != "" {
+					if err := os.Symlink(rawTarget, systemPath); err != nil {
+						t.Fatalf("symlink profile system skill: %v", err)
+					}
+				}
+
+				before, err := os.Lstat(systemPath)
+				if err != nil {
+					t.Fatalf("lstat system skill before reconciliation: %v", err)
+				}
+				_, ensureErr := store.EnsureProfileDir(profile, policy.resources())
+				if entry.wantError {
+					if ensureErr == nil {
+						t.Fatal("expected unsafe system skills entry to fail")
+					}
+				} else if ensureErr != nil {
+					t.Fatalf("EnsureProfileDir: %v", ensureErr)
+				}
+
+				if entry.wantRemoved {
+					if _, err := os.Lstat(systemPath); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("inherited system skills link was not removed: %v", err)
+					}
+					return
+				}
+				after, err := os.Lstat(systemPath)
+				if err != nil {
+					t.Fatalf("lstat system skill after reconciliation: %v", err)
+				}
+				if after.Mode().Type() != before.Mode().Type() {
+					t.Fatalf("system skill entry type changed: before=%v after=%v", before.Mode().Type(), after.Mode().Type())
+				}
+				if rawTarget == "" {
+					if !after.IsDir() {
+						t.Fatalf("local system skills directory changed: mode=%v", after.Mode())
+					}
+					return
+				}
+				afterTarget, err := os.Readlink(systemPath)
+				if err != nil {
+					t.Fatalf("read system skill target after reconciliation: %v", err)
+				}
+				if afterTarget != rawTarget {
+					t.Fatalf("system skill raw target changed: before=%q after=%q", rawTarget, afterTarget)
+				}
+			})
+		}
 	}
 }
 
@@ -955,7 +1144,7 @@ func TestEnsureProfileDirRemovesStaleManagedProfileSkillSymlink(t *testing.T) {
 		t.Fatalf("symlink stale profile skill: %v", err)
 	}
 
-	if err := store.EnsureProfileDir(profile); err != nil {
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 	if _, err := os.Lstat(staleProfilePath); !os.IsNotExist(err) {
@@ -998,7 +1187,7 @@ func TestEnsureProfileDirRemovesStaleSkillLinkWhenDefaultSkillsDirIsSymlink(t *t
 		t.Fatalf("symlink stale profile skill: %v", err)
 	}
 
-	if err := store.EnsureProfileDir(profile); err != nil {
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
 		t.Fatalf("EnsureProfileDir: %v", err)
 	}
 	if _, err := os.Lstat(staleProfilePath); !os.IsNotExist(err) {

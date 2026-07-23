@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 	"syscall"
+
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
 
 const configVersion = 1
@@ -16,8 +18,9 @@ const generatedProfileConfigContent = "cli_auth_credentials_store = \"file\"\n"
 
 // Config stores multicodex metadata only. It does not store secrets.
 type Config struct {
-	Version  int                `json:"version"`
-	Profiles map[string]Profile `json:"profiles"`
+	Version          int                `json:"version"`
+	ProfileResources *ProfileResources  `json:"profile_resources,omitempty"`
+	Profiles         map[string]Profile `json:"profiles"`
 }
 
 // Profile maps a user-friendly name to an isolated Codex home path.
@@ -109,6 +112,9 @@ func (s *Store) Load() (*Config, error) {
 	if err := json.Unmarshal(b, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	if cfg.Version != 0 && cfg.Version != configVersion {
+		return nil, fmt.Errorf("unsupported config version %d; expected %d", cfg.Version, configVersion)
+	}
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]Profile{}
 	}
@@ -166,47 +172,62 @@ func (s *Store) Save(cfg *Config) error {
 	return nil
 }
 
-func (s *Store) CreateProfile(name string) (Profile, error) {
+func (s *Store) CreateProfile(name string, resources *ProfileResources) (Profile, []ResourceChange, error) {
 	if err := ValidateProfileName(name); err != nil {
-		return Profile{}, err
+		return Profile{}, nil, err
+	}
+	resolved, err := s.ResolveProfileResources(resources)
+	if err != nil {
+		return Profile{}, nil, err
 	}
 	if err := s.EnsureBaseDirs(); err != nil {
-		return Profile{}, err
+		return Profile{}, nil, err
 	}
 	profileDir := filepath.Join(s.paths.ProfilesDir, name)
 	codexHome := filepath.Join(profileDir, "codex-home")
 	profile := Profile{Name: name, CodexHome: codexHome}
 	if err := s.ensureProfileStoragePathSafe(profile); err != nil {
-		return Profile{}, err
+		return Profile{}, nil, err
+	}
+	if err := s.validateProfileResourceDestinations(codexHome, resources, resolved); err != nil {
+		return Profile{}, nil, err
 	}
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
-		return Profile{}, fmt.Errorf("create profile dir: %w", err)
+		return Profile{}, nil, fmt.Errorf("create profile dir: %w", err)
 	}
 
 	if err := s.ensureProfileConfig(codexHome); err != nil {
-		return Profile{}, err
+		return Profile{}, nil, err
 	}
-	if err := s.ensureProfileSkills(codexHome); err != nil {
-		return Profile{}, err
+	changes, err := s.reconcileProfileResources(codexHome, resources, resolved)
+	if err != nil {
+		return Profile{}, nil, err
 	}
 
-	return profile, nil
+	return profile, changes, nil
 }
 
-func (s *Store) EnsureProfileDir(profile Profile) error {
+func (s *Store) EnsureProfileDir(profile Profile, resources *ProfileResources) ([]ResourceChange, error) {
 	if profile.CodexHome == "" {
-		return errors.New("profile codex home is empty")
+		return nil, errors.New("profile codex home is empty")
+	}
+	resolved, err := s.ResolveProfileResources(resources)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.ensureProfileStoragePathSafe(profile); err != nil {
-		return err
+		return nil, err
+	}
+	if err := s.validateProfileResourceDestinations(profile.CodexHome, resources, resolved); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(profile.CodexHome, 0o700); err != nil {
-		return fmt.Errorf("create profile codex home: %w", err)
+		return nil, fmt.Errorf("create profile codex home: %w", err)
 	}
 	if err := s.ensureProfileConfig(profile.CodexHome); err != nil {
-		return err
+		return nil, err
 	}
-	return s.ensureProfileSkills(profile.CodexHome)
+	return s.reconcileProfileResources(profile.CodexHome, resources, resolved)
 }
 
 func (s *Store) ensureProfileStoragePathSafe(profile Profile) error {
@@ -402,65 +423,11 @@ func profileConfigCredentialStore(configPath string) (string, bool, error) {
 		}
 		return "", false, fmt.Errorf("read profile config: %w", err)
 	}
-	store, found, err := parseCredentialStoreFromTOML(string(b))
+	store, found, err := codexstate.CredentialStoreFromTOML(string(b))
 	if err != nil {
 		return "", false, fmt.Errorf("parse profile config: %w", err)
 	}
 	return store, found, nil
-}
-
-func parseCredentialStoreFromTOML(content string) (string, bool, error) {
-	inRootTable := true
-	multilineDelimiter := ""
-	for _, rawLine := range strings.Split(content, "\n") {
-		line := strings.TrimSpace(stripTOMLComment(rawLine))
-		if line == "" {
-			continue
-		}
-		if multilineDelimiter != "" {
-			if strings.Contains(line, multilineDelimiter) {
-				multilineDelimiter = ""
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "[[") && strings.HasSuffix(line, "]]") {
-			inRootTable = false
-			continue
-		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			inRootTable = false
-			continue
-		}
-		if !inRootTable {
-			continue
-		}
-
-		assignIdx := indexTOMLUnquotedByte(line, '=')
-		if assignIdx == -1 {
-			continue
-		}
-
-		key, err := parseTOMLKey(line[:assignIdx])
-		if err != nil {
-			return "", false, err
-		}
-		if key != "cli_auth_credentials_store" {
-			value := strings.TrimSpace(line[assignIdx+1:])
-			if strings.HasPrefix(value, `"""`) && strings.Count(value, `"""`)%2 == 1 {
-				multilineDelimiter = `"""`
-			} else if strings.HasPrefix(value, `'''`) && strings.Count(value, `'''`)%2 == 1 {
-				multilineDelimiter = `'''`
-			}
-			continue
-		}
-
-		value, err := parseTOMLStringOrBareValue(line[assignIdx+1:])
-		if err != nil {
-			return "", false, err
-		}
-		return value, true, nil
-	}
-	return "", false, nil
 }
 
 func ensureRegularFileOrSymlinkTarget(path, label string) error {
@@ -509,108 +476,6 @@ func ensureRegularSingleFileForWrite(path, label string) error {
 		return err
 	}
 	return nil
-}
-
-func parseTOMLKey(raw string) (string, error) {
-	key := strings.TrimSpace(raw)
-	if key == "" {
-		return "", errors.New("empty config key")
-	}
-	if len(key) >= 2 && key[0] == '"' && key[len(key)-1] == '"' {
-		unquoted, err := strconv.Unquote(key)
-		if err != nil {
-			return "", fmt.Errorf("invalid quoted config key %q: %w", key, err)
-		}
-		return unquoted, nil
-	}
-	if len(key) >= 2 && key[0] == '\'' && key[len(key)-1] == '\'' {
-		return key[1 : len(key)-1], nil
-	}
-	return key, nil
-}
-
-func parseTOMLStringOrBareValue(raw string) (string, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", errors.New("cli_auth_credentials_store has empty value")
-	}
-	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
-		unquoted, err := strconv.Unquote(value)
-		if err != nil {
-			return "", fmt.Errorf("invalid quoted cli_auth_credentials_store value %q: %w", value, err)
-		}
-		return unquoted, nil
-	}
-	if len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'' {
-		return value[1 : len(value)-1], nil
-	}
-	return "", fmt.Errorf("invalid cli_auth_credentials_store value %q", value)
-}
-
-func stripTOMLComment(line string) string {
-	inDouble := false
-	inSingle := false
-	escaped := false
-	for i := 0; i < len(line); i++ {
-		ch := line[i]
-		switch {
-		case escaped:
-			escaped = false
-		case inDouble:
-			if ch == '\\' {
-				escaped = true
-			} else if ch == '"' {
-				inDouble = false
-			}
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		default:
-			switch ch {
-			case '"':
-				inDouble = true
-			case '\'':
-				inSingle = true
-			case '#':
-				return line[:i]
-			}
-		}
-	}
-	return line
-}
-
-func indexTOMLUnquotedByte(s string, needle byte) int {
-	inDouble := false
-	inSingle := false
-	escaped := false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case escaped:
-			escaped = false
-		case inDouble:
-			if ch == '\\' {
-				escaped = true
-			} else if ch == '"' {
-				inDouble = false
-			}
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		default:
-			switch ch {
-			case '"':
-				inDouble = true
-			case '\'':
-				inSingle = true
-			case needle:
-				return i
-			}
-		}
-	}
-	return -1
 }
 
 func (s *Store) ensureProfileConfig(codexHome string) error {
@@ -666,8 +531,7 @@ func (s *Store) ensureProfileConfig(codexHome string) error {
 	return nil
 }
 
-func (s *Store) ensureProfileSkills(codexHome string) error {
-	defaultSkillsPath := filepath.Join(s.paths.DefaultCodexHome, "skills")
+func (s *Store) ensureProfileSkills(codexHome string, resolved *resolvedSkillResources) error {
 	profileSkillsPath := filepath.Join(codexHome, "skills")
 
 	if err := ensurePathNotSymlinkIfExists(profileSkillsPath); err != nil {
@@ -687,31 +551,35 @@ func (s *Store) ensureProfileSkills(codexHome string) error {
 		return fmt.Errorf("secure profile skills dir permissions: %w", err)
 	}
 
-	entries, err := os.ReadDir(defaultSkillsPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("read default skills dir: %w", err)
+	if resolved == nil || len(resolved.sources) == 0 {
+		return nil
 	}
-	if err := s.removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath); err != nil {
+	defaultSkillsPath := resolved.sources[0]
+	if err := s.removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath, resolved.desired); err != nil {
 		return err
 	}
 
-	for _, entry := range entries {
-		name := strings.TrimSpace(entry.Name())
-		if name == "" || name == "." || name == ".." {
-			continue
-		}
-
-		defaultEntryPath := filepath.Join(defaultSkillsPath, name)
+	names := make([]string, 0, len(resolved.desired))
+	for name := range resolved.desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		defaultEntryPath := resolved.desired[name]
 		profileEntryPath := filepath.Join(profileSkillsPath, name)
 
 		info, err := os.Lstat(profileEntryPath)
 		switch {
 		case err == nil:
 			if info.Mode()&os.ModeSymlink != 0 {
-				target, readErr := resolveExistingSymlinkTarget(profileEntryPath)
+				rawTarget, readErr := os.Readlink(profileEntryPath)
+				if readErr != nil {
+					return fmt.Errorf("read profile skill symlink %s: %w", profileEntryPath, readErr)
+				}
+				if rawTarget == defaultEntryPath {
+					continue
+				}
+				_, readErr = resolveExistingSymlinkTarget(profileEntryPath)
 				if readErr != nil {
 					if errors.Is(readErr, syscall.EINVAL) {
 						if info, statErr := os.Lstat(profileEntryPath); statErr == nil && info.Mode()&os.ModeSymlink == 0 {
@@ -721,30 +589,14 @@ func (s *Store) ensureProfileSkills(codexHome string) error {
 					if !errors.Is(readErr, os.ErrNotExist) {
 						return fmt.Errorf("resolve profile skill symlink %s: %w", profileEntryPath, readErr)
 					}
-					target, readErr = resolveBrokenManagedSymlinkTarget(profileEntryPath)
-					if readErr != nil {
-						return fmt.Errorf("resolve profile skill symlink %s: %w", profileEntryPath, readErr)
-					}
-					if pathIsInsideRoot(defaultSkillsPath, target) {
-						if err := os.Remove(profileEntryPath); err != nil {
-							return fmt.Errorf("replace stale profile skill symlink %s: %w", profileEntryPath, err)
-						}
-						break
-					}
-					return fmt.Errorf("profile skill symlink must point under default skills directory: %s", profileEntryPath)
 				}
-				if canonicalProfilePath(target) == canonicalProfilePath(defaultEntryPath) {
-					continue
+				if err := os.Remove(profileEntryPath); err != nil {
+					return fmt.Errorf("replace profile skill symlink %s: %w", profileEntryPath, err)
 				}
-				if pathIsInsideRoot(defaultSkillsPath, target) {
-					if err := os.Remove(profileEntryPath); err != nil {
-						return fmt.Errorf("replace stale profile skill symlink %s: %w", profileEntryPath, err)
-					}
-					break
-				}
-				return fmt.Errorf("profile skill symlink must point under default skills directory: %s", profileEntryPath)
 			}
-			continue
+			if info.Mode()&os.ModeSymlink == 0 {
+				continue
+			}
 		case !errors.Is(err, os.ErrNotExist):
 			return fmt.Errorf("inspect profile skill entry %s: %w", profileEntryPath, err)
 		}
@@ -757,7 +609,7 @@ func (s *Store) ensureProfileSkills(codexHome string) error {
 	return nil
 }
 
-func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath string) error {
+func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath string, desired map[string]string) error {
 	entries, err := os.ReadDir(profileSkillsPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -772,6 +624,21 @@ func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPat
 			return fmt.Errorf("inspect profile skill entry %s: %w", profileEntryPath, err)
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if entry.Name() == ".system" {
+			_, inherited, err := inspectProfileSystemSkill(defaultSkillsPath, profileEntryPath)
+			if err != nil {
+				return err
+			}
+			if inherited {
+				if err := os.Remove(profileEntryPath); err != nil {
+					return fmt.Errorf("remove inherited profile system skills symlink: %w", err)
+				}
+			}
+			continue
+		}
+		if _, wanted := desired[entry.Name()]; wanted {
 			continue
 		}
 		target, err := resolveExistingSymlinkTarget(profileEntryPath)
@@ -799,6 +666,11 @@ func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPat
 		if !pathIsInsideRoot(defaultSkillsPath, target) {
 			return fmt.Errorf("profile skill symlink must point under default skills directory: %s", profileEntryPath)
 		}
+		if !isInheritableSkillName(strings.TrimSpace(entry.Name())) {
+			if err := os.Remove(profileEntryPath); err != nil {
+				return fmt.Errorf("remove non-inheritable profile skill symlink %s: %w", profileEntryPath, err)
+			}
+		}
 	}
 	return nil
 }
@@ -808,8 +680,8 @@ func linkProfileSkill(defaultEntryPath, profileEntryPath string) error {
 		if errors.Is(err, os.ErrExist) {
 			info, statErr := os.Lstat(profileEntryPath)
 			if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-				target, readErr := resolveExistingSymlinkTarget(profileEntryPath)
-				if readErr == nil && canonicalProfilePath(target) == canonicalProfilePath(defaultEntryPath) {
+				target, readErr := os.Readlink(profileEntryPath)
+				if readErr == nil && target == defaultEntryPath {
 					return nil
 				}
 			}

@@ -14,12 +14,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Enrico-DA/multicodex/internal/buildinfo"
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
 
-const (
-	clientName    = "multicodex-monitor"
-	clientVersion = "0.1.0"
-)
+const clientName = "multicodex-monitor"
 
 type rpcRequest struct {
 	JSONRPC string `json:"jsonrpc"`
@@ -55,6 +55,7 @@ type AppServerSource struct {
 	session *appServerSession
 
 	codexHome         string
+	managedProfile    bool
 	authFingerprint   string
 	authFingerprintFn func() (string, error)
 }
@@ -65,7 +66,18 @@ func NewAppServerSource() *AppServerSource {
 }
 
 func NewAppServerSourceForHome(codexHome string) *AppServerSource {
-	return &AppServerSource{codexHome: strings.TrimSpace(codexHome)}
+	return newAppServerSourceForHome(codexHome, false)
+}
+
+func newManagedAppServerSourceForHome(codexHome string) *AppServerSource {
+	return newAppServerSourceForHome(codexHome, true)
+}
+
+func newAppServerSourceForHome(codexHome string, managedProfile bool) *AppServerSource {
+	return &AppServerSource{
+		codexHome:      strings.TrimSpace(codexHome),
+		managedProfile: managedProfile,
+	}
 }
 
 func (s *AppServerSource) Name() string {
@@ -124,7 +136,7 @@ func (s *AppServerSource) Close() error {
 func (s *AppServerSource) ensureSession(ctx context.Context) (*appServerSession, error) {
 	s.mu.Lock()
 	if s.session == nil {
-		s.session = newAppServerSession(s.codexHome)
+		s.session = newAppServerSession(s.codexHome, s.managedProfile)
 	}
 	session := s.session
 	s.mu.Unlock()
@@ -205,7 +217,8 @@ type appServerSession struct {
 	done    chan struct{}
 	doneErr error
 
-	codexHome string
+	codexHome      string
+	managedProfile bool
 }
 
 type accountReadResultRaw struct {
@@ -217,11 +230,20 @@ type accountReadAccountRaw struct {
 	Email string `json:"email"`
 }
 
-func newAppServerSession(codexHome string) *appServerSession {
+func newAppServerSession(codexHome string, managedProfile bool) *appServerSession {
 	return &appServerSession{
-		pending:   make(map[int]chan rpcMessage),
-		codexHome: strings.TrimSpace(codexHome),
+		pending:        make(map[int]chan rpcMessage),
+		codexHome:      strings.TrimSpace(codexHome),
+		managedProfile: managedProfile,
 	}
+}
+
+func (s *appServerSession) commandArgs() []string {
+	args := []string{"-s", "read-only", "-a", "untrusted"}
+	if s.managedProfile {
+		args = codexstate.WithManagedAuthOverride(args)
+	}
+	return append(args, "app-server")
 }
 
 func (s *appServerSession) ensureStarted() error {
@@ -237,7 +259,7 @@ func (s *appServerSession) ensureStarted() error {
 		}
 	}
 
-	cmd := exec.Command("codex", "-s", "read-only", "-a", "untrusted", "app-server")
+	cmd := exec.Command("codex", s.commandArgs()...)
 	env := withoutCodexProfileEnv(os.Environ())
 	if s.codexHome != "" {
 		env = upsertEnvVar(env, "CODEX_HOME", s.codexHome)
@@ -285,7 +307,7 @@ func (s *appServerSession) ensureInitialized(ctx context.Context) error {
 	if err := s.request(ctx, "initialize", initializeParams{
 		ClientInfo: clientInfo{
 			Name:    clientName,
-			Version: clientVersion,
+			Version: buildinfo.Version,
 		},
 		Capabilities: map[string]interface{}{},
 	}, &initResult); err != nil {
@@ -358,7 +380,7 @@ func (s *appServerSession) request(ctx context.Context, method string, params an
 			return fmt.Errorf("request %s aborted: %w", method, s.doneErrSnapshot())
 		}
 		if msg.Error != nil {
-			return fmt.Errorf("%s failed: %s", method, msg.Error.Message)
+			return safeProviderRPCError(method, msg.Error)
 		}
 		if out != nil {
 			if err := json.Unmarshal(msg.Result, out); err != nil {
@@ -501,43 +523,5 @@ func upsertEnvVar(env []string, key, value string) []string {
 }
 
 func withoutCodexProfileEnv(env []string) []string {
-	clean := make([]string, 0, len(env))
-	for _, kv := range env {
-		key, _, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		if monitorAppServerEnvShouldBeStripped(key) {
-			continue
-		}
-		clean = append(clean, kv)
-	}
-	return clean
-}
-
-func monitorAppServerEnvShouldBeStripped(key string) bool {
-	switch key {
-	case "CODEX_HOME",
-		"MULTICODEX_ACTIVE_PROFILE",
-		"MULTICODEX_SELECTED_PROFILE_PATH",
-		"MULTICODEX_HEARTBEAT_LOCK_PATH",
-		"MULTICODEX_HEARTBEAT_PROMPT",
-		"OPENAI_API_KEY",
-		"OPENAI_ORG_ID",
-		"OPENAI_ORGANIZATION",
-		"OPENAI_PROJECT",
-		"OPENAI_BASE_URL",
-		"OPENAI_API_BASE",
-		"OPENAI_HOST",
-		"CODEX_API_KEY",
-		"CODEX_AUTH_TOKEN",
-		"CODEX_ACCESS_TOKEN",
-		"CODEX_REFRESH_TOKEN",
-		"CODEX_TOKEN",
-		"CODEX_BASE_URL",
-		"CODEX_API_BASE":
-		return true
-	default:
-		return false
-	}
+	return codexstate.SanitizedEnv(env, "")
 }

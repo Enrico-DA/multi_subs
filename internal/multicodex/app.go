@@ -47,6 +47,9 @@ func RunCLI(args []string) error {
 		printHelp()
 		return nil
 	}
+	if err := rejectTopLevelArguments(args); err != nil {
+		return err
+	}
 	if args[0] == "claude" {
 		return runClaudeCLI(args[1:])
 	}
@@ -95,7 +98,7 @@ func commandReadOnlyStartup(command string) (bool, bool) {
 	switch command {
 	case "status", "doctor", "dry-run", "monitor", "completion", "__complete-profiles":
 		return true, true
-	case "init", "add", "login", "login-all", "cli", "exec", "heartbeat":
+	case "init", "add", "login", "login-all", "cli", "exec", "heartbeat", "reconcile":
 		return false, true
 	default:
 		return false, false
@@ -106,6 +109,9 @@ func (a *App) Run(args []string) error {
 	if len(args) == 0 {
 		printHelp()
 		return nil
+	}
+	if err := rejectTopLevelArguments(args); err != nil {
+		return err
 	}
 
 	switch args[0] {
@@ -128,6 +134,8 @@ func (a *App) Run(args []string) error {
 		return a.cmdExec(args[1:])
 	case "status":
 		return a.cmdStatus()
+	case "reconcile":
+		return a.cmdReconcile(args[1:])
 	case "heartbeat":
 		return a.cmdHeartbeat(args[1:])
 	case "monitor":
@@ -147,8 +155,29 @@ func (a *App) Run(args []string) error {
 	}
 }
 
+func rejectArguments(args []string, usage string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return &ExitError{Code: 2, Message: usage}
+}
+
+func rejectTopLevelArguments(args []string) error {
+	if len(args) < 2 {
+		return nil
+	}
+	switch args[0] {
+	case "init", "login-all", "status", "__complete-profiles":
+		return rejectArguments(args[1:], "usage: multicodex "+args[0])
+	case "version", "-v", "--version":
+		return rejectArguments(args[1:], "usage: multicodex version")
+	default:
+		return nil
+	}
+}
+
 func printVersion() {
-	fmt.Printf("%s %s\n", appName, appVersion)
+	fmt.Printf("%s %s\n", appName, version())
 }
 
 func (a *App) loadOrInitConfig() (*Config, error) {
@@ -223,6 +252,7 @@ func (a *App) cmdAdd(args []string) error {
 	}
 
 	var profile Profile
+	var resourceChanges []ResourceChange
 	if err := a.store.WithConfigLock(func() error {
 		cfg, err := a.loadOrInitConfig()
 		if err != nil {
@@ -233,7 +263,7 @@ func (a *App) cmdAdd(args []string) error {
 			return &ExitError{Code: 2, Message: fmt.Sprintf("profile already exists: %s", name)}
 		}
 
-		profile, err = a.store.CreateProfile(name)
+		profile, resourceChanges, err = a.store.CreateProfile(name, cfg.ProfileResources)
 		if err != nil {
 			return err
 		}
@@ -248,6 +278,7 @@ func (a *App) cmdAdd(args []string) error {
 
 	fmt.Printf("added profile: %s\n", name)
 	fmt.Printf("codex home: %s\n", profile.CodexHome)
+	printResourceChanges(resourceChanges)
 	return nil
 }
 
@@ -264,9 +295,11 @@ func (a *App) cmdLogin(args []string) error {
 	if !ok {
 		return &ExitError{Code: 2, Message: fmt.Sprintf("unknown profile: %s", name)}
 	}
-	if err := a.store.EnsureProfileDir(profile); err != nil {
+	resourceChanges, err := a.store.EnsureProfileDir(profile, cfg.ProfileResources)
+	if err != nil {
 		return err
 	}
+	printResourceChanges(resourceChanges)
 	if err := ensureLoginConfigReady(a.store.paths, profile); err != nil {
 		return err
 	}
@@ -368,6 +401,9 @@ func (a *App) cmdDoctor(args []string) error {
 	jsonOutput := fs.Bool("json", false, "output doctor report as JSON")
 	timeout := fs.Duration("timeout", 8*time.Second, "timeout for command checks")
 	if err := fs.Parse(args); err != nil {
+		return &ExitError{Code: 2, Message: "usage: multicodex doctor [--json] [--timeout 8s]"}
+	}
+	if fs.NArg() != 0 {
 		return &ExitError{Code: 2, Message: "usage: multicodex doctor [--json] [--timeout 8s]"}
 	}
 	if *timeout <= 0 {

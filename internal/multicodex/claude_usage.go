@@ -29,9 +29,9 @@ var (
 )
 
 func fetchClaudeUsage(ctx context.Context, runner claudeCommandRunner, configDir string) (claudeUsage, error) {
-	stdout, stderr, err := runner.Capture(ctx, claudeUsageProbeArgs(), claudeEnv(os.Environ(), configDir))
+	stdout, _, err := runner.Capture(ctx, claudeUsageProbeArgs(), claudeEnv(os.Environ(), configDir))
 	if err != nil {
-		return claudeUsage{}, fmt.Errorf("Claude usage command failed: %s", claudeProbeFailure(ctx, err, stderr))
+		return claudeUsage{}, fmt.Errorf("Claude usage command failed: %s", claudeProbeFailure(ctx, err))
 	}
 	usage, err := parseClaudeUsageEnvelope(stdout)
 	if err != nil {
@@ -62,7 +62,7 @@ func parseClaudeUsageEnvelope(raw []byte) (claudeUsage, error) {
 	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return claudeUsage{}, fmt.Errorf("parse Claude usage JSON: %w", err)
+		return claudeUsage{}, errors.New("parse Claude usage JSON: invalid JSON")
 	}
 	if envelope == nil {
 		return claudeUsage{}, errors.New("parse Claude usage JSON: expected an object")
@@ -136,12 +136,12 @@ func parseClaudeUsageResult(result string) (claudeUsage, error) {
 		builder := builders[section]
 		matches := claudePercentRE.FindAllStringSubmatch(line, -1)
 		if len(matches) > 1 {
-			return claudeUsage{}, fmt.Errorf("parse Claude usage result: multiple percentages in %q", line)
+			return claudeUsage{}, errors.New("parse Claude usage result: multiple percentages in one line")
 		}
 		if len(matches) == 1 {
 			value, err := strconv.ParseFloat(matches[0][1], 64)
 			if err != nil || value < 0 || value > 100 {
-				return claudeUsage{}, fmt.Errorf("parse Claude usage result: invalid percentage %q", matches[0][1])
+				return claudeUsage{}, errors.New("parse Claude usage result: invalid percentage")
 			}
 			if builder.percent != nil && *builder.percent != value {
 				return claudeUsage{}, fmt.Errorf("parse Claude usage result: conflicting percentages in one section")

@@ -132,6 +132,57 @@ func TestCodexLoginStatusTreatsZeroExitNegativeOutputAsLoggedOut(t *testing.T) {
 	}
 }
 
+func TestCodexLoginStatusRedactsFailureOutput(t *testing.T) {
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	script := "#!/bin/sh\nprintf 'opaque-provider-diagnostic\\n' >&2\nexit 7\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	state, _, detail := codexLoginStatus(filepath.Join(root, "codex-home"))
+	if state != "error" {
+		t.Fatalf("expected error state, got %q", state)
+	}
+	if strings.Contains(detail, "opaque-provider-diagnostic") {
+		t.Fatalf("failure output leaked into detail: %q", detail)
+	}
+	if !strings.Contains(detail, "exit code 7") {
+		t.Fatalf("expected safe exit-code detail, got %q", detail)
+	}
+}
+
+func TestCodexLoginStatusForcesFileBackedAuth(t *testing.T) {
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	argsPath := filepath.Join(root, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" > " + shellQuote(argsPath) + "\nprintf 'logged in\\n'\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	state, _, _ := codexLoginStatus(filepath.Join(root, "codex-home"))
+	if state != "logged-in" {
+		t.Fatalf("expected logged-in state, got %q", state)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	want := "login status -c " + managedCodexAuthConfig + "\n"
+	if string(data) != want {
+		t.Fatalf("managed login status args: got %q want %q", data, want)
+	}
+}
+
 func newStatusTestApp(t *testing.T) (*App, string) {
 	t.Helper()
 
@@ -155,6 +206,30 @@ func newStatusTestApp(t *testing.T) (*App, string) {
 		t.Fatalf("NewApp: %v", err)
 	}
 	return app, logPath
+}
+
+func TestStatusDoesNotResolveOrMutateProfileResources(t *testing.T) {
+	app, _ := newStatusTestApp(t)
+	if err := app.store.EnsureBaseDirs(); err != nil {
+		t.Fatal(err)
+	}
+	inherit := true
+	sources := []string{"missing"}
+	cfg := DefaultConfig()
+	cfg.ProfileResources = &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
+	if err := app.store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.cmdStatus(); err != nil {
+		t.Fatalf("auth-only status should not resolve resource paths: %v", err)
+	}
+	entries, err := os.ReadDir(app.store.paths.ProfilesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("status mutated profile state: %v", entries)
+	}
 }
 
 func syntheticJWT(t *testing.T, claims map[string]any) string {

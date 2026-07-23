@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
 
 var execLookPath = exec.LookPath
@@ -14,15 +16,22 @@ var isInteractiveTerminalAttached = func() bool {
 	return fileIsTerminal(os.Stdin) && fileIsTerminal(os.Stdout) && fileIsTerminal(os.Stderr)
 }
 
+const managedCodexAuthConfig = codexstate.ManagedAuthConfig
+
 func RunCodexLogin(codexHome string, extraArgs []string) error {
-	return runCommandWithEnv("codex", append([]string{"login"}, extraArgs...), profileCodexEnv(os.Environ(), codexHome, ""), "codex login failed")
+	args := append([]string{"login"}, extraArgs...)
+	return runCommandWithEnv("codex", codexstate.WithManagedAuthOverride(args), profileCodexEnv(os.Environ(), codexHome, ""), "codex login failed")
 }
 
 func RunCodexWithProfile(codexHome, profile string, args []string) error {
+	if profile != "" {
+		args = codexstate.WithManagedAuthOverride(args)
+	}
 	return runCommandWithEnv("codex", args, profileCodexEnv(os.Environ(), codexHome, profile), "codex command failed")
 }
 
 func RunInteractiveCodexWithProfile(codexHome, profile string, args []string) error {
+	args = codexstate.WithManagedAuthOverride(args)
 	env := profileCodexEnv(os.Environ(), codexHome, profile)
 	if isInteractiveTerminalAttached() {
 		path, err := execLookPath("codex")
@@ -75,48 +84,7 @@ func neutralCodexEnv(base []string) []string {
 }
 
 func sanitizedCodexEnv(base []string, codexHome string) []string {
-	env := make([]string, 0, len(base)+2)
-	for _, kv := range base {
-		key, _, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		if codexEnvVarShouldBeStripped(key) {
-			continue
-		}
-		env = append(env, kv)
-	}
-	if codexHome != "" {
-		env = append(env, "CODEX_HOME="+codexHome)
-	}
-	return env
-}
-
-func codexEnvVarShouldBeStripped(key string) bool {
-	switch key {
-	case "CODEX_HOME",
-		"MULTICODEX_ACTIVE_PROFILE",
-		"MULTICODEX_SELECTED_PROFILE_PATH",
-		"MULTICODEX_HEARTBEAT_LOCK_PATH",
-		"MULTICODEX_HEARTBEAT_PROMPT",
-		"OPENAI_API_KEY",
-		"OPENAI_ORG_ID",
-		"OPENAI_ORGANIZATION",
-		"OPENAI_PROJECT",
-		"OPENAI_BASE_URL",
-		"OPENAI_API_BASE",
-		"OPENAI_HOST",
-		"CODEX_API_KEY",
-		"CODEX_AUTH_TOKEN",
-		"CODEX_ACCESS_TOKEN",
-		"CODEX_REFRESH_TOKEN",
-		"CODEX_TOKEN",
-		"CODEX_BASE_URL",
-		"CODEX_API_BASE":
-		return true
-	default:
-		return false
-	}
+	return codexstate.SanitizedEnv(base, codexHome)
 }
 
 func shellQuoteValue(value string) string {

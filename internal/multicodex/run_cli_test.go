@@ -27,6 +27,42 @@ func TestRunCLIHelpDoesNotMoveHiddenState(t *testing.T) {
 	}
 }
 
+func TestRunCLIClaudeHelpDoesNotCreateState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MULTICODEX_HOME", "")
+	t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", "")
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI([]string{"claude", "help"})
+	})
+	if err != nil {
+		t.Fatalf("RunCLI Claude help: %v", err)
+	}
+	if !strings.Contains(out, "multicodex claude") {
+		t.Fatalf("unexpected Claude help output: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(home, "multicodex")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected Claude help not to create multicodex home, stat err=%v", err)
+	}
+}
+
+func TestRunCLIClaudeNamespaceHelpRejectsExtraArgumentsWithoutCreatingState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MULTICODEX_HOME", "")
+	t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", "")
+
+	err := RunCLI([]string{"claude", "--help", "unexpected"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected Claude namespace usage error, got %T (%v)", err, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "multicodex")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid Claude namespace help created state, stat err=%v", err)
+	}
+}
+
 func TestRunCLIUnknownCommandDoesNotMoveHiddenState(t *testing.T) {
 	home := t.TempDir()
 	hiddenHome := filepath.Join(home, ".unowned-local-state")
@@ -48,6 +84,55 @@ func TestRunCLIUnknownCommandDoesNotMoveHiddenState(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "multicodex")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected new home not to be created, stat err=%v", err)
+	}
+}
+
+func TestRunCLIReconcileInvalidArgsDoesNotCreateState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MULTICODEX_HOME", "")
+	t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", "")
+
+	err := RunCLI([]string{"reconcile", "unexpected"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected usage error, got %T (%v)", err, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "multicodex")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected invalid reconcile not to create state, stat err=%v", err)
+	}
+}
+
+func TestRunCLIRejectsUndocumentedArgumentsBeforeCreatingState(t *testing.T) {
+	commands := [][]string{
+		{"init", "unexpected"},
+		{"login-all", "unexpected"},
+		{"status", "unexpected"},
+		{"version", "unexpected"},
+		{"__complete-profiles", "unexpected"},
+		{"doctor", "unexpected"},
+		{"monitor", "doctor", "unexpected"},
+		{"monitor", "tui", "unexpected"},
+		{"monitor", "help", "unexpected"},
+	}
+
+	for _, args := range commands {
+		args := args
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("MULTICODEX_HOME", "")
+			t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", "")
+
+			err := RunCLI(args)
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+				t.Fatalf("RunCLI(%q) = %T (%v), want exit code 2", args, err, err)
+			}
+			if _, err := os.Stat(filepath.Join(home, "multicodex")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid command created state, stat err=%v", err)
+			}
+		})
 	}
 }
 

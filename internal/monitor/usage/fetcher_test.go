@@ -44,12 +44,11 @@ func (b *blockingSource) Fetch(ctx context.Context) (*Summary, error) {
 }
 func (b *blockingSource) Close() error { return nil }
 
-func TestFetcherUsesPrimaryOnSuccess(t *testing.T) {
+func TestFetchWithFallbackUsesPrimaryOnSuccess(t *testing.T) {
 	primary := &fakeSource{name: "primary", out: &Summary{Source: "primary"}}
 	fallback := &fakeSource{name: "fallback", out: &Summary{Source: "fallback"}}
-	f := &Fetcher{primary: primary, fallback: fallback}
 
-	out, err := f.Fetch(context.Background())
+	out, err := fetchWithFallback(context.Background(), primary, fallback)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,12 +57,11 @@ func TestFetcherUsesPrimaryOnSuccess(t *testing.T) {
 	}
 }
 
-func TestFetcherFallsBackWithWarning(t *testing.T) {
+func TestFetchWithFallbackAddsWarning(t *testing.T) {
 	primary := &fakeSource{name: "primary", err: errors.New("boom")}
 	fallback := &fakeSource{name: "fallback", out: &Summary{Source: "fallback"}}
-	f := &Fetcher{primary: primary, fallback: fallback}
 
-	out, err := f.Fetch(context.Background())
+	out, err := fetchWithFallback(context.Background(), primary, fallback)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,12 +114,11 @@ func TestAttemptContextCapsFallbackReserveForLongTimeouts(t *testing.T) {
 	}
 }
 
-func TestFetcherFailsWhenBothSourcesFail(t *testing.T) {
+func TestFetchWithFallbackFailsWhenBothSourcesFail(t *testing.T) {
 	primary := &fakeSource{name: "primary", err: errors.New("p")}
 	fallback := &fakeSource{name: "fallback", err: errors.New("f")}
-	f := &Fetcher{primary: primary, fallback: fallback}
 
-	_, err := f.Fetch(context.Background())
+	_, err := fetchWithFallback(context.Background(), primary, fallback)
 	if err == nil {
 		t.Fatalf("expected error")
 	}
@@ -133,7 +130,7 @@ func TestFetcherFailsWhenBothSourcesFail(t *testing.T) {
 func TestFetcherCloseClosesAllSources(t *testing.T) {
 	primary := &fakeSource{name: "primary"}
 	fallback := &fakeSource{name: "fallback"}
-	f := &Fetcher{primary: primary, fallback: fallback}
+	f := &Fetcher{accounts: []accountFetcher{{primary: primary, fallback: fallback}}}
 
 	if err := f.Close(); err != nil {
 		t.Fatalf("unexpected close error: %v", err)
@@ -450,6 +447,10 @@ func TestReplaceAccountFetchersUsesAppServerWithOAuthFallbackForVerifiedAccounts
 	if f.accounts[0].primary == nil || f.accounts[0].primary.Name() != "app-server" {
 		t.Fatalf("expected app-server primary source, got %#v", f.accounts[0].primary)
 	}
+	appServer, ok := f.accounts[0].primary.(*AppServerSource)
+	if !ok || !appServer.managedProfile {
+		t.Fatalf("expected managed app-server primary source, got %#v", f.accounts[0].primary)
+	}
 	if f.accounts[0].fallback == nil || f.accounts[0].fallback.Name() != "oauth" {
 		t.Fatalf("expected oauth fallback source, got %#v", f.accounts[0].fallback)
 	}
@@ -608,7 +609,7 @@ func TestFetcherRefreshesEmptyAccountLoaderOnFetch(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
 
 	callCount := 0
-	f := newConfiguredFetcherWithLoader(false, func() ([]MonitorAccount, string, error) {
+	f := newFetcherWithAccountLoader(false, func() ([]MonitorAccount, string, error) {
 		callCount++
 		if callCount == 1 {
 			return nil, "accounts not written yet", nil
@@ -1240,7 +1241,7 @@ func TestFetcherMarksWindowUnavailableWhenActiveHomeMissing(t *testing.T) {
 	}
 }
 
-func TestFetcherExplainsHowToIncludeDefaultHome(t *testing.T) {
+func TestFetcherExplainsHowToIncludeGlobalHome(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
@@ -1255,8 +1256,8 @@ func TestFetcherExplainsHowToIncludeDefaultHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if warning := strings.Join(out.Warnings, " | "); !strings.Contains(warning, "--include-default") {
-		t.Fatalf("expected actionable default-home warning, got %q", warning)
+	if warning := strings.Join(out.Warnings, " | "); !strings.Contains(warning, "global Codex home") || !strings.Contains(warning, "--include-default") {
+		t.Fatalf("expected actionable global-home warning, got %q", warning)
 	}
 }
 

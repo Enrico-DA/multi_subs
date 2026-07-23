@@ -176,30 +176,18 @@ func claudeChildError(err error, message string) error {
 	return fmt.Errorf("%s: %w", message, err)
 }
 
-func claudeProbeFailure(ctx context.Context, err error, stderr []byte) string {
+func claudeProbeFailure(ctx context.Context, err error) string {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "timed out"
 	}
 	var processExit *exec.ExitError
 	if errors.As(err, &processExit) {
-		if detail := safeClaudeDiagnostic(stderr); detail != "" {
-			return fmt.Sprintf("exit %d: %s", processExit.ExitCode(), detail)
-		}
 		return fmt.Sprintf("exit %d", processExit.ExitCode())
 	}
-	if detail := safeClaudeDiagnostic(stderr); detail != "" {
-		return detail
+	var execError *exec.Error
+	var pathError *os.PathError
+	if errors.As(err, &execError) || errors.As(err, &pathError) {
+		return "launch failure"
 	}
-	if err == nil {
-		return "unknown failure"
-	}
-	return err.Error()
-}
-
-func safeClaudeDiagnostic(raw []byte) string {
-	detail := firstLineOrDash(strings.TrimSpace(string(raw)))
-	if detail == "-" {
-		return ""
-	}
-	return truncate(detail, 160)
+	return "unknown failure"
 }

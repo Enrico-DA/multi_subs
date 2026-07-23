@@ -19,7 +19,14 @@ type claudeTarget struct {
 }
 
 func runClaudeCLI(args []string) error {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 {
+		printClaudeHelp()
+		return nil
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		if len(args) != 1 {
+			return &ExitError{Code: 2, Message: "usage: multicodex claude"}
+		}
 		printClaudeHelp()
 		return nil
 	}
@@ -36,7 +43,14 @@ func runClaudeCLI(args []string) error {
 }
 
 func (a *App) cmdClaude(args []string) error {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 {
+		printClaudeHelp()
+		return nil
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		if len(args) != 1 {
+			return &ExitError{Code: 2, Message: "usage: multicodex claude"}
+		}
 		printClaudeHelp()
 		return nil
 	}
@@ -314,10 +328,10 @@ func (a *App) cmdClaudeDoctor(args []string) error {
 		checks = append(checks, check{"ok", "sidecar", fmt.Sprintf("version %d with %d managed profile(s)", cfg.Version, len(cfg.Profiles))})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
-	stdout, stderr, versionErr := a.claudeCommandRunner().Capture(ctx, []string{"--version"}, claudeEnv(os.Environ(), ""))
+	stdout, _, versionErr := a.claudeCommandRunner().Capture(ctx, []string{"--version"}, claudeEnv(os.Environ(), ""))
 	cancel()
 	if versionErr != nil {
-		checks = append(checks, check{"fail", "Claude binary", claudeProbeFailure(ctx, versionErr, stderr)})
+		checks = append(checks, check{"fail", "Claude binary", claudeProbeFailure(ctx, versionErr)})
 	} else {
 		version := strings.TrimSpace(string(stdout))
 		if version == "" {

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/Enrico-DA/multicodex/internal/codexstate"
 )
 
 var codexHeartbeatTimeout = 60 * time.Second
@@ -70,7 +72,8 @@ func (a *App) cmdHeartbeat(args []string) error {
 	failed := 0
 	for _, name := range names {
 		profile := cfg.Profiles[name]
-		if err := a.store.EnsureProfileDir(profile); err != nil {
+		changes, err := a.store.EnsureProfileDir(profile, cfg.ProfileResources)
+		if err != nil {
 			failed++
 			rows = append(rows, heartbeatRow{
 				Profile: name,
@@ -79,6 +82,7 @@ func (a *App) cmdHeartbeat(args []string) error {
 			})
 			continue
 		}
+		printResourceChanges(changes)
 		hasAuth, err := HasAuthFile(profile.CodexHome)
 		if err != nil {
 			failed++
@@ -194,9 +198,7 @@ func runCodexHeartbeat(codexHome string, settings heartbeatSettings) (string, er
 	ctx, cancel := context.WithTimeout(context.Background(), settings.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(
-		ctx,
-		"codex",
+	args := codexstate.WithManagedAuthOverride([]string{
 		"exec",
 		"--skip-git-repo-check",
 		"--ephemeral",
@@ -205,7 +207,8 @@ func runCodexHeartbeat(codexHome string, settings heartbeatSettings) (string, er
 		"--color",
 		"never",
 		heartbeatPrompt,
-	)
+	})
+	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Dir = codexHome
 	cmd.WaitDelay = 500 * time.Millisecond
 	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")
