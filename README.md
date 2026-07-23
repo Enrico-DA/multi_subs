@@ -42,6 +42,10 @@ Optional local install path.
 mv ./multicodex ~/.local/bin/multicodex
 ```
 
+Tagged releases publish checksummed macOS and Linux archives for AMD64 and ARM64. Release binaries report their tag through `multicodex version`; untagged source builds report a development version. Verify an archive against `SHA256SUMS` before installing it.
+
+Contributor setup, required checks, and the release process are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Quick Start
 
 ```bash
@@ -51,6 +55,7 @@ multicodex add work
 multicodex login personal
 multicodex login work
 multicodex status
+multicodex reconcile
 ```
 
 Run interactive Codex with one profile.
@@ -95,11 +100,45 @@ multicodex dry-run
 - Profile sessions, threads, and `/goal` state stay under that profile's `codex-home`.
 - Multicodex state directories, profile directories, profile `codex-home`, profile skills directories, `auth.json`, selected-profile metadata under `MULTICODEX_HOME/run`, heartbeat lock files, and config lock files must be profile-local regular filesystem entries with local-user-only directory permissions. Symlinks and hard links are rejected where they could cross account boundaries.
 - Profile `config.toml` defaults to a symlink from `~/multicodex/profiles/<name>/codex-home/config.toml` to the default Codex config at `~/.codex/config.toml`.
-- Profile skills fill in missing top-level entries from `~/.codex/skills` using symlinks. Manual top-level profile skill overrides are left in place.
+- Unless configured otherwise, profile skills fill in missing portable top-level entries from `~/.codex/skills` using symlinks. Runtime-managed `.system` content is excluded, and manual top-level profile skill overrides are left in place.
 - To use a per-profile Codex config, replace the profile `config.toml` symlink with a regular profile-local `config.toml` file that still enables file-backed auth.
 - Claude metadata is separate at `~/multicodex/providers/claude/config.json`.
 - Managed Claude state lives under `~/multicodex/providers/claude/profiles/<name>/config`.
 - The default Claude account is a protected reserve. It is launched with `CLAUDE_CONFIG_DIR` absent; managed accounts receive exactly one profile-local `CLAUDE_CONFIG_DIR`.
+
+## Configurable Profile Resources
+
+The optional `profile_resources` block in `~/multicodex/config.json` controls shared guidance and skill links for every profile. If the block is omitted, behavior is unchanged: multicodex does not touch `AGENTS.md` or `AGENTS.override.md`, and skills keep inheriting from the default Codex home.
+
+```json
+{
+  "version": 1,
+  "profile_resources": {
+    "guidance": {
+      "inherit": true,
+      "source": "~/.codex"
+    },
+    "skills": {
+      "inherit": true,
+      "sources": ["~/.codex/skills", "shared-skills"]
+    }
+  },
+  "profiles": {}
+}
+```
+
+- `guidance.inherit: true` links the source directory's `AGENTS.md` and `AGENTS.override.md`. An omitted or empty `source` uses the default Codex home.
+- `skills.inherit: true` merges portable top-level entries from ordered `sources`; the first source wins name conflicts. Runtime-managed `.system` content is excluded. An omitted `sources` key uses the default Codex skills directory. An explicit empty list is invalid.
+- `inherit: false` removes symlinks managed at that resource's profile locations. It never removes regular files or directories.
+- Either regular profile guidance file makes both guidance names a local override. Regular top-level profile skill entries override inherited entries with the same name.
+- `~` expands to the user home. Relative paths resolve from the directory containing `config.json`, normally `~/multicodex`, not from the current working directory.
+- Custom skill sources must exist outside multicodex-owned state and the default Codex home; the canonical default Codex skills directory is the only default-home exception. Each inherited top-level skill entry must resolve to a directory. Resource blocks require a correctly spelled boolean `inherit` and reject unknown nested keys.
+- When explicit management is enabled, symlinks at the two guidance names and directly under the profile `skills/` directory are multicodex-owned, except for `.system`. Retargeting or removal reports the old target.
+- Codex's existing user-wide `$HOME/.agents/skills` and repository `.agents/skills` discovery stays separate and continues to work normally.
+
+Use `multicodex doctor` to validate configured sources and `multicodex dry-run` to see the effective policy and planned reconciliation without changing files. To recover from a bad link policy, set the affected `inherit` value to `false` and remove its `source` or `sources` field, run `multicodex reconcile`, then remove the optional block to return to the original unmanaged-guidance and default-skill behavior.
+
+Run `multicodex reconcile` to apply the configured guidance and skill policy to every registered profile without inspecting auth or launching Codex. It uses the same no-clobber rules as `add`, `login`, `cli`, `exec`, and `heartbeat`: regular profile guidance and skill entries remain local overrides, while multicodex-owned links are created, retargeted, or removed as needed.
 
 ## Commands
 
@@ -111,6 +150,7 @@ multicodex login-all
 multicodex cli <name> [codex args...]
 multicodex exec [codex exec args]
 multicodex status
+multicodex reconcile
 multicodex heartbeat
 multicodex monitor [flags]
 multicodex monitor tui [flags]
@@ -129,7 +169,10 @@ multicodex claude exec [claude -p args...]
 multicodex claude status
 multicodex claude usage
 multicodex claude doctor
+multicodex claude help [command]
 ```
+
+Commands reject undocumented positional arguments instead of silently ignoring them.
 
 ## Interactive CLI
 
@@ -205,19 +248,23 @@ multicodex monitor doctor
 multicodex monitor completion
 ```
 
-By default, monitor account candidates come only from:
+By default, monitor account candidates come from:
 
+- the global Codex home (normally `~/.codex`), labeled `global`
 - explicit account file under `~/multicodex/monitor/accounts.json`
 - configured multicodex profiles from `~/multicodex/config.json`
 
 Additional sources are opt-in:
 
-- `--include-default` includes the default Codex home
 - `--include-active` includes the active `CODEX_HOME`
 - `--discover` scans compatible Codex homes from the local filesystem
 - `multicodex monitor doctor --app-server` also checks the raw Codex app-server source separately
 
+Pass `--include-default=false` to omit the global Codex home for one run. Explicit account-file labels and configured profile labels take priority when they point to the same home, so duplicate cards are not shown.
+
 For validated multicodex profile homes, the monitor asks the Codex app-server for usage first and falls back to direct OAuth from the profile home. This matches Codex CLI auth handling for logged-in profiles whose access token can still be refreshed. Other monitor account homes use direct OAuth unless they dedupe with a validated profile home.
+
+Successful `multicodex monitor doctor` source checks report `plan=<plan> weekly=<used>% source=<source>`. When the provider supplies no weekly window, doctor reports `weekly=unavailable` instead of exposing an internal numeric marker.
 
 The TUI:
 
@@ -268,8 +315,10 @@ multicodex help
 multicodex help cli
 multicodex help exec
 multicodex help heartbeat
+multicodex help claude exec
 multicodex help monitor
 multicodex help monitor doctor
+multicodex claude help exec
 ```
 
 ## Development Checks
@@ -292,9 +341,11 @@ go build -o multicodex ./cmd/multicodex
 - Does not change, restore, back up, symlink, or otherwise manage either shared default auth account.
 - Scrubs inherited account-routing and account-token environment variables before launching profile-scoped Codex commands.
 - Scrubs inherited Anthropic/Claude account overrides before launching Claude commands.
+- Reports external failures with safe status codes and recovery guidance without echoing raw provider bodies, app-server messages, or subprocess failure output.
 - `monitor` is read-only and does not mutate Codex account data.
 - `doctor` and `dry-run` are non-mutating helpers.
 - `doctor` includes repo leak guards for tracked sensitive files and ignore-pattern coverage.
+- Configured profile resources are local paths chosen by the user. Multicodex links them but does not execute or copy their contents.
 - After successful login, regular auth file permissions are normalized to `0600`.
 
 ## Notes
@@ -306,9 +357,4 @@ go build -o multicodex ./cmd/multicodex
 
 Apache License 2.0. See `LICENSE`.
 
-<!-- third-party-policy:start -->
-## Third-Party Code Policy
-This repository allows external-code snapshots for static analysis only. External clones must stay in ephemeral `plan/` locations, be sanitized immediately (`rm -rf .git`, or remove all remotes first if `.git` is temporarily retained), and must never be executed.
-
-See `docs/untrusted-third-party-repos.md`.
-<!-- third-party-policy:end -->
+This fork is based on [olliecrow/multicodex](https://github.com/olliecrow/multicodex) and preserves its attribution and license.

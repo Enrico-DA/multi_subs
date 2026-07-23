@@ -154,6 +154,48 @@ func TestClaudeAuthStatusAcceptsOfficialLoggedOutExitOne(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthAndUsageProbeFailuresHideCapturedDiagnostics(t *testing.T) {
+	const marker = "synthetic-secret-marker"
+	runner := &fakeClaudeRunner{
+		capture: func(context.Context, []string, []string) ([]byte, []byte, error) {
+			return nil, []byte(marker), errors.New("transport failed: " + marker)
+		},
+	}
+	tests := []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{
+			name: "auth",
+			run: func() error {
+				_, err := fetchClaudeAuthStatus(context.Background(), runner, "")
+				return err
+			},
+			want: "Claude auth status failed: unknown failure",
+		},
+		{
+			name: "usage",
+			run: func() error {
+				_, err := fetchClaudeUsage(context.Background(), runner, "")
+				return err
+			},
+			want: "Claude usage command failed: unknown failure",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected fixed probe failure %q, got %v", test.want, err)
+			}
+			if strings.Contains(err.Error(), marker) {
+				t.Fatalf("probe failure exposed synthetic secret: %v", err)
+			}
+		})
+	}
+}
+
 func TestClaudeUsageReportsAllWindowsAndMissingFable(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	createClaudeProfiles(t, app, "work")
@@ -226,6 +268,38 @@ func TestClaudeDoctorFailsDuplicateOrganizations(t *testing.T) {
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || !strings.Contains(out, "duplicates Claude organization") {
 		t.Fatalf("expected duplicate organization doctor failure, err=%v output=%s", err, out)
+	}
+}
+
+func TestClaudeCommandProbeFailuresDoNotExposeCapturedDiagnostics(t *testing.T) {
+	const marker = "synthetic-secret-marker"
+	tests := []struct {
+		name string
+		run  func(*App) error
+	}{
+		{name: "status", run: func(app *App) error { return app.cmdClaudeStatus(nil) }},
+		{name: "usage", run: func(app *App) error { return app.cmdClaudeUsage(nil) }},
+		{name: "doctor", run: func(app *App) error { return app.cmdClaudeDoctor(nil) }},
+		{name: "exec", run: func(app *App) error { return app.cmdClaudeExec([]string{"hello"}) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			app, runner, _ := newClaudeTestApp(t)
+			runner.capture = func(context.Context, []string, []string) ([]byte, []byte, error) {
+				return nil, []byte(marker), errors.New("transport failed: " + marker)
+			}
+			output, err := captureStdout(t, func() error { return test.run(app) })
+			diagnostic := output
+			if err != nil {
+				diagnostic += err.Error()
+			}
+			if strings.Contains(diagnostic, marker) {
+				t.Fatalf("%s exposed synthetic secret: %s", test.name, diagnostic)
+			}
+			if !strings.Contains(diagnostic, "unknown failure") {
+				t.Fatalf("%s missing deterministic failure category: %s", test.name, diagnostic)
+			}
+		})
 	}
 }
 

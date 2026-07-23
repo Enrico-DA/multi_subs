@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Enrico-DA/multicodex/internal/buildinfo"
 )
 
 const (
@@ -55,7 +57,7 @@ func (s *OAuthSource) Fetch(ctx context.Context) (*Summary, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "multicodex-monitor/0.1")
+	req.Header.Set("User-Agent", clientName+"/"+buildinfo.Version)
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -69,7 +71,7 @@ func (s *OAuthSource) Fetch(ctx context.Context) (*Summary, error) {
 	}
 
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("oauth endpoint returned HTTP %d: %s", res.StatusCode, summarizeBody(body))
+		return nil, safeProviderHTTPError("oauth endpoint", res.StatusCode, body)
 	}
 
 	var payload oauthUsagePayload
@@ -160,14 +162,6 @@ type authFilePayload struct {
 	} `json:"tokens"`
 }
 
-func findAuthJSONPath() (string, error) {
-	home, err := defaultCodexHome()
-	if err != nil {
-		return "", err
-	}
-	return findAuthJSONPathForHome(home)
-}
-
 func findAuthJSONPathForHome(codexHome string) (string, error) {
 	if strings.TrimSpace(codexHome) != "" {
 		p := filepath.Join(codexHome, "auth.json")
@@ -226,14 +220,6 @@ func usableAuthFile(path string) (bool, error) {
 		return false, fmt.Errorf("auth.json permissions are %o, expected 600: %s", info.Mode().Perm(), path)
 	}
 	return true, nil
-}
-
-func summarizeBody(b []byte) string {
-	s := strings.TrimSpace(string(b))
-	if len(s) > 180 {
-		return s[:180] + "..."
-	}
-	return s
 }
 
 func toMins(seconds int) *int {
