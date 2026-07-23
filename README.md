@@ -6,7 +6,7 @@ Bare commands continue to manage Codex. The `multicodex claude` namespace manage
 
 By default, each profile reuses your global Codex `config.toml` through a symlink, so model defaults, reasoning settings, permission settings, and other normal Codex config changes apply everywhere. Profile homes also inherit missing top-level skill entries from the global Codex skills directory through symlinks.
 
-Profile login requires file-backed auth. If the effective Codex config does not set `cli_auth_credentials_store = "file"`, profile login and profile-scoped Codex execution fail with a setup error instead of sharing global auth state.
+Profile login requires file-backed auth. If the effective Codex config does not set `cli_auth_credentials_store = "file"`, profile login and profile-scoped Codex execution fail with a setup error instead of sharing global auth state. Every managed-profile Codex child also receives a final `-c 'cli_auth_credentials_store="file"'` override before any standalone `--`, so user config or profile flags cannot change the effective credential store. Default-account exec and exact exec-help delegation do not receive this override.
 
 ## Status
 
@@ -94,7 +94,7 @@ multicodex dry-run
 - Profile sessions, threads, and `/goal` state stay under that profile's `codex-home`.
 - Multicodex state directories, profile directories, profile `codex-home`, profile skills directories, `auth.json`, selected-profile metadata under `MULTICODEX_HOME/run`, heartbeat lock files, and config lock files must be profile-local regular filesystem entries with local-user-only directory permissions. Symlinks and hard links are rejected where they could cross account boundaries.
 - Profile `config.toml` defaults to a symlink from `~/multicodex/profiles/<name>/codex-home/config.toml` to the default Codex config at `~/.codex/config.toml`.
-- Unless configured otherwise, profile skills fill in missing portable top-level entries from `~/.codex/skills` using symlinks. Runtime-managed `.system` content is never inherited, and manual top-level profile skill overrides are left in place. A regular profile-local `.system` directory is preserved. A stale `.system` symlink that resolves safely under the default skills tree is removed; broken, external, cross-profile, or malformed `.system` symlinks are rejected unchanged.
+- Unless configured otherwise, profile skills fill in missing portable top-level entries from `~/.codex/skills` using symlinks pinned to each entry's fully resolved directory. A symlink at a name currently supplied by the default source is a managed inherited position and is canonicalized; regular top-level profile skill overrides are left in place. Retargeting a source or entry alias does not redirect an existing profile link until a later reconciliation validates and adopts the new target. Runtime-managed `.system` content is never inherited. A regular profile-local `.system` directory is preserved. A stale `.system` symlink that resolves safely under the default skills tree is removed; broken, external, cross-profile, or malformed `.system` symlinks are rejected unchanged.
 - To use a per-profile Codex config, replace the profile `config.toml` symlink with a regular profile-local `config.toml` file that still enables file-backed auth.
 - Claude metadata is separate at `~/multicodex/providers/claude/config.json`.
 - Managed Claude state lives under `~/multicodex/providers/claude/profiles/<name>/config`.
@@ -102,7 +102,7 @@ multicodex dry-run
 
 ## Configurable Profile Resources
 
-The optional `profile_resources` block in `~/multicodex/config.json` controls shared guidance and skill links for every profile. If the block is omitted, behavior is unchanged: multicodex does not touch `AGENTS.md` or `AGENTS.override.md`, and skills keep inheriting from the default Codex home.
+The optional `profile_resources` block in `~/multicodex/config.json` controls shared guidance and skill links for every profile. If the block is omitted, multicodex still leaves `AGENTS.md` and `AGENTS.override.md` untouched, while skills inherit from the default Codex home using the same canonical pinning as configured sources.
 
 ```json
 {
@@ -122,11 +122,11 @@ The optional `profile_resources` block in `~/multicodex/config.json` controls sh
 ```
 
 - `guidance.inherit: true` links the source directory's `AGENTS.md` and `AGENTS.override.md`. An omitted or empty `source` uses the default Codex home.
-- `skills.inherit: true` merges portable top-level entries from ordered `sources`; the first source wins name conflicts. Runtime-managed `.system` content is excluded from every source and follows the profile-local rules above. An omitted `sources` key uses the default Codex skills directory. An explicit empty list is invalid.
+- `skills.inherit: true` fully resolves each source and selected top-level entry, then merges the canonical entry directories in source order; the first source wins name conflicts. Profile links use those canonical directories rather than source or entry aliases. Runtime-managed `.system` content is excluded from every source and follows the profile-local rules above. An omitted `sources` key uses the default Codex skills directory with the same canonical pinning. An explicit empty list is invalid.
 - `inherit: false` removes symlinks managed at that resource's profile locations. It never removes regular files or directories.
 - Either regular profile guidance file makes both guidance names a local override. Regular top-level profile skill entries override inherited entries with the same name.
 - `~` expands to the user home. Relative paths resolve from the directory containing `config.json`, normally `~/multicodex`, not from the current working directory.
-- Custom skill sources must exist outside multicodex-owned state and the default Codex home; the canonical default Codex skills directory is the only default-home exception. Each inherited top-level skill entry must resolve to a directory. Resource blocks require a correctly spelled boolean `inherit` and reject unknown nested keys.
+- Custom skill sources must resolve outside multicodex-owned state and the default Codex home; the canonical default Codex skills directory is the only default-home exception. Each inherited top-level skill entry must resolve to an allowed directory. The full desired set is validated before profile links change, so a newly forbidden alias target leaves the old pinned link unchanged. Resource blocks require a correctly spelled boolean `inherit` and reject unknown nested keys.
 - When explicit management is enabled, symlinks at the two guidance names and directly under the profile `skills/` directory are multicodex-owned. `.system` is narrower: only a stale symlink that resolves safely under the default skills tree is removed, while a regular local directory is preserved and every unsafe link fails closed. Retargeting or removal reports the old target.
 - Codex's existing user-wide `$HOME/.agents/skills` and repository `.agents/skills` discovery stays separate and continues to work normally.
 
@@ -172,7 +172,7 @@ Commands reject undocumented positional arguments instead of silently ignoring t
 
 `multicodex cli <name> [codex args...]` launches the official `codex` CLI with that profile's `CODEX_HOME`.
 
-Codex defaults such as model, reasoning level, approvals, sandbox, and search come from the shared Codex config unless you pass explicit Codex args. Multicodex does not inject its own model or permission defaults.
+Codex defaults such as model, reasoning level, approvals, sandbox, and search come from the shared Codex config unless you pass explicit Codex args. Multicodex does not inject its own model or permission defaults. It preserves all user arguments in order and adds only the final managed auth-isolation override described above.
 
 Two terminals can run `multicodex cli` with different profiles at the same time. Each terminal uses its own account, auth, threads, and `/goal` state because each one has a different `CODEX_HOME`.
 
@@ -181,6 +181,7 @@ Two terminals can run `multicodex cli` with different profiles at the same time.
 `multicodex exec [codex exec args]` runs `codex exec` after selecting among configured multicodex profiles, with the default Codex home as a built-in reserve account.
 
 - Help requests such as `multicodex exec --help` delegate directly to `codex exec` and do not require profiles.
+- User arguments remain in their original order. A configured-profile child receives the final auth-isolation override before standalone `--`; a default-reserve child and exact help delegation receive the original arguments without it.
 - Exec can run with no configured profiles by using the default Codex home as the only available account.
 - Configured profiles at 100% weekly usage are not selected.
 - Exec uses configured selection priority first, then prefers the profile whose known weekly reset is soonest.
@@ -218,7 +219,7 @@ Heartbeat:
 - skips logged-out profiles
 - uses a non-blocking lock under `MULTICODEX_HOME`
 - retries failed profile heartbeats once by default
-- runs profile-scoped `codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello`
+- runs the fixed profile-scoped keepalive with the same final file-backed-auth override used by other managed children
 - redacts raw failure output
 
 Optional environment overrides:

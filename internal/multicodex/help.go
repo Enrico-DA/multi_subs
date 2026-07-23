@@ -92,7 +92,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"login": {
 		Usage:       "multicodex login <name> [codex login args]",
-		Description: "Run official codex login inside the selected profile context.",
+		Description: "Run official codex login inside the selected profile context. User arguments keep their order, followed by the enforced file-backed-auth config override.",
 		Examples: []string{
 			"multicodex login personal",
 			"multicodex login personal --device-auth",
@@ -107,7 +107,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"cli": {
 		Usage:       "multicodex cli <name> [codex args...]",
-		Description: "Run the interactive Codex CLI with the selected profile. Codex defaults such as model, reasoning, approvals, and sandbox come from the shared Codex config unless you pass explicit Codex args.",
+		Description: "Run the interactive Codex CLI with the selected profile. Codex defaults such as model, reasoning, approvals, and sandbox come from the shared Codex config unless you pass explicit Codex args. Multicodex adds only the enforced file-backed-auth config override.",
 		Examples: []string{
 			"multicodex cli personal",
 			`multicodex cli work "check this repo"`,
@@ -115,7 +115,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"exec": {
 		Usage:       "multicodex exec [codex exec args]",
-		Description: "Run `codex exec` after automatically selecting the best available account. Configured profiles are considered before the protected default reserve account. Profiles at 100% weekly usage are skipped, and known weekly resets are tried soonest first. The default Codex home is used only when no configured profile has usable weekly usage left, and remains the final fallback when it is the only destination.",
+		Description: "Run `codex exec` after automatically selecting the best available account. A configured-profile child receives the enforced file-backed-auth config override; default-reserve exec and exact help do not. Configured profiles are considered before the protected default reserve account. Profiles at 100% weekly usage are skipped, and known weekly resets are tried soonest first. The default Codex home is used only when no configured profile has usable weekly usage left, and remains the final fallback when it is the only destination.",
 		Examples: []string{
 			`multicodex exec -s read-only "Summarize the README in 3 bullets."`,
 			"multicodex exec --skip-git-repo-check -C /path/to/repo \"Review the latest diff.\"",

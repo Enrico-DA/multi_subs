@@ -405,7 +405,7 @@ exit 1
 		t.Fatalf("read args: %v", err)
 	}
 	argsText := strings.TrimSpace(string(argsBytes))
-	wantArgs := "exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello"
+	wantArgs := "exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello -c " + managedCodexAuthConfig
 	if argsText != wantArgs {
 		t.Fatalf("expected heartbeat args %q, got %q", wantArgs, argsText)
 	}

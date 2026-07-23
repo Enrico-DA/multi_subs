@@ -120,7 +120,10 @@ func TestResolveProfileResourcesPathsAndValidation(t *testing.T) {
 	if resolved.guidance.source != filepath.Join(home, "guidance") {
 		t.Fatalf("unexpected home-relative guidance path: %s", resolved.guidance.source)
 	}
-	wantSources := []string{filepath.Join(configDir, "relative-skills"), filepath.Join(root, "absolute-skills")}
+	wantSources := []string{
+		mustResolveExistingPath(t, filepath.Join(configDir, "relative-skills")),
+		mustResolveExistingPath(t, filepath.Join(root, "absolute-skills")),
+	}
 	if !reflect.DeepEqual(resolved.skills.sources, wantSources) {
 		t.Fatalf("unexpected skill paths: want %v, got %v", wantSources, resolved.skills.sources)
 	}
@@ -132,7 +135,7 @@ func TestResolveProfileResourcesPathsAndValidation(t *testing.T) {
 	}{
 		{"blank", &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: stringSlicePointer([]string{" "})}}, "blank"},
 		{"unsupported tilde", &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: stringSlicePointer([]string{"~someone/skills"})}}, "unsupported home path"},
-		{"missing", &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: stringSlicePointer([]string{"missing"})}}, "no such file"},
+		{"missing", &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: stringSlicePointer([]string{"missing"})}}, "resolve profile_resources.skills.sources[0]: lstat"},
 		{"duplicate", &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: stringSlicePointer([]string{"relative-skills", "./relative-skills"})}}, "duplicates"},
 	}
 	notDirectory := filepath.Join(configDir, "file")
@@ -237,9 +240,9 @@ func TestExplicitSkillSourcesAllowCanonicalDefaultAndExternalDirectories(t *test
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{
-		"default-skill":  filepath.Join(defaultSkills, "default-skill"),
-		"external-skill": filepath.Join(externalSkills, "external-skill"),
-		"linked-skill":   filepath.Join(externalSkills, "linked-skill"),
+		"default-skill":  mustResolveExistingPath(t, filepath.Join(defaultSkills, "default-skill")),
+		"external-skill": mustResolveExistingPath(t, filepath.Join(externalSkills, "external-skill")),
+		"linked-skill":   mustResolveExistingPath(t, linkedSkillTarget),
 	} {
 		if got := resolved.skills.desired[name]; got != want {
 			t.Fatalf("skill %s target: got %q want %q", name, got, want)
@@ -555,7 +558,308 @@ func TestSymlinkedSkillSourceDirectoryIsSupported(t *testing.T) {
 	if _, err := store.EnsureProfileDir(profile, &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}); err != nil {
 		t.Fatal(err)
 	}
-	assertLinkTarget(t, filepath.Join(profile.CodexHome, "skills", "shared"), filepath.Join(linkedSource, "shared"))
+	assertExactLinkTarget(t, filepath.Join(profile.CodexHome, "skills", "shared"), mustResolveExistingPath(t, filepath.Join(realSource, "shared")))
+}
+
+func TestExplicitSkillLinksPinCanonicalSourceAndEntryTargets(t *testing.T) {
+	store, profile := newResourceTestStore(t)
+	realSource := filepath.Join(t.TempDir(), "real-skills")
+	realEntry := filepath.Join(realSource, "source-skill")
+	linkedEntryTarget := filepath.Join(t.TempDir(), "linked-entry-target")
+	for _, path := range []string{realEntry, linkedEntryTarget} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(linkedEntryTarget, filepath.Join(realSource, "entry-skill")); err != nil {
+		t.Fatal(err)
+	}
+	sourceAlias := filepath.Join(t.TempDir(), "skills-alias")
+	if err := os.Symlink(realSource, sourceAlias); err != nil {
+		t.Fatal(err)
+	}
+	profileSkills := filepath.Join(profile.CodexHome, "skills")
+	if err := os.MkdirAll(profileSkills, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(sourceAlias, "source-skill"), filepath.Join(profileSkills, "source-skill")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(realSource, "entry-skill"), filepath.Join(profileSkills, "entry-skill")); err != nil {
+		t.Fatal(err)
+	}
+
+	inherit := true
+	sources := []string{sourceAlias}
+	policy := &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
+	resolved, err := store.ResolveProfileResources(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalRealSource := mustResolveExistingPath(t, realSource)
+	if got := resolved.skills.sources; !reflect.DeepEqual(got, []string{canonicalRealSource}) {
+		t.Fatalf("canonical sources: got %#v want %#v", got, []string{canonicalRealSource})
+	}
+	canonicalRealEntry := mustResolveExistingPath(t, realEntry)
+	canonicalLinkedEntryTarget := mustResolveExistingPath(t, linkedEntryTarget)
+	for name, want := range map[string]string{
+		"source-skill": canonicalRealEntry,
+		"entry-skill":  canonicalLinkedEntryTarget,
+	} {
+		if got := resolved.skills.desired[name]; got != want {
+			t.Fatalf("canonical desired target for %s: got %q want %q", name, got, want)
+		}
+	}
+
+	changes, err := store.EnsureProfileDir(profile, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 || changes[0].Action != "retargeted" || changes[1].Action != "retargeted" {
+		t.Fatalf("expected raw alias links to be retargeted once, got %#v", changes)
+	}
+	assertExactLinkTarget(t, filepath.Join(profileSkills, "source-skill"), canonicalRealEntry)
+	assertExactLinkTarget(t, filepath.Join(profileSkills, "entry-skill"), canonicalLinkedEntryTarget)
+}
+
+func TestExplicitSkillSourceAliasRetargetRequiresReconciliation(t *testing.T) {
+	store, profile := newResourceTestStore(t)
+	firstSource := filepath.Join(t.TempDir(), "first-source")
+	secondSource := filepath.Join(t.TempDir(), "second-source")
+	for _, source := range []string{firstSource, secondSource} {
+		if err := os.MkdirAll(filepath.Join(source, "shared"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sourceAlias := filepath.Join(t.TempDir(), "source-alias")
+	if err := os.Symlink(firstSource, sourceAlias); err != nil {
+		t.Fatal(err)
+	}
+	inherit := true
+	sources := []string{sourceAlias}
+	policy := &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
+	profileLink := filepath.Join(profile.CodexHome, "skills", "shared")
+
+	if _, err := store.EnsureProfileDir(profile, policy); err != nil {
+		t.Fatal(err)
+	}
+	firstPinnedTarget := mustResolveExistingPath(t, filepath.Join(firstSource, "shared"))
+	assertExactLinkTarget(t, profileLink, firstPinnedTarget)
+
+	if err := os.Remove(sourceAlias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secondSource, sourceAlias); err != nil {
+		t.Fatal(err)
+	}
+	assertExactLinkTarget(t, profileLink, firstPinnedTarget)
+
+	changes, err := store.EnsureProfileDir(profile, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Action != "retargeted" {
+		t.Fatalf("expected one source-alias retarget, got %#v", changes)
+	}
+	secondPinnedTarget := mustResolveExistingPath(t, filepath.Join(secondSource, "shared"))
+	assertExactLinkTarget(t, profileLink, secondPinnedTarget)
+
+	protectedSource := filepath.Join(store.paths.ProfilesDir, "other", "codex-home", "skills")
+	if err := os.MkdirAll(filepath.Join(protectedSource, "shared"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(sourceAlias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(protectedSource, sourceAlias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsureProfileDir(profile, policy); err == nil || !strings.Contains(err.Error(), "overlaps multicodex-owned state") {
+		t.Fatalf("expected protected source target to fail, got %v", err)
+	}
+	assertExactLinkTarget(t, profileLink, secondPinnedTarget)
+}
+
+func TestExplicitSkillEntryAliasRetargetRequiresReconciliation(t *testing.T) {
+	store, profile := newResourceTestStore(t)
+	source := filepath.Join(t.TempDir(), "source")
+	firstTarget := filepath.Join(t.TempDir(), "first-entry")
+	secondTarget := filepath.Join(t.TempDir(), "second-entry")
+	for _, path := range []string{source, firstTarget, secondTarget} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entryAlias := filepath.Join(source, "shared")
+	if err := os.Symlink(firstTarget, entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	inherit := true
+	sources := []string{source}
+	policy := &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
+	profileLink := filepath.Join(profile.CodexHome, "skills", "shared")
+
+	if _, err := store.EnsureProfileDir(profile, policy); err != nil {
+		t.Fatal(err)
+	}
+	firstPinnedTarget := mustResolveExistingPath(t, firstTarget)
+	assertExactLinkTarget(t, profileLink, firstPinnedTarget)
+
+	if err := os.Remove(entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secondTarget, entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	assertExactLinkTarget(t, profileLink, firstPinnedTarget)
+	if _, err := store.EnsureProfileDir(profile, policy); err != nil {
+		t.Fatal(err)
+	}
+	secondPinnedTarget := mustResolveExistingPath(t, secondTarget)
+	assertExactLinkTarget(t, profileLink, secondPinnedTarget)
+
+	protectedTarget := filepath.Join(store.paths.ProfilesDir, "other", "codex-home", "skills", "shared")
+	if err := os.MkdirAll(protectedTarget, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(protectedTarget, entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsureProfileDir(profile, policy); err == nil || !strings.Contains(err.Error(), "overlaps multicodex-owned state") {
+		t.Fatalf("expected protected entry target to fail, got %v", err)
+	}
+	assertExactLinkTarget(t, profileLink, secondPinnedTarget)
+}
+
+func TestDefaultSkillSourceInheritancePinsCanonicalTargets(t *testing.T) {
+	policies := []struct {
+		name   string
+		policy func() *ProfileResources
+	}{
+		{name: "legacy omitted policy", policy: func() *ProfileResources { return nil }},
+		{
+			name: "guidance-only legacy path",
+			policy: func() *ProfileResources {
+				inherit := false
+				return &ProfileResources{Guidance: &GuidanceResources{Inherit: &inherit}}
+			},
+		},
+		{
+			name: "explicit omitted sources",
+			policy: func() *ProfileResources {
+				inherit := true
+				return &ProfileResources{Skills: &SkillResources{Inherit: &inherit}}
+			},
+		},
+	}
+
+	for _, test := range policies {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			store, profile := newResourceTestStore(t)
+			firstSource := filepath.Join(t.TempDir(), "first-default-skills")
+			secondSource := filepath.Join(t.TempDir(), "second-default-skills")
+			for _, source := range []string{firstSource, secondSource} {
+				if err := os.MkdirAll(filepath.Join(source, "shared"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			defaultSourceAlias := filepath.Join(store.paths.DefaultCodexHome, "skills")
+			if err := os.Symlink(firstSource, defaultSourceAlias); err != nil {
+				t.Fatal(err)
+			}
+			profileLink := filepath.Join(profile.CodexHome, "skills", "shared")
+			policy := test.policy()
+
+			if _, err := store.EnsureProfileDir(profile, policy); err != nil {
+				t.Fatal(err)
+			}
+			firstPinnedTarget := mustResolveExistingPath(t, filepath.Join(firstSource, "shared"))
+			assertExactLinkTarget(t, profileLink, firstPinnedTarget)
+
+			if err := os.Remove(defaultSourceAlias); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(secondSource, defaultSourceAlias); err != nil {
+				t.Fatal(err)
+			}
+			assertExactLinkTarget(t, profileLink, firstPinnedTarget)
+			if _, err := store.EnsureProfileDir(profile, policy); err != nil {
+				t.Fatal(err)
+			}
+			secondPinnedTarget := mustResolveExistingPath(t, filepath.Join(secondSource, "shared"))
+			assertExactLinkTarget(t, profileLink, secondPinnedTarget)
+
+			protectedSource := filepath.Join(store.paths.ProfilesDir, "other", "codex-home", "skills")
+			if err := os.MkdirAll(filepath.Join(protectedSource, "shared"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(defaultSourceAlias); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(protectedSource, defaultSourceAlias); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.EnsureProfileDir(profile, policy); err == nil || !strings.Contains(err.Error(), "overlaps multicodex-owned state") {
+				t.Fatalf("expected protected default source target to fail, got %v", err)
+			}
+			assertExactLinkTarget(t, profileLink, secondPinnedTarget)
+		})
+	}
+}
+
+func TestDefaultSkillEntryInheritancePinsCanonicalTarget(t *testing.T) {
+	store, profile := newResourceTestStore(t)
+	defaultSkills := filepath.Join(store.paths.DefaultCodexHome, "skills")
+	firstTarget := filepath.Join(t.TempDir(), "first-default-entry")
+	secondTarget := filepath.Join(t.TempDir(), "second-default-entry")
+	for _, path := range []string{defaultSkills, firstTarget, secondTarget} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entryAlias := filepath.Join(defaultSkills, "shared")
+	if err := os.Symlink(firstTarget, entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	profileLink := filepath.Join(profile.CodexHome, "skills", "shared")
+
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
+		t.Fatal(err)
+	}
+	firstPinnedTarget := mustResolveExistingPath(t, firstTarget)
+	assertExactLinkTarget(t, profileLink, firstPinnedTarget)
+
+	if err := os.Remove(entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secondTarget, entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	assertExactLinkTarget(t, profileLink, firstPinnedTarget)
+	if _, err := store.EnsureProfileDir(profile, nil); err != nil {
+		t.Fatal(err)
+	}
+	secondPinnedTarget := mustResolveExistingPath(t, secondTarget)
+	assertExactLinkTarget(t, profileLink, secondPinnedTarget)
+
+	protectedTarget := filepath.Join(store.paths.ProfilesDir, "other", "codex-home", "skills", "shared")
+	if err := os.MkdirAll(protectedTarget, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(protectedTarget, entryAlias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsureProfileDir(profile, nil); err == nil || !strings.Contains(err.Error(), "overlaps multicodex-owned state") {
+		t.Fatalf("expected protected default entry target to fail, got %v", err)
+	}
+	assertExactLinkTarget(t, profileLink, secondPinnedTarget)
 }
 
 func TestResourceChangeOutputIncludesOldTarget(t *testing.T) {
@@ -712,6 +1016,33 @@ func assertLinkTarget(t *testing.T, path, want string) {
 	if canonicalProfilePath(got) != canonicalProfilePath(want) {
 		t.Fatalf("unexpected target for %s: want %s, got %s", path, want, got)
 	}
+}
+
+func assertExactLinkTarget(t *testing.T, path, want string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat %s: %v", path, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected symlink: %s", path)
+	}
+	got, err := os.Readlink(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("unexpected exact target for %s: want %s, got %s", path, want, got)
+	}
+}
+
+func mustResolveExistingPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := resolveExistingPath(path)
+	if err != nil {
+		t.Fatalf("resolve existing path %s: %v", path, err)
+	}
+	return resolved
 }
 
 func mustReadFile(t *testing.T, path string) []byte {

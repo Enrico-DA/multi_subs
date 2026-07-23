@@ -29,7 +29,7 @@ func TestCmdCLIRunsInteractiveCodexWithProfileEnv(t *testing.T) {
 	if !strings.Contains(log, "codex_home="+wantCodexHome) {
 		t.Fatalf("expected primary CODEX_HOME in log, got %q", log)
 	}
-	wantArgs := "check this repo"
+	wantArgs := "check this repo -c " + managedCodexAuthConfig
 	if !strings.Contains(log, "args="+wantArgs) {
 		t.Fatalf("expected cli args %q in log, got %q", wantArgs, log)
 	}

@@ -156,6 +156,33 @@ func TestCodexLoginStatusRedactsFailureOutput(t *testing.T) {
 	}
 }
 
+func TestCodexLoginStatusForcesFileBackedAuth(t *testing.T) {
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	argsPath := filepath.Join(root, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" > " + shellQuote(argsPath) + "\nprintf 'logged in\\n'\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	state, _, _ := codexLoginStatus(filepath.Join(root, "codex-home"))
+	if state != "logged-in" {
+		t.Fatalf("expected logged-in state, got %q", state)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	want := "login status -c " + managedCodexAuthConfig + "\n"
+	if string(data) != want {
+		t.Fatalf("managed login status args: got %q want %q", data, want)
+	}
+}
+
 func newStatusTestApp(t *testing.T) (*App, string) {
 	t.Helper()
 

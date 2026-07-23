@@ -90,7 +90,7 @@ func TestDoctorProfileResourcesIsReadOnly(t *testing.T) {
 	inherit := true
 	sources := []string{"missing"}
 	check := checkProfileResources(store, &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}})
-	if check.Status != "fail" || !strings.Contains(check.Details, "missing") {
+	if check.Status != "fail" || !strings.Contains(check.Details, "resolve profile_resources.skills.sources[0]: lstat") {
 		t.Fatalf("unexpected check: %#v", check)
 	}
 	if _, err := os.Lstat(filepath.Join(root, "state")); !errors.Is(err, os.ErrNotExist) {

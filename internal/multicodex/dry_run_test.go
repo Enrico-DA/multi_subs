@@ -51,7 +51,8 @@ func TestRenderDryRunShowsExplicitResourcesWithoutMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{guidance, skills, "preserving regular local guidance", "preserving regular local skills"} {
+	canonicalSkills := mustResolveExistingPath(t, skills)
+	for _, want := range []string{guidance, canonicalSkills, "preserving regular local guidance", "preserving regular local skills"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in output: %s", want, text)
 		}
@@ -69,8 +70,8 @@ func TestRenderDryRunRejectsInvalidResourceSourceWithoutMutation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ProfileResources = &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
 	_, err := RenderDryRun(store, cfg, nil)
-	if err == nil || !strings.Contains(err.Error(), "missing") {
-		t.Fatalf("expected missing source error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "resolve profile_resources.skills.sources[0]: lstat") {
+		t.Fatalf("expected source resolution error, got %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(root, "state")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dry-run mutated filesystem: %v", err)
@@ -100,6 +101,9 @@ func TestRenderDryRunLoginShowsResourceReconciliation(t *testing.T) {
 	}
 	if !strings.Contains(text, "would reconcile profile resources: no guidance changes; existing strict default skill reconciliation") {
 		t.Fatalf("missing resource reconciliation: %s", text)
+	}
+	if !strings.Contains(text, "codex login -c "+shellQuoteValue(managedCodexAuthConfig)) {
+		t.Fatalf("missing enforced auth override: %s", text)
 	}
 }
 

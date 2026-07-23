@@ -833,7 +833,7 @@ func TestEnsureProfileDirLinksMissingDefaultSkillsEntries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("readlink %s: %v", name, err)
 		}
-		want := filepath.Join(paths.DefaultCodexHome, "skills", name)
+		want := mustResolveExistingPath(t, filepath.Join(paths.DefaultCodexHome, "skills", name))
 		if target != want {
 			t.Fatalf("unexpected symlink target for %s. got=%q want=%q", name, target, want)
 		}
@@ -930,7 +930,7 @@ func TestEnsureProfileDirPreservesManualProfileSkillOverride(t *testing.T) {
 	}
 }
 
-func TestEnsureProfileDirRejectsProfileSkillSymlinkOutsideDefaultSkills(t *testing.T) {
+func TestEnsureProfileDirRetargetsSameNamedSkillSymlinkToPinnedDefaultEntry(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MULTICODEX_HOME", filepath.Join(root, "multicodex"))
 	t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
@@ -957,13 +957,11 @@ func TestEnsureProfileDirRejectsProfileSkillSymlinkOutsideDefaultSkills(t *testi
 		t.Fatalf("symlink profile skill: %v", err)
 	}
 
-	_, err = store.EnsureProfileDir(profile, nil)
-	if err == nil {
-		t.Fatal("expected unsafe profile skill symlink to fail")
+	if _, err = store.EnsureProfileDir(profile, nil); err != nil {
+		t.Fatalf("EnsureProfileDir: %v", err)
 	}
-	if !strings.Contains(err.Error(), "must point under default skills directory") {
-		t.Fatalf("expected default skills symlink error, got %v", err)
-	}
+	canonicalDefaultSkill := mustResolveExistingPath(t, filepath.Join(paths.DefaultCodexHome, "skills", "shared-skill"))
+	assertExactLinkTarget(t, filepath.Join(profileSkillDir, "shared-skill"), canonicalDefaultSkill)
 }
 
 func TestEnsureProfileDirKeepsSystemSkillsProfileLocalForEveryPolicy(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -188,7 +189,7 @@ func (s *Store) CreateProfile(name string, resources *ProfileResources) (Profile
 	if err := s.ensureProfileStoragePathSafe(profile); err != nil {
 		return Profile{}, nil, err
 	}
-	if err := s.validateProfileResourceDestinations(codexHome, resources); err != nil {
+	if err := s.validateProfileResourceDestinations(codexHome, resources, resolved); err != nil {
 		return Profile{}, nil, err
 	}
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
@@ -217,7 +218,7 @@ func (s *Store) EnsureProfileDir(profile Profile, resources *ProfileResources) (
 	if err := s.ensureProfileStoragePathSafe(profile); err != nil {
 		return nil, err
 	}
-	if err := s.validateProfileResourceDestinations(profile.CodexHome, resources); err != nil {
+	if err := s.validateProfileResourceDestinations(profile.CodexHome, resources, resolved); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(profile.CodexHome, 0o700); err != nil {
@@ -530,8 +531,7 @@ func (s *Store) ensureProfileConfig(codexHome string) error {
 	return nil
 }
 
-func (s *Store) ensureProfileSkills(codexHome string) error {
-	defaultSkillsPath := filepath.Join(s.paths.DefaultCodexHome, "skills")
+func (s *Store) ensureProfileSkills(codexHome string, resolved *resolvedSkillResources) error {
 	profileSkillsPath := filepath.Join(codexHome, "skills")
 
 	if err := ensurePathNotSymlinkIfExists(profileSkillsPath); err != nil {
@@ -551,31 +551,35 @@ func (s *Store) ensureProfileSkills(codexHome string) error {
 		return fmt.Errorf("secure profile skills dir permissions: %w", err)
 	}
 
-	entries, err := os.ReadDir(defaultSkillsPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("read default skills dir: %w", err)
+	if resolved == nil || len(resolved.sources) == 0 {
+		return nil
 	}
-	if err := s.removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath); err != nil {
+	defaultSkillsPath := resolved.sources[0]
+	if err := s.removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath, resolved.desired); err != nil {
 		return err
 	}
 
-	for _, entry := range entries {
-		name := strings.TrimSpace(entry.Name())
-		if !isInheritableSkillName(name) {
-			continue
-		}
-
-		defaultEntryPath := filepath.Join(defaultSkillsPath, name)
+	names := make([]string, 0, len(resolved.desired))
+	for name := range resolved.desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		defaultEntryPath := resolved.desired[name]
 		profileEntryPath := filepath.Join(profileSkillsPath, name)
 
 		info, err := os.Lstat(profileEntryPath)
 		switch {
 		case err == nil:
 			if info.Mode()&os.ModeSymlink != 0 {
-				target, readErr := resolveExistingSymlinkTarget(profileEntryPath)
+				rawTarget, readErr := os.Readlink(profileEntryPath)
+				if readErr != nil {
+					return fmt.Errorf("read profile skill symlink %s: %w", profileEntryPath, readErr)
+				}
+				if rawTarget == defaultEntryPath {
+					continue
+				}
+				_, readErr = resolveExistingSymlinkTarget(profileEntryPath)
 				if readErr != nil {
 					if errors.Is(readErr, syscall.EINVAL) {
 						if info, statErr := os.Lstat(profileEntryPath); statErr == nil && info.Mode()&os.ModeSymlink == 0 {
@@ -585,30 +589,14 @@ func (s *Store) ensureProfileSkills(codexHome string) error {
 					if !errors.Is(readErr, os.ErrNotExist) {
 						return fmt.Errorf("resolve profile skill symlink %s: %w", profileEntryPath, readErr)
 					}
-					target, readErr = resolveBrokenManagedSymlinkTarget(profileEntryPath)
-					if readErr != nil {
-						return fmt.Errorf("resolve profile skill symlink %s: %w", profileEntryPath, readErr)
-					}
-					if pathIsInsideRoot(defaultSkillsPath, target) {
-						if err := os.Remove(profileEntryPath); err != nil {
-							return fmt.Errorf("replace stale profile skill symlink %s: %w", profileEntryPath, err)
-						}
-						break
-					}
-					return fmt.Errorf("profile skill symlink must point under default skills directory: %s", profileEntryPath)
 				}
-				if canonicalProfilePath(target) == canonicalProfilePath(defaultEntryPath) {
-					continue
+				if err := os.Remove(profileEntryPath); err != nil {
+					return fmt.Errorf("replace profile skill symlink %s: %w", profileEntryPath, err)
 				}
-				if pathIsInsideRoot(defaultSkillsPath, target) {
-					if err := os.Remove(profileEntryPath); err != nil {
-						return fmt.Errorf("replace stale profile skill symlink %s: %w", profileEntryPath, err)
-					}
-					break
-				}
-				return fmt.Errorf("profile skill symlink must point under default skills directory: %s", profileEntryPath)
 			}
-			continue
+			if info.Mode()&os.ModeSymlink == 0 {
+				continue
+			}
 		case !errors.Is(err, os.ErrNotExist):
 			return fmt.Errorf("inspect profile skill entry %s: %w", profileEntryPath, err)
 		}
@@ -621,7 +609,7 @@ func (s *Store) ensureProfileSkills(codexHome string) error {
 	return nil
 }
 
-func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath string) error {
+func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath string, desired map[string]string) error {
 	entries, err := os.ReadDir(profileSkillsPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -648,6 +636,9 @@ func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPat
 					return fmt.Errorf("remove inherited profile system skills symlink: %w", err)
 				}
 			}
+			continue
+		}
+		if _, wanted := desired[entry.Name()]; wanted {
 			continue
 		}
 		target, err := resolveExistingSymlinkTarget(profileEntryPath)
@@ -689,8 +680,8 @@ func linkProfileSkill(defaultEntryPath, profileEntryPath string) error {
 		if errors.Is(err, os.ErrExist) {
 			info, statErr := os.Lstat(profileEntryPath)
 			if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-				target, readErr := resolveExistingSymlinkTarget(profileEntryPath)
-				if readErr == nil && canonicalProfilePath(target) == canonicalProfilePath(defaultEntryPath) {
+				target, readErr := os.Readlink(profileEntryPath)
+				if readErr == nil && target == defaultEntryPath {
 					return nil
 				}
 			}
