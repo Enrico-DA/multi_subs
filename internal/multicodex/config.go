@@ -630,15 +630,24 @@ func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPat
 		return fmt.Errorf("read profile skills dir: %w", err)
 	}
 	for _, entry := range entries {
-		if entry.Name() == ".system" {
-			continue
-		}
 		profileEntryPath := filepath.Join(profileSkillsPath, entry.Name())
 		info, err := os.Lstat(profileEntryPath)
 		if err != nil {
 			return fmt.Errorf("inspect profile skill entry %s: %w", profileEntryPath, err)
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if entry.Name() == ".system" {
+			_, inherited, err := inspectProfileSystemSkill(defaultSkillsPath, profileEntryPath)
+			if err != nil {
+				return err
+			}
+			if inherited {
+				if err := os.Remove(profileEntryPath); err != nil {
+					return fmt.Errorf("remove inherited profile system skills symlink: %w", err)
+				}
+			}
 			continue
 		}
 		target, err := resolveExistingSymlinkTarget(profileEntryPath)

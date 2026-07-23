@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -425,65 +426,83 @@ func TestExplicitSkillSourcesOrderingOverridesAndIsolation(t *testing.T) {
 	}
 }
 
-func TestExplicitSkillReconciliationPreservesSystemEntries(t *testing.T) {
-	tests := []struct {
-		name   string
-		create func(*testing.T, string) string
-		check  func(*testing.T, string, string)
-	}{
-		{
-			name: "directory",
-			create: func(t *testing.T, path string) string {
-				if err := os.Mkdir(path, 0o700); err != nil {
+func TestExplicitSkillReconciliationKeepsSystemSkillsProfileLocal(t *testing.T) {
+	for _, inherit := range []bool{false, true} {
+		for _, entryKind := range []string{"local directory", "inherited link", "external link", "broken link"} {
+			t.Run(fmt.Sprintf("inherit=%t/%s", inherit, entryKind), func(t *testing.T) {
+				store, profile := newResourceTestStore(t)
+				defaultSystemPath := filepath.Join(store.paths.DefaultCodexHome, "skills", ".system")
+				if err := os.MkdirAll(defaultSystemPath, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				return ""
-			},
-			check: func(t *testing.T, path, _ string) {
-				info, err := os.Lstat(path)
-				if err != nil || !info.IsDir() {
-					t.Fatalf("regular .system directory changed: info=%v err=%v", info, err)
-				}
-			},
-		},
-		{
-			name: "symlink",
-			create: func(t *testing.T, path string) string {
-				target := filepath.Join(t.TempDir(), "runtime-system")
-				if err := os.Mkdir(target, 0o700); err != nil {
+				skillsPath := filepath.Join(profile.CodexHome, "skills")
+				if err := os.MkdirAll(skillsPath, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(target, path); err != nil {
-					t.Fatal(err)
+				systemPath := filepath.Join(skillsPath, ".system")
+				rawTarget := ""
+				switch entryKind {
+				case "local directory":
+					if err := os.Mkdir(systemPath, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				case "inherited link":
+					rawTarget = defaultSystemPath
+				case "external link":
+					rawTarget = filepath.Join(t.TempDir(), ".system")
+					if err := os.Mkdir(rawTarget, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				case "broken link":
+					rawTarget = filepath.Join(t.TempDir(), "missing-system")
+				default:
+					t.Fatalf("unknown entry kind %q", entryKind)
 				}
-				return target
-			},
-			check: func(t *testing.T, path, wantTarget string) {
-				assertLinkTarget(t, path, wantTarget)
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			store, profile := newResourceTestStore(t)
-			skillsPath := filepath.Join(profile.CodexHome, "skills")
-			if err := os.MkdirAll(skillsPath, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			systemPath := filepath.Join(skillsPath, ".system")
-			target := test.create(t, systemPath)
-			inherit := false
-			changes, err := store.EnsureProfileDir(profile, &ProfileResources{
-				Skills: &SkillResources{Inherit: &inherit},
+				if rawTarget != "" {
+					if err := os.Symlink(rawTarget, systemPath); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				changes, err := store.EnsureProfileDir(profile, &ProfileResources{
+					Skills: &SkillResources{Inherit: &inherit},
+				})
+				switch entryKind {
+				case "local directory":
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(changes) != 0 {
+						t.Fatalf("local .system directory produced changes: %#v", changes)
+					}
+					info, statErr := os.Lstat(systemPath)
+					if statErr != nil || !info.IsDir() {
+						t.Fatalf("local .system directory changed: info=%v err=%v", info, statErr)
+					}
+				case "inherited link":
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(changes) != 1 || changes[0].Action != "removed" || changes[0].OldTarget != rawTarget {
+						t.Fatalf("unexpected inherited .system change: %#v", changes)
+					}
+					if _, statErr := os.Lstat(systemPath); !errors.Is(statErr, os.ErrNotExist) {
+						t.Fatalf("inherited .system link was not removed: %v", statErr)
+					}
+				default:
+					if err == nil {
+						t.Fatal("expected unsafe .system link to fail")
+					}
+					gotTarget, readErr := os.Readlink(systemPath)
+					if readErr != nil {
+						t.Fatalf("unsafe .system link was changed: %v", readErr)
+					}
+					if gotTarget != rawTarget {
+						t.Fatalf("unsafe .system target changed: got=%q want=%q", gotTarget, rawTarget)
+					}
+				}
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(changes) != 0 {
-				t.Fatalf(".system must not be reconciled, got changes %#v", changes)
-			}
-			test.check(t, systemPath, target)
-		})
+		}
 	}
 }
 

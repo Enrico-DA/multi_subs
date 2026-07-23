@@ -308,19 +308,55 @@ func isInheritableSkillName(name string) bool {
 	return name != "" && name != "." && name != ".." && name != ".system"
 }
 
+func inspectProfileSystemSkill(defaultSkillsPath, systemPath string) (string, bool, error) {
+	info, err := os.Lstat(systemPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("inspect profile system skills path: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		if !info.IsDir() {
+			return "", false, fmt.Errorf("profile system skills path is not a directory: %s", systemPath)
+		}
+		return "", false, nil
+	}
+
+	rawTarget, err := os.Readlink(systemPath)
+	if err != nil {
+		return "", false, fmt.Errorf("read profile system skills symlink: %w", err)
+	}
+	if containsParentPathSegment(rawTarget) {
+		return "", false, fmt.Errorf("profile system skills symlink contains parent directory traversal: %s", systemPath)
+	}
+	resolvedTarget, err := resolveExistingSymlinkTarget(systemPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, fmt.Errorf("profile system skills symlink is broken: %s", systemPath)
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("resolve profile system skills symlink: %w", err)
+	}
+	resolvedDefaultSkillsPath, err := resolveExistingPath(defaultSkillsPath)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve default skills directory: %w", err)
+	}
+	if !pathIsInsideRoot(resolvedDefaultSkillsPath, resolvedTarget) {
+		return "", false, fmt.Errorf("profile system skills symlink must point under default skills directory: %s", systemPath)
+	}
+	return rawTarget, true, nil
+}
+
 // validateProfileResourceDestinations checks profile-owned positions before any
 // profile setup or resource reconciliation changes the filesystem.
 func (s *Store) validateProfileResourceDestinations(codexHome string, policy *ProfileResources) error {
-	if policy == nil {
-		return nil
-	}
-	if policy.Guidance != nil {
+	if policy != nil && policy.Guidance != nil {
 		if err := validateOwnedLinkPositions(codexHome, guidanceNames, "profile guidance"); err != nil {
 			return err
 		}
 	}
 	defaultSkillsPath := filepath.Join(s.paths.DefaultCodexHome, "skills")
-	if policy.Skills == nil {
+	if policy == nil || policy.Skills == nil {
 		if _, err := os.ReadDir(defaultSkillsPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("read default skills dir: %w", err)
 		}
@@ -349,10 +385,9 @@ func (s *Store) validateProfileResourceDestinations(codexHome string, policy *Pr
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Name() == ".system" {
-			continue
-		}
-		if policy.Skills != nil && !isInheritableSkillName(strings.TrimSpace(entry.Name())) {
+		if policy != nil && policy.Skills != nil &&
+			entry.Name() != ".system" &&
+			!isInheritableSkillName(strings.TrimSpace(entry.Name())) {
 			continue
 		}
 		names = append(names, entry.Name())
@@ -360,13 +395,23 @@ func (s *Store) validateProfileResourceDestinations(codexHome string, policy *Pr
 	if err := validateOwnedLinkPositions(profileSkillsPath, names, "profile skill"); err != nil {
 		return err
 	}
-	if policy.Skills != nil {
+	systemPath := filepath.Join(profileSkillsPath, ".system")
+	if _, _, err := inspectProfileSystemSkill(defaultSkillsPath, systemPath); err != nil {
+		return err
+	}
+	if policy != nil && policy.Skills != nil {
 		return nil
 	}
 	for _, name := range names {
 		path := filepath.Join(profileSkillsPath, name)
 		info, err := os.Lstat(path)
 		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if name == ".system" {
+			if _, _, err := inspectProfileSystemSkill(defaultSkillsPath, path); err != nil {
+				return err
+			}
 			continue
 		}
 		target, err := resolveExistingSymlinkTarget(path)
@@ -455,7 +500,11 @@ func (s *Store) reconcileProfileResources(codexHome string, policy *ProfileResou
 			return nil, err
 		}
 	} else {
-		skillChanges, err := reconcileExplicitSkills(codexHome, resolved.skills)
+		skillChanges, err := reconcileExplicitSkills(
+			codexHome,
+			filepath.Join(s.paths.DefaultCodexHome, "skills"),
+			resolved.skills,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -481,7 +530,7 @@ func reconcileGuidance(codexHome string, resolved *resolvedGuidanceResources) ([
 	return reconcileOwnedLinks(codexHome, guidanceNames, desired, "profile guidance")
 }
 
-func reconcileExplicitSkills(codexHome string, resolved *resolvedSkillResources) ([]ResourceChange, error) {
+func reconcileExplicitSkills(codexHome, defaultSkillsPath string, resolved *resolvedSkillResources) ([]ResourceChange, error) {
 	profileSkillsPath := filepath.Join(codexHome, "skills")
 	if err := ensurePathNotSymlinkIfExists(profileSkillsPath); err != nil {
 		return nil, err
@@ -499,6 +548,10 @@ func reconcileExplicitSkills(codexHome string, resolved *resolvedSkillResources)
 	}
 	if err := os.Chmod(profileSkillsPath, 0o700); err != nil {
 		return nil, fmt.Errorf("secure profile skills dir permissions: %w", err)
+	}
+	systemChanges, err := reconcileProfileSystemSkill(defaultSkillsPath, profileSkillsPath)
+	if err != nil {
+		return nil, err
 	}
 	entries, err := os.ReadDir(profileSkillsPath)
 	if err != nil {
@@ -523,7 +576,30 @@ func reconcileExplicitSkills(codexHome string, resolved *resolvedSkillResources)
 	if !resolved.inherit {
 		desired = map[string]string{}
 	}
-	return reconcileOwnedLinks(profileSkillsPath, names, desired, "profile skill")
+	skillChanges, err := reconcileOwnedLinks(profileSkillsPath, names, desired, "profile skill")
+	if err != nil {
+		return nil, err
+	}
+	return append(systemChanges, skillChanges...), nil
+}
+
+func reconcileProfileSystemSkill(defaultSkillsPath, profileSkillsPath string) ([]ResourceChange, error) {
+	systemPath := filepath.Join(profileSkillsPath, ".system")
+	oldTarget, inherited, err := inspectProfileSystemSkill(defaultSkillsPath, systemPath)
+	if err != nil {
+		return nil, err
+	}
+	if !inherited {
+		return nil, nil
+	}
+	if err := os.Remove(systemPath); err != nil {
+		return nil, fmt.Errorf("remove inherited profile system skills symlink: %w", err)
+	}
+	return []ResourceChange{{
+		Action:    "removed",
+		Path:      systemPath,
+		OldTarget: oldTarget,
+	}}, nil
 }
 
 func reconcileOwnedLinks(root string, names []string, desired map[string]string, label string) ([]ResourceChange, error) {

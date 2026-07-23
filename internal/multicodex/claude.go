@@ -19,7 +19,14 @@ type claudeTarget struct {
 }
 
 func runClaudeCLI(args []string) error {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 {
+		printClaudeHelp()
+		return nil
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		if len(args) != 1 {
+			return &ExitError{Code: 2, Message: "usage: multicodex claude"}
+		}
 		printClaudeHelp()
 		return nil
 	}
@@ -36,7 +43,14 @@ func runClaudeCLI(args []string) error {
 }
 
 func (a *App) cmdClaude(args []string) error {
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 {
+		printClaudeHelp()
+		return nil
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		if len(args) != 1 {
+			return &ExitError{Code: 2, Message: "usage: multicodex claude"}
+		}
 		printClaudeHelp()
 		return nil
 	}

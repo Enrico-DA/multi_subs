@@ -9,12 +9,12 @@ Trade-offs: Slightly more verbose than shell scripts, but safer and easier to te
 Enforcement: Build and test pipeline will run Go tooling only.
 References: `go.mod`, `docs/security-and-privacy.md`
 
-Decision: Produce release binaries only from version tags and inject one shared version.
-Context: Public binaries need clear provenance, consistent CLI and provider client identification, and checksums without hand-edited version constants.
-Rationale: A tag-triggered workflow makes release publication explicit and gives every built target the same version derived from the tag.
-Trade-offs: Untagged source builds report a development version, and supported release targets remain limited to macOS and Linux on AMD64 and ARM64.
-Enforcement: `internal/buildinfo` is the single version source; release builds replace it with the tag through Go linker flags, run the full local gates, and publish checksummed archives.
-References: `internal/buildinfo/version.go`, `.github/workflows/release.yml`, `CONTRIBUTING.md`
+Decision: Retain the imported tag release workflow, but do not publish fork tags before the product and module rename.
+Context: The fork repository is `Enrico-DA/multi_subs`, while the imported product and module names are still transitional. Publishing now would create install paths and release artifacts with conflicting identities.
+Rationale: Keeping the upstream workflow eases the later rename, while a repository guard prevents accidental fork publication during this sync.
+Trade-offs: The fork has no valid install-from-module or release-download path until the rename is complete; users must build a checked-out source tree.
+Enforcement: Do not create fork version tags. `.github/workflows/release.yml` stays guarded to `olliecrow/multicodex` for this upstream sync and must not publish from `Enrico-DA/multi_subs`.
+References: `internal/buildinfo/version.go`, `.github/workflows/release.yml`, `README.md`, `CONTRIBUTING.md`
 
 Decision: Keep account use profile-local and never switch the shared default Codex account.
 Context: The default Codex account is normal system Codex state and must stay outside multicodex ownership.
@@ -250,8 +250,8 @@ References: `internal/multicodex/cli.go`, `internal/multicodex/cli_test.go`, `RE
 Decision: Keep profile resource sharing optional and preserve the established behavior when it is omitted.
 Context: Profiles already inherit missing portable top-level skills from the default Codex skills tree, while profile guidance is unmanaged. Runtime-managed `.system` content remains profile-local. Some users also need shared guidance or more than one skill source without a second config system or copied trees.
 Rationale: One optional `profile_resources` block adds explicit guidance and ordered skill sources while keeping every old config and omitted setting on the original path. Required booleans and strict nested decoding prevent a typo from becoming destructive isolation.
-Trade-offs: Explicit management owns symlinks at the documented profile positions other than `.system`, so another pre-existing custom symlink can be retargeted or removed. Regular files and directories remain overrides, and every removal or retarget reports the old target.
-Enforcement: Config loading checks resource shape and contradictions without filesystem access. A shared read-only resolver expands `~`, resolves relative paths from `config.json`, rejects skill sources that overlap managed or default account state except for the canonical default skills directory, and requires inherited skill entries to resolve to directories. Reconciliation validates the full desired set first, treats either regular guidance file as a whole-pair override, merges skill sources in order, preserves regular overrides and `.system`, and keeps the nil policy on the original guidance no-op and strict default-skill code.
+Trade-offs: Explicit management owns symlinks at the documented profile positions, so another pre-existing custom symlink can be retargeted or removed. `.system` uses a narrower rule because the runtime must create profile-local state there. Regular files and directories remain overrides, and every reported removal or retarget includes the old target.
+Enforcement: Config loading checks resource shape and contradictions without filesystem access. A shared read-only resolver expands `~`, resolves relative paths from `config.json`, rejects skill sources that overlap managed or default account state except for the canonical default skills directory, and requires inherited skill entries to resolve to directories. Reconciliation validates the full desired set first, treats either regular guidance file as a whole-pair override, and merges skill sources in order. Every policy excludes `.system` from inheritance, preserves a regular profile-local `.system` directory, removes only a safely resolved stale default-tree link, and rejects unsafe or broken `.system` links unchanged.
 References: `internal/multicodex/resources.go`, `internal/multicodex/resources_test.go`, `internal/multicodex/config.go`, `README.md`, `docs/command-spec.md`, `docs/security-and-privacy.md`
 
 Decision: Route `multicodex exec` model-aware to Spark buckets when the model name requests Spark.

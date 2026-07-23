@@ -966,7 +966,7 @@ func TestEnsureProfileDirRejectsProfileSkillSymlinkOutsideDefaultSkills(t *testi
 	}
 }
 
-func TestEnsureProfileDirLegacySkillsPreserveSystemSymlinks(t *testing.T) {
+func TestEnsureProfileDirKeepsSystemSkillsProfileLocalForEveryPolicy(t *testing.T) {
 	policies := []struct {
 		name      string
 		resources func() *ProfileResources
@@ -986,12 +986,33 @@ func TestEnsureProfileDirLegacySkillsPreserveSystemSymlinks(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "explicit skill policy",
+			resources: func() *ProfileResources {
+				inherit := false
+				return &ProfileResources{
+					Skills: &SkillResources{Inherit: &inherit},
+				}
+			},
+		},
 	}
-	targets := []string{"default skills tree", "outside default skills tree", "broken"}
+	entries := []struct {
+		name        string
+		wantRemoved bool
+		wantError   bool
+	}{
+		{name: "regular local directory"},
+		{name: "default skills tree", wantRemoved: true},
+		{name: "outside default skills tree", wantError: true},
+		{name: "cross profile", wantError: true},
+		{name: "malformed parent traversal", wantError: true},
+		{name: "broken", wantError: true},
+		{name: "traversal through symlink", wantError: true},
+	}
 
 	for _, policy := range policies {
-		for _, targetKind := range targets {
-			t.Run(policy.name+"/"+targetKind, func(t *testing.T) {
+		for _, entry := range entries {
+			t.Run(policy.name+"/"+entry.name, func(t *testing.T) {
 				root := t.TempDir()
 				t.Setenv("MULTICODEX_HOME", filepath.Join(root, "multicodex"))
 				t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
@@ -1009,8 +1030,18 @@ func TestEnsureProfileDirLegacySkillsPreserveSystemSymlinks(t *testing.T) {
 					t.Fatalf("write default config: %v", err)
 				}
 
-				var rawTarget string
-				switch targetKind {
+				profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
+				systemPath := filepath.Join(profile.CodexHome, "skills", ".system")
+				if err := os.MkdirAll(filepath.Dir(systemPath), 0o700); err != nil {
+					t.Fatalf("mkdir profile skills: %v", err)
+				}
+
+				rawTarget := ""
+				switch entry.name {
+				case "regular local directory":
+					if err := os.Mkdir(systemPath, 0o700); err != nil {
+						t.Fatalf("mkdir local system skills: %v", err)
+					}
 				case "default skills tree":
 					rawTarget = filepath.Join(defaultSkillsPath, ".system")
 				case "outside default skills tree":
@@ -1018,40 +1049,53 @@ func TestEnsureProfileDirLegacySkillsPreserveSystemSymlinks(t *testing.T) {
 					if err := os.MkdirAll(rawTarget, 0o700); err != nil {
 						t.Fatalf("mkdir outside system skill: %v", err)
 					}
+				case "cross profile":
+					rawTarget = filepath.Join(paths.ProfilesDir, "other", "codex-home", "skills", ".system")
+					if err := os.MkdirAll(rawTarget, 0o700); err != nil {
+						t.Fatalf("mkdir other profile system skill: %v", err)
+					}
+				case "malformed parent traversal":
+					rawTarget = "../../../../../codex-default/skills/.system"
 				case "broken":
 					rawTarget = filepath.Join(root, "missing-system")
+				case "traversal through symlink":
+					outside := filepath.Join(root, "outside-via-link")
+					if err := os.MkdirAll(filepath.Join(outside, ".system"), 0o700); err != nil {
+						t.Fatalf("mkdir traversal target: %v", err)
+					}
+					if err := os.Symlink(outside, filepath.Join(defaultSkillsPath, "escape")); err != nil {
+						t.Fatalf("symlink default skill escape: %v", err)
+					}
+					rawTarget = filepath.Join(defaultSkillsPath, "escape", ".system")
 				default:
-					t.Fatalf("unknown target kind %q", targetKind)
+					t.Fatalf("unknown entry kind %q", entry.name)
 				}
 
-				profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
-				systemPath := filepath.Join(profile.CodexHome, "skills", ".system")
-				if err := os.MkdirAll(filepath.Dir(systemPath), 0o700); err != nil {
-					t.Fatalf("mkdir profile skills: %v", err)
-				}
-				if err := os.Symlink(rawTarget, systemPath); err != nil {
-					t.Fatalf("symlink profile system skill: %v", err)
+				if rawTarget != "" {
+					if err := os.Symlink(rawTarget, systemPath); err != nil {
+						t.Fatalf("symlink profile system skill: %v", err)
+					}
 				}
 
 				before, err := os.Lstat(systemPath)
 				if err != nil {
 					t.Fatalf("lstat system skill before reconciliation: %v", err)
 				}
-				if before.Mode().Type() != os.ModeSymlink {
-					t.Fatalf("system skill entry type before reconciliation: got=%v want=%v", before.Mode().Type(), os.ModeSymlink)
-				}
-				beforeTarget, err := os.Readlink(systemPath)
-				if err != nil {
-					t.Fatalf("read system skill target before reconciliation: %v", err)
-				}
-				if beforeTarget != rawTarget {
-					t.Fatalf("system skill raw target before reconciliation: got=%q want=%q", beforeTarget, rawTarget)
+				_, ensureErr := store.EnsureProfileDir(profile, policy.resources())
+				if entry.wantError {
+					if ensureErr == nil {
+						t.Fatal("expected unsafe system skills entry to fail")
+					}
+				} else if ensureErr != nil {
+					t.Fatalf("EnsureProfileDir: %v", ensureErr)
 				}
 
-				if _, err := store.EnsureProfileDir(profile, policy.resources()); err != nil {
-					t.Fatalf("EnsureProfileDir: %v", err)
+				if entry.wantRemoved {
+					if _, err := os.Lstat(systemPath); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("inherited system skills link was not removed: %v", err)
+					}
+					return
 				}
-
 				after, err := os.Lstat(systemPath)
 				if err != nil {
 					t.Fatalf("lstat system skill after reconciliation: %v", err)
@@ -1059,12 +1103,18 @@ func TestEnsureProfileDirLegacySkillsPreserveSystemSymlinks(t *testing.T) {
 				if after.Mode().Type() != before.Mode().Type() {
 					t.Fatalf("system skill entry type changed: before=%v after=%v", before.Mode().Type(), after.Mode().Type())
 				}
+				if rawTarget == "" {
+					if !after.IsDir() {
+						t.Fatalf("local system skills directory changed: mode=%v", after.Mode())
+					}
+					return
+				}
 				afterTarget, err := os.Readlink(systemPath)
 				if err != nil {
 					t.Fatalf("read system skill target after reconciliation: %v", err)
 				}
-				if afterTarget != beforeTarget {
-					t.Fatalf("system skill raw target changed: before=%q after=%q", beforeTarget, afterTarget)
+				if afterTarget != rawTarget {
+					t.Fatalf("system skill raw target changed: before=%q after=%q", rawTarget, afterTarget)
 				}
 			})
 		}

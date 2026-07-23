@@ -25,4 +25,6 @@ Explain the user-visible outcome and the checks you ran. CI tests Linux and macO
 
 ## Releases
 
-Maintainers create a version tag only after the main branch is green. Tags matching `v*` run the release workflow, which verifies the source and publishes checksummed macOS and Linux archives for AMD64 and ARM64. The tag is injected into CLI output and provider client identification.
+Do not create or publish version tags from `Enrico-DA/multi_subs` before the planned product and module rename. Install-from-module and release-download instructions are not valid for this fork during the transition.
+
+The imported tag release workflow remains available for later adaptation, but its current repository guard allows publication only from `olliecrow/multicodex`. Do not widen that guard in an upstream-sync change.

@@ -166,8 +166,8 @@ Multicodex intentionally has no command for changing either shared default accou
 - `profile_resources` is an optional version-1 config block. Its omission preserves the established guidance no-op and strict default-skill reconciliation exactly.
 - Present `guidance` and `skills` objects require a boolean `inherit`. Unknown keys inside the resource block are errors; unrelated top-level config keys remain permissive.
 - Guidance uses one source directory and manages only `AGENTS.md` and `AGENTS.override.md`. Either regular profile file overrides the whole inherited pair.
-- Skills use ordered source directories with first-source-wins merging. Sources that overlap multicodex-owned state or the default Codex home are rejected, except for the canonical default Codex skills directory. Inherited top-level entries must resolve to skill directories. Runtime-managed `.system` content is excluded from both inheritance and reconciliation, and regular top-level profile entries override inherited entries.
-- Explicit resource management owns symlinks at its managed profile positions, including pre-existing symlinks, except for `.system`. It may retarget or remove owned links and reports old targets. Regular files and directories are preserved.
+- Skills use ordered source directories with first-source-wins merging. Sources that overlap multicodex-owned state or the default Codex home are rejected, except for the canonical default Codex skills directory. Inherited top-level entries must resolve to skill directories. Runtime-managed `.system` content is never inherited. A regular profile-local `.system` directory is preserved; a stale `.system` symlink that resolves safely under the default skills tree is removed; broken, external, cross-profile, and malformed `.system` symlinks fail closed and remain unchanged. Regular top-level profile entries override inherited entries.
+- Explicit resource management owns symlinks at its managed profile positions, including pre-existing symlinks. `.system` uses only the narrower reconciliation rule above. Other owned links may be retargeted or removed and report old targets. Regular files and directories are preserved.
 - `inherit: false` removes managed symlinks. Populated source fields are invalid in this mode.
 - `~` expands to the user home. Relative paths resolve from the config file directory. Custom source directories must exist and pass boundary and entry-type validation before reconciliation starts.
 - `add`, `login`, `login-all`, `cli`, `exec`, and `heartbeat` reconcile resources before a profile-scoped Codex launch. `reconcile` applies the same managed profile state to all profiles without launching Codex. `doctor`, `dry-run`, `status`, and `monitor` do not mutate profile resources.
@@ -187,6 +187,7 @@ Multicodex intentionally has no command for changing either shared default accou
 ## Claude Provider Contract
 
 Bare commands remain Codex commands. Claude support is isolated under `multicodex claude`.
+Bare `multicodex claude`, `multicodex claude -h`, and `multicodex claude --help` print namespace help. A namespace help flag must be the only argument; extra arguments return exit code 2 without creating state.
 
 `multicodex claude add <name>`
 - Creates a private, derived config directory under `MULTICODEX_HOME/providers/claude/profiles`.
@@ -213,6 +214,7 @@ Bare commands remain Codex commands. Claude support is isolated under `multicode
 - Calls official `claude -p --output-format json /usage` for every target.
 - Disables session persistence, user/project settings, and MCP servers for the probe and runs it from a neutral directory.
 - Parses only the top-level `result` text for session, all-model weekly, and Fable usage.
+- Reports successful-but-malformed responses with deterministic structural categories and never includes provider result lines or response bodies in errors.
 - Treats missing Fable usage as unavailable while keeping the core windows usable.
 - Does not create provider state or send a model request.
 

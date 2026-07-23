@@ -47,6 +47,22 @@ func TestRunCLIClaudeHelpDoesNotCreateState(t *testing.T) {
 	}
 }
 
+func TestRunCLIClaudeNamespaceHelpRejectsExtraArgumentsWithoutCreatingState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MULTICODEX_HOME", "")
+	t.Setenv("MULTICODEX_DEFAULT_CODEX_HOME", "")
+
+	err := RunCLI([]string{"claude", "--help", "unexpected"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected Claude namespace usage error, got %T (%v)", err, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "multicodex")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid Claude namespace help created state, stat err=%v", err)
+	}
+}
+
 func TestRunCLIUnknownCommandDoesNotMoveHiddenState(t *testing.T) {
 	home := t.TempDir()
 	hiddenHome := filepath.Join(home, ".unowned-local-state")

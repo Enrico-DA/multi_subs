@@ -20,9 +20,9 @@
 - The default Claude subprocess must receive no `CLAUDE_CONFIG_DIR`; an empty value is not equivalent.
 - Claude usage inspection uses the official local `/usage` command and never calls OAuth endpoints directly.
 - Claude usage probes disable session persistence, user/project settings, and MCP servers and run from a neutral directory.
-- Claude auth, usage, and version probe failures discard captured standard error and arbitrary subprocess error text. User-visible failures use only local deterministic categories.
+- Claude auth, usage, and version probe failures discard captured standard error and arbitrary subprocess error text. Claude usage parser failures also discard provider result lines and response bodies. User-visible failures use only local deterministic categories.
 - Profile resource settings may name local directories outside the default Codex home. The user owns the trust decision for those sources; multicodex only creates symlinks and does not execute or copy source contents.
-- Explicit skill sources must not overlap multicodex-owned state or the default Codex home, except for the canonical default skills directory. Inherited entries must resolve safely to directories. Reconciliation removes or retargets only symlinks at documented managed positions, preserves regular profile guidance and skill entries, and never owns `.system`.
+- Explicit skill sources must not overlap multicodex-owned state or the default Codex home, except for the canonical default skills directory. Inherited entries must resolve safely to directories. Reconciliation removes or retargets only symlinks at documented managed positions and preserves regular profile guidance and skill entries. `.system` is never inherited: a regular profile-local directory is preserved, only a safely resolved default-tree symlink is removed, and unsafe or broken links fail closed without mutation.
 
 ## Repository safeguards
 - `.gitignore` must ignore local auth and profile state.

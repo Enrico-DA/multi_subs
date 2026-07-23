@@ -227,6 +227,28 @@ func TestClaudeUsageReportsAllWindowsAndMissingFable(t *testing.T) {
 	}
 }
 
+func TestClaudeUsageHidesMalformedProviderResultText(t *testing.T) {
+	const marker = "synthetic-provider-result-marker"
+	app, runner, _ := newClaudeTestApp(t)
+	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
+			t.Fatalf("unexpected usage args: %#v", args)
+		}
+		return fakeMalformedClaudeUsageEnvelope(marker), nil, nil
+	}
+
+	out, err := captureStdout(t, func() error { return app.cmdClaudeUsage(nil) })
+	if err != nil {
+		t.Fatalf("Claude usage: %v", err)
+	}
+	if strings.Contains(out, marker) {
+		t.Fatalf("Claude usage exposed provider result text: %s", out)
+	}
+	if !strings.Contains(out, "parse Claude usage result: multiple percentages in one line") {
+		t.Fatalf("Claude usage omitted structural parse category: %s", out)
+	}
+}
+
 func TestClaudeDoctorReportsBinarySidecarAndAuthBasics(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	createClaudeProfiles(t, app, "work")
