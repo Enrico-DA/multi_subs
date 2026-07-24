@@ -16,9 +16,11 @@ import (
 )
 
 type fakeCodexUsageSource struct {
-	summary *monitorusage.Summary
-	err     error
-	fetch   func(context.Context) (*monitorusage.Summary, error)
+	summary    *monitorusage.Summary
+	err        error
+	fetch      func(context.Context) (*monitorusage.Summary, error)
+	closeErr   error
+	closeCalls int
 }
 
 func (source *fakeCodexUsageSource) Name() string { return "fake" }
@@ -30,7 +32,10 @@ func (source *fakeCodexUsageSource) Fetch(ctx context.Context) (*monitorusage.Su
 	return source.summary, source.err
 }
 
-func (source *fakeCodexUsageSource) Close() error { return nil }
+func (source *fakeCodexUsageSource) Close() error {
+	source.closeCalls++
+	return source.closeErr
+}
 
 func TestUsageAccountScopeAndOrderIsManagedThenDefault(t *testing.T) {
 	codexConfig := DefaultConfig()
@@ -70,8 +75,11 @@ func TestUsageAccountDisplayNamesHideEmailShapedProfileNames(t *testing.T) {
 		CodexHome: "/profiles/person@example.com/codex-home",
 	}
 	targets := codexUsageTargets(codexConfig, "/default-codex")
-	if targets[0].DisplayName != "managed-1" {
+	if targets[0].DisplayName != "[managed-1]" {
 		t.Fatalf("email-shaped Codex profile display name: %q", targets[0].DisplayName)
+	}
+	if ValidateProfileName(targets[0].DisplayName) == nil {
+		t.Fatalf("Codex privacy alias is inside the valid profile-name alphabet: %q", targets[0].DisplayName)
 	}
 
 	claudeConfig := defaultClaudeConfig()
@@ -80,8 +88,87 @@ func TestUsageAccountDisplayNamesHideEmailShapedProfileNames(t *testing.T) {
 		ConfigDir: "/profiles/person@example.com/config",
 	}
 	claudeTargets := claudeUsageTargets(claudeConfig)
-	if claudeTargets[0].DisplayName != "managed-1" {
+	if claudeTargets[0].DisplayName != "[managed-1]" {
 		t.Fatalf("email-shaped Claude profile display name: %q", claudeTargets[0].DisplayName)
+	}
+}
+
+func TestUsageDisplayNamesAreCollisionFreeAndDeterministic(t *testing.T) {
+	targets := []struct {
+		name      string
+		isDefault bool
+	}{
+		{name: "first@example.com"},
+		{name: "[managed-1]"},
+		{name: "alpha"},
+		{name: "alpha"},
+		{name: "second@example.com"},
+		{name: defaultExecAccountLabel, isDefault: true},
+	}
+	allocate := func() []string {
+		return allocateUsageDisplayNames(len(targets), func(index int) (string, bool) {
+			return targets[index].name, targets[index].isDefault
+		})
+	}
+	first := allocate()
+	second := allocate()
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("usage aliases are not deterministic: first=%q second=%q", first, second)
+	}
+	if first[0] != "[managed-2]" || first[1] != "[managed-1]" ||
+		first[2] != "alpha" || first[3] != "[managed-3]" ||
+		first[4] != "[managed-4]" || first[5] != defaultExecAccountLabel {
+		t.Fatalf("unexpected collision-free aliases: %q", first)
+	}
+	seen := make(map[string]struct{}, len(first))
+	for _, name := range first {
+		if _, duplicate := seen[name]; duplicate {
+			t.Fatalf("duplicate usage presentation name %q in %q", name, first)
+		}
+		seen[name] = struct{}{}
+	}
+}
+
+func TestTamperedManagedCodexHomeCannotSuppressDefaultUsageTarget(t *testing.T) {
+	root := t.TempDir()
+	app := &App{store: NewStore(Paths{
+		MultisubsHome:    filepath.Join(root, "multisubs"),
+		ConfigPath:       filepath.Join(root, "multisubs", "config.json"),
+		ProfilesDir:      filepath.Join(root, "multisubs", "profiles"),
+		DefaultCodexHome: filepath.Join(root, "default-codex"),
+	})}
+	cfg := DefaultConfig()
+	cfg.Profiles["tampered"] = Profile{
+		Name:      "tampered",
+		CodexHome: app.store.paths.DefaultCodexHome,
+	}
+	if err := app.store.Save(cfg); err != nil {
+		t.Fatalf("save tampered registry fixture: %v", err)
+	}
+
+	sourceCalls := 0
+	app.codexUsageSource = func(account monitorusage.MonitorAccount) monitorusage.Source {
+		sourceCalls++
+		if account.Label != defaultExecAccountLabel {
+			t.Fatalf("unsafe managed target reached usage source: %+v", account)
+		}
+		return &fakeCodexUsageSource{summary: &monitorusage.Summary{
+			WeeklyWindow: monitorusage.WindowSummary{UsedPercent: 20},
+		}}
+	}
+	report := app.collectCodexUsage()
+	if len(report.Accounts) != 2 {
+		t.Fatalf("tampered registry usage account count: got %d want 2", len(report.Accounts))
+	}
+	if report.Accounts[0].Name != "tampered" ||
+		report.Accounts[0].Failure != "profile state unavailable" {
+		t.Fatalf("tampered managed account row: %+v", report.Accounts[0])
+	}
+	if report.Accounts[1].Name != defaultExecAccountLabel || report.Accounts[1].Failure != "" {
+		t.Fatalf("default account was suppressed or failed: %+v", report.Accounts[1])
+	}
+	if sourceCalls != 1 {
+		t.Fatalf("usage source calls: got %d want one default probe", sourceCalls)
 	}
 }
 
@@ -271,6 +358,37 @@ func TestPrintUsageReportAllAccountsFailed(t *testing.T) {
 	}
 }
 
+func TestPrintUsageReportShowsRetainedSessionAsPartialWhenWeeklyIsUnavailable(t *testing.T) {
+	now := time.Date(2026, time.July, 23, 20, 15, 0, 0, time.UTC)
+	report := usageReport{
+		Command:   "multisubs codex usage",
+		UpdatedAt: now,
+		Providers: []usageProviderReport{{
+			Name: "Codex",
+			Accounts: []usageAccountReport{{
+				Name:    "work",
+				Failure: "weekly usage unavailable",
+				Windows: []usageWindowReport{
+					{Label: "Session (5h)", UsedPercent: testFloat64Ptr(10)},
+					{Label: "Weekly"},
+				},
+			}},
+		}},
+	}
+	var output bytes.Buffer
+	printUsageReport(&output, report, now, time.UTC)
+	for _, want := range []string{
+		"Session (5h)  10% used",
+		"Weekly        not reported",
+		"partial · weekly usage unavailable",
+		"Result: partial · 0 of 1 accounts available",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("partial session output missing %q:\n%s", want, output.String())
+		}
+	}
+}
+
 func TestCollectConcurrentPreservesTargetOrder(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan int, 3)
@@ -419,6 +537,115 @@ func TestCodexUsageCommandIsReadOnlyAndReturnsPartialExit(t *testing.T) {
 	}
 }
 
+func TestCodexUsageCollectorClosesSourceOnceAcrossOutcomes(t *testing.T) {
+	target := codexUsageTarget{
+		codexRoutingTarget: codexRoutingTarget{
+			Kind: codexRoutingTargetDefault,
+			Account: monitorusage.MonitorAccount{
+				Label:     defaultExecAccountLabel,
+				CodexHome: "/synthetic/default",
+			},
+		},
+		DisplayName: defaultExecAccountLabel,
+	}
+	tests := []struct {
+		name        string
+		source      *fakeCodexUsageSource
+		wantFailure string
+	}{
+		{
+			name: "success",
+			source: &fakeCodexUsageSource{summary: &monitorusage.Summary{
+				WeeklyWindow: monitorusage.WindowSummary{UsedPercent: 20},
+			}},
+		},
+		{
+			name:        "fetch failure",
+			source:      &fakeCodexUsageSource{err: errors.New("synthetic provider failure")},
+			wantFailure: "usage probe failed",
+		},
+		{
+			name: "timeout",
+			source: &fakeCodexUsageSource{fetch: func(ctx context.Context) (*monitorusage.Summary, error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}},
+			wantFailure: "timed out",
+		},
+		{
+			name: "close failure",
+			source: &fakeCodexUsageSource{
+				summary: &monitorusage.Summary{
+					WeeklyWindow: monitorusage.WindowSummary{UsedPercent: 20},
+				},
+				closeErr: errors.New("synthetic cleanup secret"),
+			},
+			wantFailure: "usage cleanup failed",
+		},
+	}
+	oldTimeout := usageAccountTimeout
+	usageAccountTimeout = time.Millisecond
+	t.Cleanup(func() { usageAccountTimeout = oldTimeout })
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			app := &App{
+				codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
+					return test.source
+				},
+			}
+			account := app.collectCodexUsageTarget(target)
+			if account.Failure != test.wantFailure {
+				t.Fatalf("failure category: got %q want %q", account.Failure, test.wantFailure)
+			}
+			if test.source.closeCalls != 1 {
+				t.Fatalf("source close calls: got %d want 1", test.source.closeCalls)
+			}
+			if strings.Contains(account.Failure, "synthetic") {
+				t.Fatalf("account failure exposed source error: %q", account.Failure)
+			}
+		})
+	}
+}
+
+func TestCodexUsageCollectorKeepsSessionPartialWhenWeeklyFallbackIsUnavailable(t *testing.T) {
+	source := &fakeCodexUsageSource{
+		summary: &monitorusage.Summary{
+			SessionWindow: monitorusage.WindowSummary{UsedPercent: 10},
+			WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: -1},
+		},
+		err: monitorusage.ErrWeeklyUsageUnavailable,
+	}
+	app := &App{
+		codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
+			return source
+		},
+	}
+	target := codexUsageTarget{
+		codexRoutingTarget: codexRoutingTarget{
+			Kind: codexRoutingTargetDefault,
+			Account: monitorusage.MonitorAccount{
+				Label: defaultExecAccountLabel,
+			},
+		},
+		DisplayName: defaultExecAccountLabel,
+	}
+
+	account := app.collectCodexUsageTarget(target)
+	if account.Failure != "weekly usage unavailable" {
+		t.Fatalf("missing-weekly failure category: %q", account.Failure)
+	}
+	if len(account.Windows) < 2 ||
+		account.Windows[0].UsedPercent == nil ||
+		*account.Windows[0].UsedPercent != 10 ||
+		account.Windows[1].UsedPercent != nil {
+		t.Fatalf("partial session/weekly windows: %+v", account.Windows)
+	}
+	if source.closeCalls != 1 {
+		t.Fatalf("source close calls: got %d want 1", source.closeCalls)
+	}
+}
+
 func TestCombinedUsagePrintsCodexWhenClaudeBinaryIsMissing(t *testing.T) {
 	root := t.TempDir()
 	multisubsHome := filepath.Join(root, "missing-multisubs")
@@ -473,14 +700,55 @@ func TestSanitizeClaudeResetTextRejectsIdentityAndSecretLikeText(t *testing.T) {
 		"Resets for person@example.com tomorrow",
 		"Resets with bearer synthetic-secret",
 		"Resets using token synthetic-secret",
-		"Resets from /Users/person/private",
+		"Resets from account/private-data",
+		"Resets at sk-" + "ant-api03-synthetic",
+		"Resets at org_synthetic",
+		"\x00",
+		"\x85",
+		"Resets in 1 hour\x00",
+		"\x1b[31mResets in 1 hour\x1b[0m",
+		"Resets in 1\u0085hour",
+		"Resets in 1 hour (Europe//Rome)",
+		"Resets in 1 hour (Europe/../Rome)",
+		"Resets tomorrow after lunch",
+		strings.Repeat("Resets in 1 hour ", 10),
 	} {
 		if got := sanitizeClaudeResetText(unsafe); got != "" {
 			t.Fatalf("unsafe reset text was preserved: %q", got)
 		}
 	}
-	if got := sanitizeClaudeResetText("Resets Monday at 9:00 AM"); got != "Resets Monday at 9:00 AM" {
-		t.Fatalf("safe reset text changed: %q", got)
+}
+
+func TestSanitizeClaudeResetTextAcceptsOnlySupportedGrammar(t *testing.T) {
+	for _, reset := range []string{
+		"Resets in 1 minute",
+		"resets in 2 hours",
+		"Resets in 3 days (Europe/Rome)",
+		"Resets Monday at 9:00 AM",
+		"Resets Mon at 09:00",
+		"Resets July 20 at 4:20pm",
+		"Resets Jul 20 at 4am",
+		"Resets at 23:15",
+		"Resets at 4am (Europe/Rome)",
+		"Resets at 4:20 PM (America/Argentina/Buenos_Aires)",
+	} {
+		if got := sanitizeClaudeResetText(reset); got != reset {
+			t.Fatalf("supported reset text changed or rejected: input=%q output=%q", reset, got)
+		}
+	}
+}
+
+func TestClaudeUsageWindowRendersUnsupportedResetAsUnknown(t *testing.T) {
+	window := adaptClaudeUsageWindow("Session (~5h)", claudeUsageWindow{
+		UsedPercent: 20,
+		ResetText:   "Resets with bearer synthetic-provider-secret",
+	})
+	rendered := formatUsageWindow(window, time.Now(), time.UTC)
+	if !strings.Contains(rendered, "reset unknown") {
+		t.Fatalf("unsupported Claude reset did not become unknown: %q", rendered)
+	}
+	if strings.Contains(rendered, "bearer") || strings.Contains(rendered, "synthetic-provider-secret") {
+		t.Fatalf("unsupported Claude reset text reached output: %q", rendered)
 	}
 }
 

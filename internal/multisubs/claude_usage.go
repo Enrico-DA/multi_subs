@@ -27,8 +27,8 @@ var (
 	claudeANSIControlRE = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
 	claudePercentRE     = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*%`)
 	claudeResetRE       = regexp.MustCompile(`(?i)\breset(?:s|ting)?\b.*`)
-	claudeHoursRE       = regexp.MustCompile(`(?i)\b([0-9]+)\s*(?:h|hr|hrs|hour|hours)\b`)
-	claudeMinutesRE     = regexp.MustCompile(`(?i)\b([0-9]+)\s*(?:m|min|mins|minute|minutes)\b`)
+	claudeResetWordRE   = regexp.MustCompile(`(?i)\breset(?:s|ting)?\b`)
+	claudeDurationRE    = regexp.MustCompile(`(?i)\((?:([0-9]{1,4})\s*(?:h|hr|hrs|hour|hours)(?:\s+([0-9]{1,3})\s*(?:m|min|mins|minute|minutes))?|([0-9]{1,5})\s*(?:m|min|mins|minute|minutes))\)`)
 )
 
 func fetchClaudeUsage(ctx context.Context, runner claudeCommandRunner, configDir string) (claudeUsage, error) {
@@ -217,25 +217,37 @@ func parseClaudeUsageResult(result string) (claudeUsage, error) {
 }
 
 func parseClaudeSessionDuration(heading string) (*int, error) {
-	hours := claudeHoursRE.FindStringSubmatch(heading)
-	minutes := claudeMinutesRE.FindStringSubmatch(heading)
-	duration := 0
-	if len(hours) > 0 {
-		value, err := strconv.Atoi(hours[1])
-		if err != nil || value <= 0 || value > 24*7 {
-			return nil, errors.New("parse Claude usage result: invalid session duration")
-		}
-		duration += value * 60
+	if resetIndex := claudeResetWordRE.FindStringIndex(heading); resetIndex != nil {
+		heading = heading[:resetIndex[0]]
 	}
-	if len(minutes) > 0 {
-		value, err := strconv.Atoi(minutes[1])
-		if err != nil || value <= 0 || value > 24*7*60 {
-			return nil, errors.New("parse Claude usage result: invalid session duration")
-		}
-		duration += value
-	}
-	if duration == 0 {
+	matches := claudeDurationRE.FindAllStringSubmatch(heading, -1)
+	if len(matches) == 0 {
 		return nil, nil
+	}
+	if len(matches) != 1 {
+		return nil, errors.New("parse Claude usage result: invalid session duration")
+	}
+
+	duration := 0
+	if matches[0][1] != "" {
+		hours, err := strconv.Atoi(matches[0][1])
+		if err != nil || hours <= 0 || hours > 24*7 {
+			return nil, errors.New("parse Claude usage result: invalid session duration")
+		}
+		duration = hours * 60
+		if matches[0][2] != "" {
+			minutes, minuteErr := strconv.Atoi(matches[0][2])
+			if minuteErr != nil || minutes <= 0 || minutes >= 60 {
+				return nil, errors.New("parse Claude usage result: invalid session duration")
+			}
+			duration += minutes
+		}
+	} else {
+		minutes, err := strconv.Atoi(matches[0][3])
+		if err != nil || minutes <= 0 {
+			return nil, errors.New("parse Claude usage result: invalid session duration")
+		}
+		duration = minutes
 	}
 	if duration > 24*7*60 {
 		return nil, errors.New("parse Claude usage result: invalid session duration")

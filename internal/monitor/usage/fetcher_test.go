@@ -15,22 +15,25 @@ import (
 )
 
 type fakeSource struct {
-	name   string
-	out    *Summary
-	err    error
-	closed bool
+	name       string
+	out        *Summary
+	err        error
+	fetches    int
+	closeCount int
+	closeErr   error
 }
 
 func (f *fakeSource) Name() string { return f.name }
 func (f *fakeSource) Fetch(context.Context) (*Summary, error) {
+	f.fetches++
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.out, nil
 }
 func (f *fakeSource) Close() error {
-	f.closed = true
-	return nil
+	f.closeCount++
+	return f.closeErr
 }
 
 type blockingSource struct {
@@ -54,6 +57,186 @@ func TestFetchWithFallbackUsesPrimaryOnSuccess(t *testing.T) {
 	}
 	if out.Source != "primary" {
 		t.Fatalf("expected primary source, got %s", out.Source)
+	}
+	if fallback.fetches != 0 {
+		t.Fatalf("weekly primary success unexpectedly fetched fallback %d time(s)", fallback.fetches)
+	}
+}
+
+func TestFetchWithFallbackErrorsForSessionOnlyPrimaryWithoutFallback(t *testing.T) {
+	primary := &fakeSource{name: "primary", out: &Summary{
+		Source:        "primary",
+		SessionWindow: WindowSummary{UsedPercent: 12},
+		WeeklyWindow:  unavailableWindowSummary(),
+	}}
+
+	out, err := fetchWithFallback(context.Background(), primary, nil)
+	if out != nil {
+		t.Fatalf("shared session-only primary returned a summary: %+v", out)
+	}
+	if !errors.Is(err, ErrWeeklyUsageUnavailable) {
+		t.Fatalf("shared session-only primary error: %v", err)
+	}
+	if got, want := err.Error(), `primary source "primary" failed: weekly usage unavailable`; got != want {
+		t.Fatalf("shared session-only primary error = %q, want %q", got, want)
+	}
+}
+
+func TestFetchWithFallbackUsesWeeklyFallbackForSessionOnlyPrimary(t *testing.T) {
+	primary := &fakeSource{name: "primary", out: &Summary{
+		Source:        "primary",
+		SessionWindow: WindowSummary{UsedPercent: 12},
+		WeeklyWindow:  unavailableWindowSummary(),
+	}}
+	fallback := &fakeSource{name: "fallback", out: &Summary{
+		Source:              "fallback",
+		SessionWindow:       unavailableWindowSummary(),
+		WeeklyWindow:        WindowSummary{UsedPercent: 44},
+		WindowDataAvailable: true,
+	}}
+
+	out, err := fetchWithFallback(context.Background(), primary, fallback)
+	if err != nil {
+		t.Fatalf("session-only primary fallback: %v", err)
+	}
+	if fallback.fetches != 1 {
+		t.Fatalf("session-only primary fetched fallback %d time(s), want 1", fallback.fetches)
+	}
+	if out.Source != "fallback" || out.WeeklyWindow.UsedPercent != 44 {
+		t.Fatalf("shared fallback did not preserve weekly result semantics: %+v", out)
+	}
+	if out.SessionWindow.UsedPercent != unavailableUsedPercent {
+		t.Fatalf("shared monitor/routing path merged report-only session data: %+v", out.SessionWindow)
+	}
+}
+
+func TestFetchWithFallbackErrorsWhenFallbackAlsoLacksWeeklyData(t *testing.T) {
+	primary := &fakeSource{name: "primary", out: &Summary{
+		Source:        "primary",
+		SessionWindow: WindowSummary{UsedPercent: 12},
+		WeeklyWindow:  unavailableWindowSummary(),
+	}}
+	fallback := &fakeSource{name: "fallback", out: &Summary{
+		SessionWindow: WindowSummary{UsedPercent: 18},
+		WeeklyWindow:  unavailableWindowSummary(),
+	}}
+
+	out, err := fetchWithFallback(context.Background(), primary, fallback)
+	if out != nil {
+		t.Fatalf("shared session-only sources returned a summary: %+v", out)
+	}
+	if !errors.Is(err, ErrWeeklyUsageUnavailable) {
+		t.Fatalf("shared session-only sources error: %v", err)
+	}
+	if fallback.fetches != 1 {
+		t.Fatalf("shared session-only result fetched fallback %d time(s), want 1", fallback.fetches)
+	}
+	if got, want := err.Error(), `primary source "primary" failed: weekly usage unavailable; fallback source "fallback" failed: weekly usage unavailable`; got != want {
+		t.Fatalf("shared session-only sources error = %q, want %q", got, want)
+	}
+}
+
+func TestFetchWithFallbackErrorsWhenWeeklyFallbackFails(t *testing.T) {
+	primary := &fakeSource{name: "primary", out: &Summary{
+		Source:        "primary",
+		SessionWindow: WindowSummary{UsedPercent: 12},
+		WeeklyWindow:  unavailableWindowSummary(),
+	}}
+	fallback := &fakeSource{name: "fallback", err: errors.New("synthetic fallback failure")}
+
+	out, err := fetchWithFallback(context.Background(), primary, fallback)
+	if out != nil {
+		t.Fatalf("shared fallback failure returned a summary: %+v", out)
+	}
+	if !errors.Is(err, ErrWeeklyUsageUnavailable) {
+		t.Fatalf("shared fallback failure error: %v", err)
+	}
+	if fallback.fetches != 1 {
+		t.Fatalf("shared session-only result fetched fallback %d time(s), want 1", fallback.fetches)
+	}
+	if got, want := err.Error(), `primary source "primary" failed: weekly usage unavailable; fallback source "fallback" failed: synthetic fallback failure`; got != want {
+		t.Fatalf("shared fallback failure error = %q, want %q", got, want)
+	}
+}
+
+func TestFetchReportWithFallbackMergesPrimarySessionIntoFallbackWeekly(t *testing.T) {
+	primary := &fakeSource{name: "primary", out: &Summary{
+		Source:        "app-server",
+		AccountEmail:  "primary@example.invalid",
+		SessionWindow: WindowSummary{UsedPercent: 12},
+		WeeklyWindow:  unavailableWindowSummary(),
+		RateLimitWindows: map[string]RateLimitWindow{
+			"codex": {
+				LimitID:       "codex",
+				LimitName:     "Primary standard",
+				SessionWindow: WindowSummary{UsedPercent: 12},
+				WeeklyWindow:  unavailableWindowSummary(),
+			},
+		},
+	}}
+	fallback := &fakeSource{name: "fallback", out: &Summary{
+		Source:        "oauth",
+		AccountEmail:  "fallback@example.invalid",
+		SessionWindow: unavailableWindowSummary(),
+		WeeklyWindow:  WindowSummary{UsedPercent: 44},
+		RateLimitWindows: map[string]RateLimitWindow{
+			"codex": {
+				LimitID:       "codex",
+				LimitName:     "Fallback standard",
+				SessionWindow: unavailableWindowSummary(),
+				WeeklyWindow:  WindowSummary{UsedPercent: 44},
+			},
+			"codex_bengalfox": {
+				LimitID:      "codex_bengalfox",
+				LimitName:    "Spark",
+				WeeklyWindow: WindowSummary{UsedPercent: 31},
+			},
+		},
+	}}
+
+	out, err := fetchReportWithFallback(context.Background(), primary, fallback)
+	if err != nil {
+		t.Fatalf("report fallback merge: %v", err)
+	}
+	if fallback.fetches != 1 {
+		t.Fatalf("report session-only primary fetched fallback %d time(s), want 1", fallback.fetches)
+	}
+	if out.SessionWindow.UsedPercent != 12 || out.WeeklyWindow.UsedPercent != 44 {
+		t.Fatalf("report did not merge session and weekly windows: %+v", out)
+	}
+	if out.AccountEmail != "fallback@example.invalid" {
+		t.Fatalf("report merge replaced fallback identity: %q", out.AccountEmail)
+	}
+	standard := out.RateLimitWindows["codex"]
+	if standard.SessionWindow.UsedPercent != 12 ||
+		standard.WeeklyWindow.UsedPercent != 44 ||
+		standard.LimitName != "Fallback standard" {
+		t.Fatalf("report merge lost source-safe rate-limit fields: %+v", standard)
+	}
+	if out.RateLimitWindows["codex_bengalfox"].WeeklyWindow.UsedPercent != 31 {
+		t.Fatalf("report merge lost fallback model weekly limit: %+v", out.RateLimitWindows)
+	}
+	if !out.WindowDataAvailable {
+		t.Fatal("merged report weekly data was not marked available")
+	}
+}
+
+func TestFetchReportWithFallbackRetainsSafeSessionWhenWeeklyFallbackFails(t *testing.T) {
+	primary := &fakeSource{name: "primary", out: &Summary{
+		SessionWindow: WindowSummary{UsedPercent: 12},
+		WeeklyWindow:  unavailableWindowSummary(),
+	}}
+	fallback := &fakeSource{name: "fallback", err: errors.New("synthetic fallback failure")}
+
+	out, err := fetchReportWithFallback(context.Background(), primary, fallback)
+	if !errors.Is(err, ErrWeeklyUsageUnavailable) {
+		t.Fatalf("report missing-weekly error: %v", err)
+	}
+	if out == nil || out.SessionWindow.UsedPercent != 12 {
+		t.Fatalf("report did not retain safe primary session: %+v", out)
+	}
+	if out.WindowDataAvailable {
+		t.Fatal("session-only report result made weekly window data available")
 	}
 }
 
@@ -135,8 +318,8 @@ func TestFetcherCloseClosesAllSources(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatalf("unexpected close error: %v", err)
 	}
-	if !primary.closed || !fallback.closed {
-		t.Fatalf("expected both sources to close")
+	if primary.closeCount != 1 || fallback.closeCount != 1 {
+		t.Fatalf("source close counts: primary=%d fallback=%d", primary.closeCount, fallback.closeCount)
 	}
 }
 
@@ -424,7 +607,7 @@ func TestReplaceAccountFetchersClosesRemovedHomes(t *testing.T) {
 		{Label: "new", CodexHome: "/new"},
 	})
 
-	if !oldPrimary.closed || !oldFallback.closed {
+	if oldPrimary.closeCount != 1 || oldFallback.closeCount != 1 {
 		t.Fatalf("expected removed account sources to be closed")
 	}
 	if len(f.accounts) != 1 {
@@ -537,7 +720,7 @@ func TestReplaceAccountFetchersRebuildsSourcesWhenAppServerEligibilityChanges(t 
 		{Label: "alpha", CodexHome: "/alpha", UseAppServer: true},
 	})
 
-	if !oldPrimary.closed || !oldFallback.closed {
+	if oldPrimary.closeCount != 1 || oldFallback.closeCount != 1 {
 		t.Fatalf("expected stale sources to be closed when app-server eligibility changes")
 	}
 	if len(f.accounts) != 1 {
@@ -564,7 +747,7 @@ func TestReplaceAccountFetchersRebuildsSourcesWhenAppServerEligibilityChanges(t 
 		{Label: "alpha", CodexHome: "/alpha"},
 	})
 
-	if !oldPrimary.closed || !oldFallback.closed {
+	if oldPrimary.closeCount != 1 || oldFallback.closeCount != 1 {
 		t.Fatalf("expected app-server sources to be closed when eligibility is removed")
 	}
 	if f.accounts[0].primary == nil || f.accounts[0].primary.Name() != "oauth" {
@@ -1057,7 +1240,7 @@ func TestFetcherMarksWindowUnavailableWhenActiveFetchFails(t *testing.T) {
 	}
 }
 
-func TestFetcherDoesNotMarkSuccessfulActiveFetchWithoutWeeklyDataAvailable(t *testing.T) {
+func TestFetcherReturnsNilSummaryWhenAllFetchesFailWithoutObservedTokens(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "/a")
@@ -1072,11 +1255,14 @@ func TestFetcherDoesNotMarkSuccessfulActiveFetchWithoutWeeklyDataAvailable(t *te
 		}},
 	}
 	out, err := f.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error")
 	}
-	if out.WindowDataAvailable {
-		t.Fatal("expected a successful fetch without normalized weekly data to remain unavailable")
+	if got, want := err.Error(), "all account fetches failed and observed tokens are unavailable"; got != want {
+		t.Fatalf("Fetch() error = %q, want %q", got, want)
+	}
+	if out != nil {
+		t.Fatalf("Fetch() summary = %#v, want nil", out)
 	}
 }
 

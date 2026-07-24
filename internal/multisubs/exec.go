@@ -22,6 +22,19 @@ const (
 
 type execAccountSelector func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error)
 
+type codexRoutingTargetKind string
+
+const (
+	codexRoutingTargetManaged codexRoutingTargetKind = "managed"
+	codexRoutingTargetDefault codexRoutingTargetKind = "default"
+)
+
+type codexRoutingTarget struct {
+	Kind    codexRoutingTargetKind
+	Account usage.MonitorAccount
+	Profile *Profile
+}
+
 type execSelectionMetadata struct {
 	Profile           string `json:"profile"`
 	SelectionSource   string `json:"selection_source,omitempty"`
@@ -213,22 +226,10 @@ func execArgsAreHelpRequest(args []string) bool {
 }
 
 func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model string) (execSelection, error) {
-	names := sortedProfileNames(cfg)
-	accounts := make([]usage.MonitorAccount, 0, len(names))
-	for _, name := range names {
-		profile := cfg.Profiles[name]
-		accounts = append(accounts, usage.MonitorAccount{
-			Label:        name,
-			CodexHome:    profile.CodexHome,
-			UseAppServer: true,
-		})
-	}
-	defaultHome := normalizeExecCodexHome(a.store.paths.DefaultCodexHome)
-	if defaultHome != "" && !execAccountsContainHome(accounts, defaultHome) {
-		accounts = append(accounts, usage.MonitorAccount{
-			Label:     defaultExecAccountLabel,
-			CodexHome: defaultHome,
-		})
+	targets := codexRoutingTargets(cfg, a.store.paths.DefaultCodexHome)
+	accounts := make([]usage.MonitorAccount, 0, len(targets))
+	for _, target := range targets {
+		accounts = append(accounts, target.Account)
 	}
 
 	if selector == nil {
@@ -242,45 +243,84 @@ func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model
 	if err != nil {
 		return execSelection{}, err
 	}
-	if name, profile, ok := lookupSelectedExecProfile(cfg, selected); ok {
+	target, ok := lookupSelectedCodexRoutingTarget(targets, selected)
+	if !ok {
+		return execSelection{}, fmt.Errorf("selected account %q is not an exec candidate", selected.Account.Label)
+	}
+	if target.Kind == codexRoutingTargetManaged && target.Profile != nil {
+		profile := *target.Profile
 		metadata := execSelectionMetadata{
-			Profile:           name,
+			Profile:           target.Account.Label,
 			SelectionSource:   "usage_selector",
 			WeeklyUsedPercent: availableUsedPercentPtr(selected.WeeklyUsedPercent),
 		}
-		return execSelection{Name: name, CodexHome: profile.CodexHome, IsProfile: true, Profile: profile, Metadata: metadata}, nil
+		return execSelection{Name: target.Account.Label, CodexHome: profile.CodexHome, IsProfile: true, Profile: profile, Metadata: metadata}, nil
 	}
-	if home, ok := lookupDefaultExecAccount(a.store.paths, selected); ok {
+	if target.Kind == codexRoutingTargetDefault {
 		metadata := execSelectionMetadata{
 			Profile:           defaultExecAccountLabel,
 			SelectionSource:   "usage_selector_default",
 			WeeklyUsedPercent: availableUsedPercentPtr(selected.WeeklyUsedPercent),
 		}
-		return execSelection{Name: defaultExecAccountLabel, CodexHome: home, Metadata: metadata}, nil
+		return execSelection{Name: defaultExecAccountLabel, CodexHome: target.Account.CodexHome, Metadata: metadata}, nil
 	}
 	return execSelection{}, fmt.Errorf("selected account %q is not an exec candidate", selected.Account.Label)
 }
 
-func execAccountsContainHome(accounts []usage.MonitorAccount, home string) bool {
-	normalized := normalizeExecCodexHome(home)
-	if normalized == "" {
-		return false
+func codexRoutingTargets(cfg *Config, defaultHome string) []codexRoutingTarget {
+	names := sortedProfileNames(cfg)
+	targets := make([]codexRoutingTarget, 0, len(names)+1)
+	for _, name := range names {
+		profile := cfg.Profiles[name]
+		profileCopy := profile
+		targets = append(targets, codexRoutingTarget{
+			Kind: codexRoutingTargetManaged,
+			Account: usage.MonitorAccount{
+				Label:        name,
+				CodexHome:    profile.CodexHome,
+				UseAppServer: true,
+			},
+			Profile: &profileCopy,
+		})
 	}
-	for _, account := range accounts {
-		if normalizeExecCodexHome(account.CodexHome) == normalized {
-			return true
-		}
-	}
-	return false
+	return append(targets, codexRoutingTarget{
+		Kind: codexRoutingTargetDefault,
+		Account: usage.MonitorAccount{
+			Label:     defaultExecAccountLabel,
+			CodexHome: normalizeExecCodexHome(defaultHome),
+		},
+	})
 }
 
-func lookupDefaultExecAccount(paths Paths, selected usage.SelectedAccount) (string, bool) {
-	defaultHome := normalizeExecCodexHome(paths.DefaultCodexHome)
+func lookupSelectedCodexRoutingTarget(targets []codexRoutingTarget, selected usage.SelectedAccount) (codexRoutingTarget, bool) {
+	selectedLabel := strings.TrimSpace(selected.Account.Label)
 	selectedHome := normalizeExecCodexHome(selected.Account.CodexHome)
-	if defaultHome == "" || selectedHome == "" || selectedHome != defaultHome {
-		return "", false
+	var labelMatches []codexRoutingTarget
+	for _, target := range targets {
+		if selectedLabel == "" || target.Account.Label != selectedLabel {
+			continue
+		}
+		if selectedHome != "" && normalizeExecCodexHome(target.Account.CodexHome) != selectedHome {
+			continue
+		}
+		labelMatches = append(labelMatches, target)
 	}
-	return defaultHome, true
+	if len(labelMatches) == 1 {
+		return labelMatches[0], true
+	}
+	if selectedHome == "" {
+		return codexRoutingTarget{}, false
+	}
+	var homeMatches []codexRoutingTarget
+	for _, target := range targets {
+		if normalizeExecCodexHome(target.Account.CodexHome) == selectedHome {
+			homeMatches = append(homeMatches, target)
+		}
+	}
+	if len(homeMatches) == 1 {
+		return homeMatches[0], true
+	}
+	return codexRoutingTarget{}, false
 }
 
 func parseModelFromExecArgs(args []string) string {
@@ -494,30 +534,6 @@ func availableUsedPercentPtr(v int) *int {
 		return nil
 	}
 	return &v
-}
-
-func lookupSelectedExecProfile(cfg *Config, selected usage.SelectedAccount) (string, Profile, bool) {
-	if name := strings.TrimSpace(selected.Account.Label); name != "" {
-		if name == codexDefaultAccountName {
-			return "", Profile{}, false
-		}
-		if profile, ok := cfg.Profiles[name]; ok {
-			return name, profile, true
-		}
-	}
-
-	selectedHome := normalizeExecCodexHome(selected.Account.CodexHome)
-	if selectedHome == "" {
-		return "", Profile{}, false
-	}
-
-	for _, name := range sortedProfileNames(cfg) {
-		profile := cfg.Profiles[name]
-		if normalizeExecCodexHome(profile.CodexHome) == selectedHome {
-			return name, profile, true
-		}
-	}
-	return "", Profile{}, false
 }
 
 func normalizeExecCodexHome(home string) string {

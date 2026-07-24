@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,9 +54,8 @@ type usageWindowReport struct {
 type codexUsageSourceFactory func(monitorusage.MonitorAccount) monitorusage.Source
 
 type codexUsageTarget struct {
-	Account     monitorusage.MonitorAccount
+	codexRoutingTarget
 	DisplayName string
-	Profile     *Profile
 }
 
 func (a *App) cmdUsage(args []string, provider string) error {
@@ -125,36 +126,19 @@ func (a *App) collectCodexUsage() usageProviderReport {
 }
 
 func codexUsageTargets(cfg *Config, defaultHome string) []codexUsageTarget {
-	names := sortedProfileNames(cfg)
-	targets := make([]codexUsageTarget, 0, len(names)+1)
-	for _, name := range names {
-		profile := cfg.Profiles[name]
-		profileCopy := profile
-		targets = append(targets, codexUsageTarget{
-			Account: monitorusage.MonitorAccount{
-				Label:        name,
-				CodexHome:    profile.CodexHome,
-				UseAppServer: true,
-			},
-			DisplayName: safeUsageAccountName(name, len(targets)),
-			Profile:     &profileCopy,
-		})
+	routingTargets := codexRoutingTargets(cfg, defaultHome)
+	targets := make([]codexUsageTarget, 0, len(routingTargets))
+	for _, target := range routingTargets {
+		targets = append(targets, codexUsageTarget{codexRoutingTarget: target})
 	}
-	accounts := make([]monitorusage.MonitorAccount, 0, len(targets))
-	for _, target := range targets {
-		accounts = append(accounts, target.Account)
-	}
-	defaultHome = normalizeExecCodexHome(defaultHome)
-	if defaultHome == "" || execAccountsContainHome(accounts, defaultHome) {
-		return targets
-	}
-	return append(targets, codexUsageTarget{
-		Account: monitorusage.MonitorAccount{
-			Label:     defaultExecAccountLabel,
-			CodexHome: defaultHome,
-		},
-		DisplayName: defaultExecAccountLabel,
+	displayNames := allocateUsageDisplayNames(len(targets), func(index int) (string, bool) {
+		target := targets[index]
+		return target.Account.Label, target.Kind == codexRoutingTargetDefault
 	})
+	for index := range targets {
+		targets[index].DisplayName = displayNames[index]
+	}
+	return targets
 }
 
 func (a *App) collectCodexUsageTarget(target codexUsageTarget) usageAccountReport {
@@ -172,19 +156,28 @@ func (a *App) collectCodexUsageTarget(target codexUsageTarget) usageAccountRepor
 
 	sourceFactory := a.codexUsageSource
 	if sourceFactory == nil {
-		sourceFactory = monitorusage.NewUsageSourceForAccount
+		sourceFactory = monitorusage.NewReportUsageSourceForAccount
 	}
 	source := sourceFactory(target.Account)
 	if source == nil {
 		account.Failure = "usage source unavailable"
 		return account
 	}
-	defer source.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), usageAccountTimeout)
 	summary, err := source.Fetch(ctx)
 	cancel()
+	closeErr := source.Close()
+	if closeErr != nil {
+		account.Failure = "usage cleanup failed"
+		return account
+	}
 	if err != nil {
+		if errors.Is(err, monitorusage.ErrWeeklyUsageUnavailable) && summary != nil {
+			account = adaptCodexUsageAccount(displayName, summary)
+			account.Failure = "weekly usage unavailable"
+			return account
+		}
 		account.Failure = safeCodexUsageFailure(ctx, err)
 		return account
 	}
@@ -192,7 +185,26 @@ func (a *App) collectCodexUsageTarget(target codexUsageTarget) usageAccountRepor
 		account.Failure = "usage response unavailable"
 		return account
 	}
-	return adaptCodexUsageAccount(displayName, summary)
+	account = adaptCodexUsageAccount(displayName, summary)
+	if !codexSummaryHasWeeklyData(summary) {
+		account.Failure = "weekly usage unavailable"
+	}
+	return account
+}
+
+func codexSummaryHasWeeklyData(summary *monitorusage.Summary) bool {
+	if summary == nil {
+		return false
+	}
+	if summary.WeeklyWindow.UsedPercent >= 0 {
+		return true
+	}
+	for _, window := range summary.RateLimitWindows {
+		if window.WeeklyWindow.UsedPercent >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func adaptCodexUsageAccount(name string, summary *monitorusage.Summary) usageAccountReport {
@@ -359,23 +371,25 @@ func (a *App) collectClaudeUsage() usageProviderReport {
 }
 
 func claudeUsageTargets(cfg *claudeConfig) []claudeTarget {
-	targets := make([]claudeTarget, 0, len(cfg.Profiles)+1)
-	for _, name := range sortedClaudeProfileNames(cfg) {
-		profile := cfg.Profiles[name]
-		profileCopy := profile
-		targets = append(targets, claudeTarget{
-			Name:        name,
-			DisplayName: safeUsageAccountName(name, len(targets)),
-			Kind:        "managed",
-			ConfigDir:   profile.ConfigDir,
-			Profile:     &profileCopy,
-		})
+	sharedTargets := claudeTargets(cfg)
+	targets := make([]claudeTarget, 0, len(sharedTargets))
+	for _, target := range sharedTargets {
+		if target.Kind == "managed" {
+			targets = append(targets, target)
+		}
 	}
-	return append(targets, claudeTarget{
-		Name:        claudeDefaultTarget,
-		DisplayName: claudeDefaultTarget,
-		Kind:        "default",
+	for _, target := range sharedTargets {
+		if target.Kind == "default" {
+			targets = append(targets, target)
+		}
+	}
+	displayNames := allocateUsageDisplayNames(len(targets), func(index int) (string, bool) {
+		return targets[index].Name, targets[index].Kind == "default"
 	})
+	for index := range targets {
+		targets[index].DisplayName = displayNames[index]
+	}
+	return targets
 }
 
 func (a *App) collectClaudeUsageTarget(store *claudeStore, target claudeTarget) usageAccountReport {
@@ -409,11 +423,48 @@ func (a *App) collectClaudeUsageTarget(store *claudeStore, target claudeTarget) 
 	return account
 }
 
-func safeUsageAccountName(name string, managedIndex int) string {
-	if emailRe.MatchString(name) {
-		return fmt.Sprintf("managed-%d", managedIndex+1)
+func allocateUsageDisplayNames(count int, target func(int) (name string, isDefault bool)) []string {
+	names := make([]string, count)
+	defaults := make([]bool, count)
+	reserved := make(map[string]struct{}, count)
+	for index := 0; index < count; index++ {
+		name, isDefault := target(index)
+		names[index] = name
+		defaults[index] = isDefault
+		reserved[name] = struct{}{}
 	}
-	return name
+
+	out := make([]string, count)
+	used := map[string]struct{}{defaultExecAccountLabel: {}}
+	nextAlias := 1
+	allocateAlias := func() string {
+		for {
+			candidate := fmt.Sprintf("[managed-%d]", nextAlias)
+			nextAlias++
+			if _, exists := reserved[candidate]; exists {
+				continue
+			}
+			if _, exists := used[candidate]; exists {
+				continue
+			}
+			used[candidate] = struct{}{}
+			return candidate
+		}
+	}
+	for index, name := range names {
+		if defaults[index] {
+			out[index] = defaultExecAccountLabel
+			continue
+		}
+		_, duplicate := used[name]
+		if name == "" || name == defaultExecAccountLabel || emailRe.MatchString(name) || duplicate {
+			out[index] = allocateAlias()
+			continue
+		}
+		out[index] = name
+		used[name] = struct{}{}
+	}
+	return out
 }
 
 func claudeSessionLabel(window claudeUsageWindow) string {
@@ -432,24 +483,111 @@ func adaptClaudeUsageWindow(label string, window claudeUsageWindow) usageWindowR
 	}
 }
 
+var (
+	claudeResetCountdownTextRE = regexp.MustCompile(`(?i)^Resets in ([0-9]{1,4}) (minute|minutes|hour|hours|day|days)(?: \(([A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)+)\))?$`)
+	claudeResetWeekdayTextRE   = regexp.MustCompile(`(?i)^Resets (Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?) at ([0-9]{1,2})(?::([0-9]{2}))?(?: ?([ap]m))?(?: \(([A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)+)\))?$`)
+	claudeResetMonthTextRE     = regexp.MustCompile(`(?i)^Resets (Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?) ([0-9]{1,2}) at ([0-9]{1,2})(?::([0-9]{2}))?(?: ?([ap]m))?(?: \(([A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)+)\))?$`)
+	claudeResetAtTextRE        = regexp.MustCompile(`(?i)^Resets at ([0-9]{1,2})(?::([0-9]{2}))?(?: ?([ap]m))?(?: \(([A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)+)\))?$`)
+)
+
 func sanitizeClaudeResetText(reset string) string {
+	if len(reset) > 120 {
+		return ""
+	}
+	for index := 0; index < len(reset); index++ {
+		if reset[index] < 0x20 || reset[index] > 0x7e {
+			return ""
+		}
+	}
 	reset = strings.Join(strings.Fields(reset), " ")
 	if reset == "" {
 		return ""
 	}
-	lower := strings.ToLower(reset)
-	if emailRe.MatchString(reset) ||
-		strings.Contains(lower, "bearer ") ||
-		strings.Contains(lower, "token") ||
-		strings.Contains(lower, "org_") ||
-		strings.Contains(reset, "/") ||
-		strings.ContainsAny(reset, "{}[]\\") {
-		return ""
+
+	if matches := claudeResetCountdownTextRE.FindStringSubmatch(reset); matches != nil {
+		count, err := strconv.Atoi(matches[1])
+		if err == nil && count > 0 && validClaudeResetTimezone(matches[3]) {
+			return reset
+		}
 	}
-	if len(reset) > 120 {
-		return ""
+	if matches := claudeResetWeekdayTextRE.FindStringSubmatch(reset); matches != nil {
+		if validClaudeResetTime(matches[2], matches[3], matches[4]) &&
+			validClaudeResetTimezone(matches[5]) {
+			return reset
+		}
 	}
-	return reset
+	if matches := claudeResetMonthTextRE.FindStringSubmatch(reset); matches != nil {
+		day, err := strconv.Atoi(matches[2])
+		if err == nil && day >= 1 && day <= 31 &&
+			validClaudeResetTime(matches[3], matches[4], matches[5]) &&
+			validClaudeResetTimezone(matches[6]) {
+			return reset
+		}
+	}
+	if matches := claudeResetAtTextRE.FindStringSubmatch(reset); matches != nil {
+		if validClaudeResetTime(matches[1], matches[2], matches[3]) &&
+			validClaudeResetTimezone(matches[4]) {
+			return reset
+		}
+	}
+	return ""
+}
+
+func validClaudeResetTime(hourText, minuteText, meridiem string) bool {
+	hour, err := strconv.Atoi(hourText)
+	if err != nil {
+		return false
+	}
+	if minuteText == "" {
+		if meridiem == "" {
+			return false
+		}
+	} else {
+		minute, minuteErr := strconv.Atoi(minuteText)
+		if minuteErr != nil || minute < 0 || minute > 59 {
+			return false
+		}
+	}
+	if meridiem != "" {
+		return hour >= 1 && hour <= 12
+	}
+	return hour >= 0 && hour <= 23
+}
+
+func validClaudeResetTimezone(timezone string) bool {
+	if timezone == "" {
+		return true
+	}
+	if len(timezone) > 64 {
+		return false
+	}
+	segments := strings.Split(timezone, "/")
+	if len(segments) < 2 {
+		return false
+	}
+	for _, segment := range segments {
+		if len(segment) == 0 || len(segment) > 32 || segment == "." || segment == ".." {
+			return false
+		}
+		if !isASCIIAlphaNumeric(segment[0]) || !isASCIIAlphaNumeric(segment[len(segment)-1]) {
+			return false
+		}
+		for index := 0; index < len(segment); index++ {
+			character := segment[index]
+			if isASCIIAlphaNumeric(character) ||
+				character == '_' || character == '-' || character == '+' || character == '.' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIAlphaNumeric(character byte) bool {
+	return character >= 'a' && character <= 'z' ||
+		character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9'
 }
 
 func safeClaudeUsageFailure(ctx context.Context, err error) string {
@@ -512,12 +650,15 @@ func printUsageReport(writer io.Writer, report usageReport, now time.Time, locat
 				fmt.Fprintln(writer)
 			}
 			fmt.Fprintf(writer, "  %s\n", account.Name)
-			if account.Failure != "" {
+			if account.Failure != "" && len(account.Windows) == 0 {
 				fmt.Fprintf(writer, "    unavailable · %s\n", account.Failure)
 				continue
 			}
 			for _, window := range account.Windows {
 				fmt.Fprintf(writer, "    %-*s  %s\n", width, window.Label, formatUsageWindow(window, now, location))
+			}
+			if account.Failure != "" {
+				fmt.Fprintf(writer, "    partial · %s\n", account.Failure)
 			}
 		}
 	}

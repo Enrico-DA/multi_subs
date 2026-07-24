@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,8 @@ const (
 	unverifiedAccountIdentityKey = "unverified"
 	maxFallbackReserve           = 10 * time.Second
 )
+
+var ErrWeeklyUsageUnavailable = errors.New("weekly usage unavailable")
 
 type accountFetcher struct {
 	account  MonitorAccount
@@ -237,8 +240,36 @@ func fetchWithFallback(ctx context.Context, primary Source, fallback Source) (*S
 	primaryCtx, cancelPrimary := attemptContext(ctx, fallback != nil)
 	primarySummary, primaryErr := primary.Fetch(primaryCtx)
 	cancelPrimary()
-	if primaryErr == nil {
+	if primaryErr == nil && primarySummary == nil {
+		primaryErr = errors.New("missing primary usage summary")
+	}
+	if primaryErr == nil && summaryHasWeeklyData(primarySummary) {
+		primarySummary.WindowDataAvailable = true
 		return primarySummary, nil
+	}
+	if primaryErr == nil {
+		if fallback == nil {
+			return nil, fmt.Errorf("primary source %q failed: %w", primary.Name(), ErrWeeklyUsageUnavailable)
+		}
+
+		fallbackCtx, cancelFallback := attemptContext(ctx, false)
+		fallbackSummary, fallbackErr := fallback.Fetch(fallbackCtx)
+		cancelFallback()
+		if fallbackErr == nil && summaryHasWeeklyData(fallbackSummary) {
+			fallbackSummary.WindowDataAvailable = true
+			fallbackSummary.Warnings = append(
+				fallbackSummary.Warnings,
+				fmt.Sprintf("primary source %q did not report weekly usage", primary.Name()),
+			)
+			return fallbackSummary, nil
+		}
+		if fallbackErr == nil {
+			fallbackErr = ErrWeeklyUsageUnavailable
+		}
+		return nil, fmt.Errorf(
+			"primary source %q failed: %w; fallback source %q failed: %v",
+			primary.Name(), ErrWeeklyUsageUnavailable, fallback.Name(), fallbackErr,
+		)
 	}
 
 	if fallback == nil {
@@ -248,15 +279,141 @@ func fetchWithFallback(ctx context.Context, primary Source, fallback Source) (*S
 	fallbackCtx, cancelFallback := attemptContext(ctx, false)
 	fallbackSummary, fallbackErr := fallback.Fetch(fallbackCtx)
 	cancelFallback()
-	if fallbackErr == nil {
+	if fallbackErr == nil && fallbackSummary != nil {
+		fallbackSummary.WindowDataAvailable = summaryHasWeeklyData(fallbackSummary)
 		fallbackSummary.Warnings = append(fallbackSummary.Warnings, fmt.Sprintf("primary source %q failed: %v", primary.Name(), primaryErr))
 		return fallbackSummary, nil
+	}
+	if fallbackErr == nil {
+		fallbackErr = errors.New("missing fallback usage summary")
 	}
 
 	return nil, fmt.Errorf(
 		"primary source %q failed: %v; fallback source %q failed: %v",
 		primary.Name(), primaryErr, fallback.Name(), fallbackErr,
 	)
+}
+
+func fetchReportWithFallback(ctx context.Context, primary Source, fallback Source) (*Summary, error) {
+	if primary == nil {
+		return nil, fmt.Errorf("missing primary source")
+	}
+
+	primaryCtx, cancelPrimary := attemptContext(ctx, fallback != nil)
+	primarySummary, primaryErr := primary.Fetch(primaryCtx)
+	cancelPrimary()
+	if primaryErr == nil && summaryHasWeeklyData(primarySummary) {
+		return primarySummary, nil
+	}
+	var safePrimarySession *Summary
+	if primaryErr == nil {
+		safePrimarySession = summaryWithSessionData(primarySummary)
+		primaryErr = ErrWeeklyUsageUnavailable
+	}
+
+	if fallback == nil {
+		if safePrimarySession != nil {
+			return safePrimarySession, fmt.Errorf("%w: primary source %q has no weekly data", ErrWeeklyUsageUnavailable, primary.Name())
+		}
+		return nil, fmt.Errorf("primary source %q failed: %w", primary.Name(), primaryErr)
+	}
+
+	fallbackCtx, cancelFallback := attemptContext(ctx, false)
+	fallbackSummary, fallbackErr := fallback.Fetch(fallbackCtx)
+	cancelFallback()
+	if fallbackErr == nil && summaryHasWeeklyData(fallbackSummary) {
+		if safePrimarySession != nil {
+			return mergeReportSummaries(safePrimarySession, fallbackSummary), nil
+		}
+		fallbackSummary.Warnings = append(fallbackSummary.Warnings, fmt.Sprintf("primary source %q failed: %v", primary.Name(), primaryErr))
+		return fallbackSummary, nil
+	}
+	if fallbackErr == nil {
+		fallbackErr = ErrWeeklyUsageUnavailable
+	}
+	if safePrimarySession != nil {
+		return safePrimarySession, fmt.Errorf(
+			"%w: primary source %q has no weekly data and fallback source %q failed",
+			ErrWeeklyUsageUnavailable, primary.Name(), fallback.Name(),
+		)
+	}
+	return nil, fmt.Errorf(
+		"primary source %q failed: %v; fallback source %q failed: %v",
+		primary.Name(), primaryErr, fallback.Name(), fallbackErr,
+	)
+}
+
+func summaryWithSessionData(summary *Summary) *Summary {
+	if summary == nil {
+		return nil
+	}
+	if summary.SessionWindow.UsedPercent >= 0 {
+		return summary
+	}
+	for _, window := range summary.RateLimitWindows {
+		if window.SessionWindow.UsedPercent >= 0 {
+			return summary
+		}
+	}
+	return nil
+}
+
+func mergeReportSummaries(primarySession, fallbackWeekly *Summary) *Summary {
+	out := cloneUsageSummary(fallbackWeekly)
+	if out == nil {
+		return nil
+	}
+	if primarySession == nil {
+		out.WindowDataAvailable = summaryHasWeeklyData(out)
+		return out
+	}
+
+	if primarySession.SessionWindow.UsedPercent >= 0 {
+		out.SessionWindow = cloneWindowSummary(primarySession.SessionWindow)
+	}
+	if len(primarySession.RateLimitWindows) > 0 {
+		if out.RateLimitWindows == nil {
+			out.RateLimitWindows = make(map[string]RateLimitWindow, len(primarySession.RateLimitWindows))
+		}
+		for id, primaryWindow := range primarySession.RateLimitWindows {
+			if primaryWindow.SessionWindow.UsedPercent < 0 {
+				continue
+			}
+			merged, exists := out.RateLimitWindows[id]
+			if !exists {
+				merged = RateLimitWindow{
+					LimitID:      primaryWindow.LimitID,
+					LimitName:    primaryWindow.LimitName,
+					WeeklyWindow: unavailableWindowSummary(),
+				}
+			}
+			merged.SessionWindow = cloneWindowSummary(primaryWindow.SessionWindow)
+			out.RateLimitWindows[id] = merged
+		}
+	}
+	if out.PlanType == "" {
+		out.PlanType = primarySession.PlanType
+	}
+	if out.AccountEmail == "" && out.AccountID == "" && out.UserID == "" {
+		out.AccountEmail = primarySession.AccountEmail
+		out.AccountID = primarySession.AccountID
+		out.UserID = primarySession.UserID
+	}
+	out.Warnings = dedupeStrings(append(append([]string(nil), out.Warnings...), primarySession.Warnings...))
+	out.WindowDataAvailable = summaryHasWeeklyData(out)
+	return out
+}
+
+func cloneUsageSummary(summary *Summary) *Summary {
+	if summary == nil {
+		return nil
+	}
+	out := *summary
+	out.SessionWindow = cloneWindowSummary(summary.SessionWindow)
+	out.WeeklyWindow = cloneWindowSummary(summary.WeeklyWindow)
+	out.RateLimitWindows = cloneRateLimitWindows(summary.RateLimitWindows)
+	out.Warnings = append([]string(nil), summary.Warnings...)
+	return &out
 }
 
 func accountFetchWarning(label string, err error) string {

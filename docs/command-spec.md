@@ -51,9 +51,9 @@ The account set is exact:
 
 Monitor-only account-file entries, active-home overrides, and filesystem-discovered accounts are excluded. No usage command creates or changes product or provider state.
 
-Each account is printed separately. Percentages mean used quota and are never combined or averaged. Structured Codex resets render a countdown and exact local time. Missing resets are `reset unknown`; expired resets are `reset due`. Claude reset text remains provider text after control and identity-like content is removed; no timestamp or timezone is invented.
+Each account is printed separately. Percentages mean used quota and are never combined or averaged. Structured Codex resets render a countdown and exact local time. Missing resets are `reset unknown`; expired resets are `reset due`. Claude reset text is printed only when it matches a supported countdown, weekday, month-and-day, or time-only grammar, with an optional safe IANA timezone. All other provider reset text becomes `reset unknown`; no timestamp or timezone is invented.
 
-A missing optional window is `not reported`. A failed account is `unavailable` with a fixed safe reason. Every success is still printed. Exit code 0 means every account probe succeeded, exit code 1 means at least one account or provider failed, and exit code 2 means invocation misuse. No arguments or flags are accepted. `--json` is not available in this release.
+A missing optional window is `not reported`. A failed account is `unavailable` with a fixed safe reason. A safe Codex session can remain visible with a `partial` reason when required weekly data is unavailable. Source cleanup failure uses a fixed safe reason and fails that account. Every success is still printed. Exit code 0 means every account probe succeeded, exit code 1 means at least one account or provider failed, and exit code 2 means invocation misuse. No arguments or flags are accepted. `--json` is not available in this release.
 
 ### `multisubs completion <bash|zsh|fish>`
 
@@ -129,7 +129,7 @@ Shows safe, profile-local authentication state. It is read-only and accepts no e
 
 Prints the Codex-only view of the shared usage report. It shows `Session (5h)` for a declared 300-minute window. If there is no declared five-hour window, one unambiguous declared non-weekly window is labeled with its actual duration. Missing durations are not guessed by position, and several ambiguous non-weekly durations leave session usage unreported.
 
-The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. Reported model-specific weekly limits are sorted by stable labels such as `Spark weekly`. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses the unmanaged source. The command does not use the TUI or observed-token estimates.
+The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Reported model-specific weekly limits are sorted by stable labels such as `Spark weekly`. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses the unmanaged source. The command does not use the TUI or observed-token estimates.
 
 This report does not change routing: Codex account and model selection remains weekly-only. No arguments are accepted.
 
@@ -230,7 +230,7 @@ Uses official `claude auth status --json` for the default account and each manag
 
 Prints the Claude-only view of the shared usage report. One bounded collector runs the free official non-persistent `/usage` probe for managed profiles in name order and the normal default account last.
 
-The labels are `Session (~5h)`, `Weekly all models`, and `Fable weekly`. If the provider supplies a concrete session duration, that duration replaces `~5h`. Session and weekly all-model data are required provider sections. Missing optional Fable data is `not reported`, not an account failure. Parser, authentication, path, timeout, and binary failures affect only the relevant account and use fixed safe reasons. It accepts no extra arguments.
+The labels are `Session (~5h)`, `Weekly all models`, and `Fable weekly`. Only an explicit bounded parenthesized duration in the session heading, such as `(5h)`, replaces `~5h`; reset countdown text never supplies the duration. Session and weekly all-model data are required provider sections. Missing optional Fable data is `not reported`, not an account failure. Reset text is printed only for supported `Resets in N ...`, weekday, month-and-day, or `Resets at ...` forms, with an optional safe IANA timezone. Parser, authentication, path, timeout, and binary failures affect only the relevant account and use fixed safe reasons. It accepts no extra arguments.
 
 ### `multisubs claude doctor`
 

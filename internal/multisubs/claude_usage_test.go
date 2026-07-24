@@ -163,6 +163,35 @@ func TestParseClaudeUsagePreservesConcreteSessionDuration(t *testing.T) {
 	}
 }
 
+func TestParseClaudeUsageDoesNotTreatInlineResetCountdownAsSessionDuration(t *testing.T) {
+	usage, err := parseClaudeUsageResult(
+		"Current session: 20% used · resets in 4 hours\n" +
+			"Current week (all models): 24% used · resets Jul 25 at 4am",
+	)
+	if err != nil {
+		t.Fatalf("parse inline session heading: %v", err)
+	}
+	if usage.Session.DurationMins != nil {
+		t.Fatalf("reset countdown became session duration: %+v", usage.Session.DurationMins)
+	}
+	if got := claudeSessionLabel(usage.Session); got != "Session (~5h)" {
+		t.Fatalf("session label without explicit heading duration: %q", got)
+	}
+}
+
+func TestParseClaudeUsageReadsOnlyExplicitParenthesizedSessionDuration(t *testing.T) {
+	usage, err := parseClaudeUsageResult(
+		"Current session (5h): 20% used · resets in 4 hours\n" +
+			"Current week (all models): 24% used · resets Jul 25 at 4am",
+	)
+	if err != nil {
+		t.Fatalf("parse explicit session heading duration: %v", err)
+	}
+	if usage.Session.DurationMins == nil || *usage.Session.DurationMins != 300 {
+		t.Fatalf("explicit session duration: %+v", usage.Session.DurationMins)
+	}
+}
+
 func TestParseClaudeUsageStopsBeforeActivityBreakdown(t *testing.T) {
 	usage, err := parseClaudeUsageResult(
 		"You are currently using your subscription to power your Claude Code usage\n\n" +
