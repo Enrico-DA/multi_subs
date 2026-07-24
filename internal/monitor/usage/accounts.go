@@ -458,7 +458,11 @@ func discoverCodexHomesFromSystem(home string) ([]string, []string, error) {
 
 	const maxDiscoveryDepth = 5
 	cleanHome := filepath.Clean(home)
-	err := filepath.WalkDir(cleanHome, func(path string, d fs.DirEntry, walkErr error) error {
+	legacyRoots, err := canonicalLegacyDiscoveryRoots(cleanHome)
+	if err != nil {
+		return nil, warnings, err
+	}
+	err = filepath.WalkDir(cleanHome, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			warnings = append(warnings, fmt.Sprintf("skipping discovery path %q: %v", path, walkErr))
 			if d != nil && d.IsDir() {
@@ -470,7 +474,12 @@ func discoverCodexHomesFromSystem(home string) ([]string, []string, error) {
 			return nil
 		}
 		if path != cleanHome {
-			if d.Type()&os.ModeSymlink != 0 || shouldIgnoreDiscoveredHome(path) {
+			excluded, excludeErr := pathCanonicallyInsideAny(path, legacyRoots)
+			if excludeErr != nil {
+				warnings = append(warnings, fmt.Sprintf("skipping discovery path %q: canonical path could not be verified", path))
+				return filepath.SkipDir
+			}
+			if excluded || d.Type()&os.ModeSymlink != 0 || shouldIgnoreDiscoveredHome(path) {
 				return filepath.SkipDir
 			}
 		}
@@ -496,10 +505,63 @@ func discoverCodexHomesFromSystem(home string) ([]string, []string, error) {
 
 	out := make([]string, 0, len(candidates))
 	for candidate := range candidates {
+		excluded, excludeErr := pathCanonicallyInsideAny(candidate, legacyRoots)
+		if excludeErr != nil {
+			warnings = append(warnings, fmt.Sprintf("skipping discovery candidate %q: canonical path could not be verified", candidate))
+			continue
+		}
+		if excluded {
+			continue
+		}
 		out = append(out, candidate)
 	}
 	sort.Strings(out)
 	return out, warnings, nil
+}
+
+func canonicalLegacyDiscoveryRoots(home string) ([]string, error) {
+	roots := make([]string, 0, 4)
+	for _, name := range []string{"multicodex", ".multicodex"} {
+		root := filepath.Join(home, name)
+		roots = append(roots, filepath.Clean(root))
+		_, err := os.Lstat(root)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect excluded legacy discovery root: %w", err)
+		}
+		resolved, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			return nil, fmt.Errorf("resolve excluded legacy discovery root: %w", err)
+		}
+		roots = append(roots, filepath.Clean(resolved))
+	}
+	return dedupeStrings(roots), nil
+}
+
+func pathCanonicallyInsideAny(path string, roots []string) (bool, error) {
+	cleanPath := filepath.Clean(path)
+	for _, root := range roots {
+		if pathInsideRoot(cleanPath, root) {
+			return true, nil
+		}
+	}
+	resolved, err := filepath.EvalSymlinks(cleanPath)
+	if err != nil {
+		return false, err
+	}
+	for _, root := range roots {
+		if pathInsideRoot(filepath.Clean(resolved), root) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func pathInsideRoot(path, root string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func shouldPruneDiscoveryDir(path string, depth int) bool {

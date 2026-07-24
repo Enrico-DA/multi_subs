@@ -86,7 +86,7 @@ multisubs claude doctor
 
 `multisubs init` and `multisubs codex init` call the same shared initialization path. `multisubs doctor` is the aggregate read-only check. It prints shared/base, Codex, and Claude sections. The two provider doctors stay focused on their own provider.
 
-The Codex monitor also accepts the nested topics `tui`, `doctor`, `completion`, and `help`. Use `multisubs help codex monitor doctor` for details.
+The Codex monitor also accepts the nested topics `tui`, `doctor`, `completion`, and `help`. The argument-free `multisubs codex monitor help` path is a leaf, so completion does not offer anything after it. Use `multisubs help codex monitor doctor` for details.
 
 Bare Codex routes were removed. For example, `multisubs status` exits with code 2 and points to `multisubs codex status`.
 
@@ -115,6 +115,8 @@ An explicit Codex monitor account file may be selected with `MULTISUBS_MONITOR_A
 
 Any legacy `MULTICODEX_*` variable causes startup to fail before state access. Clear it before running `multisubs`. Runtime never reads the old product home or old environment namespace. Old variables are still removed from provider child environments as a denylist.
 
+Filesystem monitor discovery prunes both `~/multicodex` and `~/.multicodex`, including canonical targets reached through aliases.
+
 This phase does not move any live state or installed binary. Move or replace local state only in a separate, explicit migration step.
 
 ## Provider behavior
@@ -124,6 +126,7 @@ Codex:
 - Each managed profile receives its own `CODEX_HOME`, including auth, sessions, threads, `/goal`, and related Codex state.
 - Managed execution enforces file-backed Codex auth.
 - Automatic `exec` routing applies the same weekly, model, and reset policy to the default account and managed profiles.
+- `exec` resolves the effective model from `--model`/`-m`, exact root `model` config overrides, or one common root model across every candidate config. Conflicting candidate models fail with code 2. A Codex `--profile`/`-p` selector requires an explicit model.
 - The default account is skipped when its usage is unavailable, exhausted, or missing a required model bucket. Its execution remains unmanaged and receives no managed auth override.
 - `heartbeat` uses an ephemeral, read-only Codex request and a private lock under `MULTISUBS_HOME`.
 - Resource reconciliation does not overwrite regular user files. It changes only documented product-owned links.
@@ -146,7 +149,7 @@ multisubs codex dry-run
 multisubs codex dry-run login personal
 ```
 
-All doctor commands and dry-run startup are non-mutating. Help, version, completion, invalid commands, and dynamic profile completion also avoid state creation.
+All doctor commands and dry-run startup are non-mutating. Aggregate doctor output always includes shared/base, Codex, and Claude sections after successful argument parsing, even when the Codex profile registry is invalid. Help, version, completion, invalid commands, and dynamic profile completion also avoid state creation.
 
 ## Completion
 

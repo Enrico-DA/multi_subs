@@ -44,16 +44,47 @@ func (r AggregateDoctorReport) HasFailures() bool {
 }
 
 func RunBaseDoctor(store *Store, cfg *Config) DoctorReport {
+	return runBaseDoctor(store, cfg, nil)
+}
+
+func runBaseDoctor(store *Store, cfg *Config, registryErr error) DoctorReport {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
 	checks := make([]DoctorCheck, 0, 12)
 	checks = append(checks, checkDirExists("multisubs home", store.paths.MultisubsHome, true))
-	checks = append(checks, DoctorCheck{
-		Name:    "config",
-		Status:  "ok",
-		Details: fmt.Sprintf("loaded config with %d profile(s)", len(cfg.Profiles)),
-	})
+	if registryErr != nil {
+		checks = append(checks, DoctorCheck{
+			Name:    "Codex profile registry",
+			Status:  "fail",
+			Details: codexRegistryFailureDetails(registryErr),
+		})
+	} else {
+		checks = append(checks, DoctorCheck{
+			Name:    "config",
+			Status:  "ok",
+			Details: fmt.Sprintf("loaded config with %d profile(s)", len(cfg.Profiles)),
+		})
+	}
 	checks = append(checks, checkProfileResources(store, cfg.ProfileResources))
 	checks = append(checks, checkRepositoryLeakGuards(store.paths)...)
 	return DoctorReport{Checks: checks}
+}
+
+func codexRegistryFailureDetails(err error) string {
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "parse config"):
+		return "Codex profile registry is invalid: malformed JSON"
+	case strings.Contains(message, "unsupported config version"):
+		return "Codex profile registry is invalid: unsupported version"
+	case strings.Contains(message, "invalid stored codex profile name"):
+		return "Codex profile registry is invalid: invalid stored profile name"
+	case strings.Contains(message, "mismatched name"):
+		return "Codex profile registry is invalid: stored profile name mismatch"
+	default:
+		return "Codex profile registry could not be loaded safely"
+	}
 }
 
 func RunCodexDoctor(store *Store, cfg *Config, timeout time.Duration) DoctorReport {

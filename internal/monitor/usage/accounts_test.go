@@ -433,6 +433,64 @@ func TestLoadMonitorAccountsDiscoveryPrunesLargeCommonDirs(t *testing.T) {
 	}
 }
 
+func TestLoadMonitorAccountsDiscoveryNeverReadsLegacyProductRoots(t *testing.T) {
+	for _, rootName := range []string{"multicodex", ".multicodex"} {
+		rootName := rootName
+		for _, alias := range []bool{false, true} {
+			alias := alias
+			name := rootName
+			if alias {
+				name += " symlink alias"
+			}
+			t.Run(name, func(t *testing.T) {
+				tmp := t.TempDir()
+				t.Setenv("HOME", tmp)
+				t.Setenv("CODEX_HOME", "")
+				t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
+				t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
+
+				legacyRoot := filepath.Join(tmp, rootName)
+				discoveryRoot := legacyRoot
+				if alias {
+					discoveryRoot = filepath.Join(tmp, "legacy-target-"+strings.TrimPrefix(rootName, "."))
+					if err := os.Symlink(discoveryRoot, legacyRoot); err != nil {
+						t.Fatalf("symlink legacy root: %v", err)
+					}
+				}
+				legacyHome := filepath.Join(discoveryRoot, "profiles", "old", "codex-home")
+				if err := os.MkdirAll(filepath.Join(legacyHome, "sessions"), 0o700); err != nil {
+					t.Fatalf("mkdir legacy session signals: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(legacyHome, "auth.json"), []byte(`{"tokens":{"access_token":"legacy"}}`), 0o600); err != nil {
+					t.Fatalf("write legacy auth signal: %v", err)
+				}
+
+				stableHome := filepath.Join(tmp, "current", "work", "codex-home")
+				if err := os.MkdirAll(filepath.Join(stableHome, "sessions"), 0o700); err != nil {
+					t.Fatalf("mkdir stable session signals: %v", err)
+				}
+
+				accounts, _, err := loadMonitorAccountsWithOptions(MonitorAccountOptions{Discover: true})
+				if err != nil {
+					t.Fatalf("discover accounts: %v", err)
+				}
+				stableFound := false
+				for _, account := range accounts {
+					if pathInsideRoot(account.CodexHome, discoveryRoot) {
+						t.Fatalf("legacy Codex home was returned through %s: %#v", rootName, accounts)
+					}
+					if account.CodexHome == normalizeHome(stableHome) {
+						stableFound = true
+					}
+				}
+				if !stableFound {
+					t.Fatalf("general filesystem discovery stopped outside the legacy root: %#v", accounts)
+				}
+			})
+		}
+	}
+}
+
 func TestAccountCollectorDeduplicatesSymlinkAndRealHomes(t *testing.T) {
 	tmp := t.TempDir()
 	realHome := filepath.Join(tmp, "profiles", "work", "codex-home")

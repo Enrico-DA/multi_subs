@@ -3,12 +3,14 @@ package multisubs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 	"github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
 
@@ -42,7 +44,16 @@ func (a *App) cmdExec(args []string) error {
 	if execArgsAreHelpRequest(args) {
 		return runCommandWithEnv("codex", append([]string{"exec"}, args...), neutralCodexEnv(os.Environ()), fmt.Sprintf("command failed: %s", strings.Join(append([]string{"codex", "exec"}, args...), " ")))
 	}
-	model := parseModelFromExecArgs(args)
+	routingArgs, err := parseExecRoutingArgs(args)
+	if err != nil {
+		return &ExitError{Code: 2, Message: err.Error()}
+	}
+	if routingArgs.ProfileExplicit && !routingArgs.ModelExplicit {
+		return &ExitError{
+			Code:    2,
+			Message: "Codex --profile can change the effective model; pass --model <model> so multisubs can route the matching weekly quota",
+		}
+	}
 
 	cfg, err := a.loadOrInitConfig()
 	if err != nil {
@@ -51,6 +62,13 @@ func (a *App) cmdExec(args []string) error {
 	cfg, err = a.execReadyConfig(cfg)
 	if err != nil {
 		return err
+	}
+	model := routingArgs.Model
+	if !routingArgs.ModelExplicit {
+		model, err = commonConfiguredExecModel(a.store.paths, cfg)
+		if err != nil {
+			return err
+		}
 	}
 
 	selected, err := a.selectExecProfile(cfg, defaultExecAccountSelector, model)
@@ -266,6 +284,26 @@ func lookupDefaultExecAccount(paths Paths, selected usage.SelectedAccount) (stri
 }
 
 func parseModelFromExecArgs(args []string) string {
+	routingArgs, err := parseExecRoutingArgs(args)
+	if err != nil {
+		return ""
+	}
+	return routingArgs.Model
+}
+
+type execRoutingArgs struct {
+	Model           string
+	ModelExplicit   bool
+	ProfileExplicit bool
+}
+
+func parseExecRoutingArgs(args []string) (execRoutingArgs, error) {
+	var parsed execRoutingArgs
+	dedicatedModel := ""
+	dedicatedModelFound := false
+	configModel := ""
+	configModelFound := false
+
 	for i := 0; i < len(args); i++ {
 		arg := strings.TrimSpace(args[i])
 		if arg == "" {
@@ -275,21 +313,150 @@ func parseModelFromExecArgs(args []string) string {
 			break
 		}
 		switch {
-		case arg == "--model":
-			if i+1 < len(args) {
-				return strings.TrimSpace(args[i+1])
+		case arg == "--model" || arg == "-m":
+			if dedicatedModelFound {
+				return execRoutingArgs{}, errors.New("Codex accepts one explicit model flag; pass a single --model <model>")
 			}
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" || args[i+1] == "--" {
+				return execRoutingArgs{}, errors.New("Codex model flag is missing its value; pass --model <model>")
+			}
+			dedicatedModel = strings.TrimSpace(args[i+1])
+			dedicatedModelFound = true
+			i++
 		case strings.HasPrefix(arg, "--model="):
-			return strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
-		case arg == "-m":
-			if i+1 < len(args) {
-				return strings.TrimSpace(args[i+1])
+			if dedicatedModelFound {
+				return execRoutingArgs{}, errors.New("Codex accepts one explicit model flag; pass a single --model <model>")
 			}
+			dedicatedModel = strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
+			if dedicatedModel == "" {
+				return execRoutingArgs{}, errors.New("Codex model flag is missing its value; pass --model <model>")
+			}
+			dedicatedModelFound = true
 		case strings.HasPrefix(arg, "-m="):
-			return strings.TrimSpace(strings.TrimPrefix(arg, "-m="))
+			if dedicatedModelFound {
+				return execRoutingArgs{}, errors.New("Codex accepts one explicit model flag; pass a single --model <model>")
+			}
+			dedicatedModel = strings.TrimSpace(strings.TrimPrefix(arg, "-m="))
+			if dedicatedModel == "" {
+				return execRoutingArgs{}, errors.New("Codex model flag is missing its value; pass --model <model>")
+			}
+			dedicatedModelFound = true
+		case arg == "-c" || arg == "--config":
+			if i+1 >= len(args) || args[i+1] == "--" {
+				return execRoutingArgs{}, errors.New("Codex config override is missing key=value")
+			}
+			i++
+			model, found, err := codexstate.ModelFromConfigOverride(args[i])
+			if err != nil {
+				return execRoutingArgs{}, errors.New("Codex model config override is invalid; pass --model <model>")
+			}
+			if found {
+				configModel = strings.TrimSpace(model)
+				configModelFound = true
+			}
+		case strings.HasPrefix(arg, "--config="):
+			model, found, err := codexstate.ModelFromConfigOverride(strings.TrimPrefix(arg, "--config="))
+			if err != nil {
+				return execRoutingArgs{}, errors.New("Codex model config override is invalid; pass --model <model>")
+			}
+			if found {
+				configModel = strings.TrimSpace(model)
+				configModelFound = true
+			}
+		case strings.HasPrefix(arg, "-c") && len(arg) > len("-c"):
+			model, found, err := codexstate.ModelFromConfigOverride(strings.TrimPrefix(arg, "-c"))
+			if err != nil {
+				return execRoutingArgs{}, errors.New("Codex model config override is invalid; pass --model <model>")
+			}
+			if found {
+				configModel = strings.TrimSpace(model)
+				configModelFound = true
+			}
+		case arg == "--profile" || arg == "-p":
+			parsed.ProfileExplicit = true
+			if i+1 < len(args) && args[i+1] != "--" {
+				i++
+			}
+		case strings.HasPrefix(arg, "--profile=") || strings.HasPrefix(arg, "-p=") ||
+			(strings.HasPrefix(arg, "-p") && len(arg) > len("-p")):
+			parsed.ProfileExplicit = true
 		}
 	}
-	return ""
+
+	if dedicatedModelFound {
+		parsed.Model = dedicatedModel
+		parsed.ModelExplicit = true
+		return parsed, nil
+	}
+	if configModelFound {
+		if configModel == "" {
+			return execRoutingArgs{}, errors.New("Codex model config override is empty; pass --model <model>")
+		}
+		parsed.Model = configModel
+		parsed.ModelExplicit = true
+	}
+	return parsed, nil
+}
+
+func commonConfiguredExecModel(paths Paths, cfg *Config) (string, error) {
+	configPaths := []string{filepath.Join(paths.DefaultCodexHome, "config.toml")}
+	for _, name := range sortedProfileNames(cfg) {
+		configPaths = append(configPaths, filepath.Join(cfg.Profiles[name].CodexHome, "config.toml"))
+	}
+
+	commonModel := ""
+	commonFound := false
+	haveCandidate := false
+	for _, configPath := range configPaths {
+		model, found, err := configuredExecModel(configPath)
+		if err != nil {
+			return "", &ExitError{
+				Code:    2,
+				Message: "could not safely determine the configured Codex model for every routing candidate; pass --model <model>",
+			}
+		}
+		if !haveCandidate {
+			commonModel = model
+			commonFound = found
+			haveCandidate = true
+			continue
+		}
+		if found != commonFound || (found && model != commonModel) {
+			return "", &ExitError{
+				Code:    2,
+				Message: "Codex routing candidates have different configured models; pass --model <model>",
+			}
+		}
+	}
+	if !commonFound {
+		return "", nil
+	}
+	return commonModel, nil
+}
+
+func configuredExecModel(configPath string) (string, bool, error) {
+	if err := ensureRegularFileOrSymlinkTarget(configPath, "Codex config"); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, errors.New("Codex config is not a readable regular file")
+	}
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, errors.New("Codex config could not be read")
+	}
+	model, found, err := codexstate.ModelFromTOML(string(content))
+	if err != nil {
+		return "", false, errors.New("Codex config model could not be parsed")
+	}
+	model = strings.TrimSpace(model)
+	if found && model == "" {
+		return "", false, errors.New("Codex config model is empty")
+	}
+	return model, found, nil
 }
 
 func availableUsedPercentPtr(v int) *int {

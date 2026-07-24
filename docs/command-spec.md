@@ -27,6 +27,7 @@ Runs an aggregate read-only report with these sections:
 3. `Claude`: Claude binary, provider registry, managed paths, authentication status, and duplicate-organization checks.
 
 The JSON result has `base`, `codex`, and `claude` objects. Each contains a `checks` array.
+After valid argument parsing, all three sections are emitted even when the Codex profile registry is malformed, uses an unsupported version, or contains invalid stored names. That registry error becomes a failed shared/base check, and safe Codex and independent Claude checks continue against an empty Codex profile set.
 
 ### `multisubs completion <bash|zsh|fish>`
 
@@ -80,6 +81,9 @@ Runs official `codex exec` after weekly-only account selection.
 - Accounts with unavailable or exhausted weekly usage are skipped.
 - Known weekly resets are tried soonest first.
 - A requested Spark model requires that account's Spark weekly bucket.
+- Effective model routing recognizes Codex `--model`/`-m` flags and exact root `model` values passed through `-c`/`--config`; the dedicated model flag has Codex's higher precedence.
+- Without an explicit model or profile selector, all candidate `config.toml` files must declare the same root model or all omit it. Conflicts exit with code 2 and require `--model`.
+- `--profile`/`-p` without an explicit model exits with code 2 because the selected Codex config can change the model.
 - Managed profile children receive file-backed-auth isolation.
 - Default-account execution uses the default Codex home without a managed file-auth override or product mutation.
 - Exact provider help requests pass through without config or state creation.
@@ -116,6 +120,8 @@ Nested topics:
 - `multisubs codex monitor doctor [flags]`
 - `multisubs codex monitor completion [shell]`
 - `multisubs codex monitor help`
+
+`multisubs codex monitor help` accepts no arguments and is a completion leaf.
 
 The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. Default and active homes follow their explicit inclusion rules.
 
@@ -204,3 +210,5 @@ Each exits with code 2 and points to the matching `multisubs codex ...` route.
 Startup checks the environment before path resolution. If any `MULTICODEX_*` variable is present, the command exits with code 2 and tells the user to clear it.
 
 Runtime never reads the old environment namespace or the old `~/multicodex` state root. Known old variables remain on provider child-environment denylists to prevent account-routing leakage.
+
+Monitor discovery also prunes `~/.multicodex` and the canonical alias targets of both legacy roots before descent.

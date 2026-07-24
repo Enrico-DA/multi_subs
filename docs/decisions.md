@@ -34,6 +34,8 @@ Why: The product needs one full read-only health check without losing fast, focu
 
 Enforcement: Aggregate JSON has `base`, `codex`, and `claude` reports. All doctor startup remains non-mutating.
 
+An invalid Codex registry becomes a failed aggregate base check while the aggregate doctor continues safe base, Codex, and Claude checks and emits every section.
+
 ## Use one new state root and environment namespace
 
 Decision: Persistent product state defaults to `~/multisubs`, with `MULTISUBS_HOME` as the override. Product controls use `MULTISUBS_*`.
@@ -49,6 +51,8 @@ Decision: Old `MULTICODEX_*` variables cause startup to fail before state access
 Why: Silently accepting old controls would create hidden compatibility and could route a provider child with stale account metadata.
 
 Enforcement: Top-level startup rejects any old product-prefixed variable. Provider child environments still strip old controls. The old `~/multicodex` and `.multicodex` patterns remain only as legacy-sensitive ignore and leak protection.
+
+Monitor filesystem discovery prunes both legacy home roots and their canonical targets so an alias cannot reactivate old credentials.
 
 ## Keep provider stores isolated
 

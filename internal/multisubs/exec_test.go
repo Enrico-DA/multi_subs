@@ -363,6 +363,262 @@ func TestParseModelFromExecArgs(t *testing.T) {
 	}
 }
 
+func TestParseExecRoutingArgsSupportsCodexConfigModelForms(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "short separate", args: []string{"-c", "model=gpt-5-codex-spark"}, want: "gpt-5-codex-spark"},
+		{name: "short attached", args: []string{"-cmodel=gpt-5-codex-spark"}, want: "gpt-5-codex-spark"},
+		{name: "long separate", args: []string{"--config", "model=gpt-5-codex-spark"}, want: "gpt-5-codex-spark"},
+		{name: "long equals", args: []string{"--config=model=gpt-5-codex-spark"}, want: "gpt-5-codex-spark"},
+		{name: "basic quoted", args: []string{"-c", `model="gpt-5-codex-spark"`}, want: "gpt-5-codex-spark"},
+		{name: "literal raw quoted", args: []string{"-c", `model='gpt-5-codex-spark'`}, want: "gpt-5-codex-spark"},
+		{name: "raw fallback", args: []string{"-c", `model=gpt-5-codex-spark`}, want: "gpt-5-codex-spark"},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseExecRoutingArgs(test.args)
+			if err != nil {
+				t.Fatalf("parseExecRoutingArgs(%v): %v", test.args, err)
+			}
+			if !got.ModelExplicit || got.Model != test.want {
+				t.Fatalf("parseExecRoutingArgs(%v) = %#v, want explicit model %q", test.args, got, test.want)
+			}
+		})
+	}
+}
+
+func TestParseExecRoutingArgsMatchesCodexModelPrecedence(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "last config override wins",
+			args: []string{"-c", "model=gpt-5", "--config=model=gpt-5-codex-spark"},
+			want: "gpt-5-codex-spark",
+		},
+		{
+			name: "dedicated flag after config wins",
+			args: []string{"-c", "model=gpt-5", "--model", "gpt-5-codex-spark"},
+			want: "gpt-5-codex-spark",
+		},
+		{
+			name: "dedicated flag before later config still wins",
+			args: []string{"-m=gpt-5-codex-spark", "-cmodel=gpt-5"},
+			want: "gpt-5-codex-spark",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseExecRoutingArgs(test.args)
+			if err != nil {
+				t.Fatalf("parseExecRoutingArgs(%v): %v", test.args, err)
+			}
+			if got.Model != test.want || !got.ModelExplicit {
+				t.Fatalf("parseExecRoutingArgs(%v) = %#v, want explicit model %q", test.args, got, test.want)
+			}
+		})
+	}
+
+	if _, err := parseExecRoutingArgs([]string{"--model", "gpt-5", "-m=gpt-5-codex-spark"}); err == nil {
+		t.Fatal("expected repeated dedicated model flags to match Codex's duplicate-option rejection")
+	}
+}
+
+func TestParseExecRoutingArgsStopsAtStandaloneDelimiter(t *testing.T) {
+	got, err := parseExecRoutingArgs([]string{
+		"-c", "sandbox_mode=read-only",
+		"--",
+		"--config=model=gpt-5-codex-spark",
+		"--profile", "fast",
+	})
+	if err != nil {
+		t.Fatalf("parseExecRoutingArgs: %v", err)
+	}
+	if got.ModelExplicit || got.ProfileExplicit {
+		t.Fatalf("arguments after -- affected routing: %#v", got)
+	}
+}
+
+func TestParseExecRoutingArgsRecognizesProfileSelectors(t *testing.T) {
+	for _, args := range [][]string{
+		{"--profile", "fast", "--model", "gpt-5"},
+		{"--profile=fast", "-c", "model=gpt-5"},
+		{"-p", "fast", "-m=gpt-5"},
+		{"-p=fast", "--config=model=gpt-5"},
+		{"-pfast", "--model=gpt-5"},
+	} {
+		got, err := parseExecRoutingArgs(args)
+		if err != nil {
+			t.Fatalf("parseExecRoutingArgs(%v): %v", args, err)
+		}
+		if !got.ProfileExplicit || !got.ModelExplicit || got.Model != "gpt-5" {
+			t.Fatalf("profile/model routing for %v = %#v", args, got)
+		}
+	}
+}
+
+func TestCmdExecProfileSelectorRequiresExplicitModel(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+
+	err := app.Run([]string{"codex", "exec", "--profile", "fast", "hello"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected exit code 2, got %T %v", err, err)
+	}
+	if !strings.Contains(exitErr.Message, "pass --model") {
+		t.Fatalf("expected explicit-model guidance, got %q", exitErr.Message)
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("profile without explicit model started Codex: %v", statErr)
+	}
+}
+
+func TestCmdExecProfileSelectorUsesExplicitConfigModel(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(_ context.Context, _ []usage.MonitorAccount, model string) (usage.SelectedAccount, error) {
+		if model != "gpt-5-codex-spark" {
+			t.Fatalf("selector model = %q, want Spark", model)
+		}
+		return usage.SelectedAccount{Account: usage.MonitorAccount{Label: "alpha"}}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	args := []string{"codex", "exec", "--profile=fast", `--config=model='gpt-5-codex-spark'`, "hello"}
+	if err := app.Run(args); err != nil {
+		t.Fatalf("exec with profile and explicit model failed: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read Codex log: %v", err)
+	}
+	if !strings.Contains(string(data), "--profile=fast") || !strings.Contains(string(data), `--config=model='gpt-5-codex-spark'`) {
+		t.Fatalf("profile or harmless forwarded override was not preserved: %q", data)
+	}
+}
+
+func TestCmdExecUsesCommonConfiguredModelForRouting(t *testing.T) {
+	app, _ := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha", "beta")
+	writeDefaultConfig(t, app, "model = \"gpt-5-codex-spark\"\ncli_auth_credentials_store = \"file\"\n")
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(_ context.Context, _ []usage.MonitorAccount, model string) (usage.SelectedAccount, error) {
+		if model != "gpt-5-codex-spark" {
+			t.Fatalf("selector model = %q, want shared configured Spark model", model)
+		}
+		return usage.SelectedAccount{Account: usage.MonitorAccount{Label: "alpha"}}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	if err := app.Run([]string{"codex", "exec", "hello"}); err != nil {
+		t.Fatalf("exec with common configured model failed: %v", err)
+	}
+}
+
+func TestCmdExecKeepsGenericRoutingWhenConfigsOmitModel(t *testing.T) {
+	app, _ := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha", "beta")
+	writeDefaultConfig(t, app, "cli_auth_credentials_store = \"file\"\n")
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(_ context.Context, _ []usage.MonitorAccount, model string) (usage.SelectedAccount, error) {
+		if model != "" {
+			t.Fatalf("selector model = %q, want generic routing", model)
+		}
+		return usage.SelectedAccount{Account: usage.MonitorAccount{Label: "alpha"}}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	if err := app.Run([]string{"codex", "exec", "hello"}); err != nil {
+		t.Fatalf("exec with no configured model failed: %v", err)
+	}
+}
+
+func TestCmdExecRejectsConflictingCandidateConfigModels(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha", "beta")
+	writeDefaultConfig(t, app, "model = \"gpt-5-codex-spark\"\ncli_auth_credentials_store = \"file\"\n")
+	if err := os.WriteFile(
+		filepath.Join(app.store.paths.ProfilesDir, "beta", "codex-home", "config.toml"),
+		[]byte("model = \"gpt-5\"\ncli_auth_credentials_store = \"file\"\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write conflicting profile config: %v", err)
+	}
+
+	selectorCalled := false
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error) {
+		selectorCalled = true
+		return usage.SelectedAccount{}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	err := app.Run([]string{"codex", "exec", "hello"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected exit code 2, got %T %v", err, err)
+	}
+	if !strings.Contains(exitErr.Message, "different configured models") || !strings.Contains(exitErr.Message, "pass --model") {
+		t.Fatalf("unexpected conflict error: %q", exitErr.Message)
+	}
+	if selectorCalled {
+		t.Fatal("conflicting models reached account selection")
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("conflicting models started Codex: %v", statErr)
+	}
+}
+
+func TestCmdExecConfigOverrideSelectsSparkBucketFailClosed(t *testing.T) {
+	app, logPath, root := newExecSelectionTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	writeExecSelectionProfileData(t, root, "alpha", 10, 20, time.Hour)
+
+	err := app.Run([]string{"codex", "exec", "-c", `model="gpt-5-codex-spark"`, "hello"})
+	if err == nil || !strings.Contains(err.Error(), "model-specific weekly limit") {
+		t.Fatalf("expected missing Spark bucket error, got %v", err)
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("missing Spark bucket started Codex: %v", statErr)
+	}
+}
+
+func TestCmdExecPreservesHarmlessConfigOverrides(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error) {
+		return usage.SelectedAccount{Account: usage.MonitorAccount{Label: "alpha"}}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	override := `sandbox_mode="read-only"`
+	if err := app.Run([]string{"codex", "exec", "-c", override, "--model=gpt-5", "hello"}); err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read Codex log: %v", err)
+	}
+	if !strings.Contains(string(data), "-c "+override) {
+		t.Fatalf("harmless config override was not preserved: %q", data)
+	}
+}
+
 func TestSelectExecProfilePassesModelToSelector(t *testing.T) {
 	app := newTestAppForCLI(t)
 	createExecProfiles(t, app, "alpha")
@@ -622,8 +878,8 @@ func TestCmdExecTreatsFlagsAfterTerminatorAsPromptText(t *testing.T) {
 
 	originalSelector := defaultExecAccountSelector
 	defaultExecAccountSelector = func(_ context.Context, _ []usage.MonitorAccount, model string) (usage.SelectedAccount, error) {
-		if model != "" {
-			t.Fatalf("expected args after -- not to be parsed as model, got %q", model)
+		if model != "global" {
+			t.Fatalf("expected args after -- to be ignored and common config model to remain effective, got %q", model)
 		}
 		return usage.SelectedAccount{
 			Account:           usage.MonitorAccount{Label: "alpha"},
@@ -1066,49 +1322,8 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}" == "untrusted" && "${5:-}" == "-c" && "${6:-}" == 'cli_auth_credentials_store="file"' && "${7:-}" == "app-server" ]]; then
-  exec python3 -c '
-import json
-import os
-import sys
-
-home = sys.argv[1]
-usage_path = os.path.join(home, "usage.json")
-with open(usage_path, "r", encoding="utf-8") as fh:
-    usage = json.load(fh)
-
-primary = 0
-secondary = int(usage["weekly_used_percent"])
-email = usage.get("email", "")
-primary_resets_at = usage.get("primary_resets_at")
-secondary_resets_at = usage.get("secondary_resets_at")
-rate_limits = {
-    "limitId": "codex",
-    "planType": "pro",
-    "primary": {"usedPercent": primary, "windowDurationMins": 300, "resetsAt": primary_resets_at},
-    "secondary": {"usedPercent": secondary, "windowDurationMins": 10080, "resetsAt": secondary_resets_at},
-}
-
-for raw_line in sys.stdin:
-    raw_line = raw_line.strip()
-    if not raw_line:
-        continue
-    req = json.loads(raw_line)
-    method = req.get("method")
-    req_id = req.get("id")
-    if method == "initialized":
-        continue
-    if method == "initialize":
-        result = {}
-    elif method == "account/rateLimits/read":
-        result = {"rateLimits": rate_limits, "rateLimitsByLimitId": {"codex": rate_limits}}
-    elif method == "account/read":
-        result = {"account": {"email": email}, "requiresOpenAIAuth": False}
-    else:
-        result = {}
-    if req_id is not None:
-        print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}), flush=True)
-' "$CODEX_HOME"
-  exit $?
+  : "${MULTISUBS_EXEC_SELECTION_TEST_BINARY:?MULTISUBS_EXEC_SELECTION_TEST_BINARY must be set}"
+  MULTISUBS_EXEC_SELECTION_APP_SERVER_HELPER=1 exec "${MULTISUBS_EXEC_SELECTION_TEST_BINARY}" -test.run '^TestExecSelectionAppServerHelper$'
 fi
 if [[ "${1:-}" == "exec" ]]; then
   : "${MULTISUBS_FAKE_CODEX_LOG:?MULTISUBS_FAKE_CODEX_LOG must be set}"
@@ -1131,6 +1346,11 @@ exit 1
 	}
 	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
 	t.Setenv("MULTISUBS_FAKE_CODEX_LOG", logPath)
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate Go test binary: %v", err)
+	}
+	t.Setenv("MULTISUBS_EXEC_SELECTION_TEST_BINARY", testBinary)
 	originalTransport := http.DefaultTransport
 	http.DefaultTransport = execSelectionOAuthTransport{root: root}
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
@@ -1141,6 +1361,91 @@ exit 1
 	}
 	writeDefaultFileStoreConfig(t, app)
 	return app, logPath, root
+}
+
+func TestExecSelectionAppServerHelper(t *testing.T) {
+	if os.Getenv("MULTISUBS_EXEC_SELECTION_APP_SERVER_HELPER") != "1" {
+		return
+	}
+	if err := runExecSelectionAppServerHelper(); err != nil {
+		fmt.Fprintln(os.Stderr, "fake app-server:", err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func runExecSelectionAppServerHelper() error {
+	data, err := os.ReadFile(filepath.Join(os.Getenv("CODEX_HOME"), "usage.json"))
+	if err != nil {
+		return fmt.Errorf("read usage fixture: %w", err)
+	}
+	var fixture struct {
+		WeeklyUsedPercent int    `json:"weekly_used_percent"`
+		Email             string `json:"email"`
+		PrimaryResetsAt   int64  `json:"primary_resets_at"`
+		SecondaryResetsAt int64  `json:"secondary_resets_at"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		return fmt.Errorf("decode usage fixture: %w", err)
+	}
+	rateLimits := map[string]any{
+		"limitId":  "codex",
+		"planType": "pro",
+		"primary": map[string]any{
+			"usedPercent":        0,
+			"windowDurationMins": 300,
+			"resetsAt":           fixture.PrimaryResetsAt,
+		},
+		"secondary": map[string]any{
+			"usedPercent":        fixture.WeeklyUsedPercent,
+			"windowDurationMins": 10080,
+			"resetsAt":           fixture.SecondaryResetsAt,
+		},
+	}
+
+	decoder := json.NewDecoder(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	for {
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := decoder.Decode(&request); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("decode request: %w", err)
+		}
+		if request.Method == "initialized" || len(request.ID) == 0 || string(request.ID) == "null" {
+			continue
+		}
+
+		var result any
+		switch request.Method {
+		case "initialize":
+			result = map[string]any{}
+		case "account/rateLimits/read":
+			result = map[string]any{
+				"rateLimits":          rateLimits,
+				"rateLimitsByLimitId": map[string]any{"codex": rateLimits},
+			}
+		case "account/read":
+			result = map[string]any{
+				"account":            map[string]any{"email": fixture.Email},
+				"requiresOpenAIAuth": false,
+			}
+		default:
+			result = map[string]any{}
+		}
+		response := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      request.ID,
+			"result":  result,
+		}
+		if err := encoder.Encode(response); err != nil {
+			return fmt.Errorf("encode response: %w", err)
+		}
+	}
 }
 
 type execSelectionOAuthTransport struct {

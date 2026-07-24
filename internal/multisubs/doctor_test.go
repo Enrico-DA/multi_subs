@@ -2,6 +2,7 @@ package multisubs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -205,6 +206,129 @@ func TestAggregateAndFocusedDoctorScopesAreReadOnly(t *testing.T) {
 	if _, err := os.Lstat(stateHome); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Claude doctor created product state: %v", err)
 	}
+}
+
+func TestAggregateDoctorCompletesAllSectionsWhenCodexRegistryIsInvalid(t *testing.T) {
+	cases := []struct {
+		name       string
+		registry   string
+		wantDetail string
+	}{
+		{name: "malformed JSON", registry: "{\n", wantDetail: "malformed JSON"},
+		{name: "unsupported version", registry: `{"version":2,"profiles":{}}`, wantDetail: "unsupported version"},
+		{
+			name:       "invalid stored name",
+			registry:   `{"version":1,"profiles":{"../escape":{"name":"../escape","codex_home":"/synthetic/escape"}}}`,
+			wantDetail: "invalid stored profile name",
+		},
+	}
+
+	for _, test := range cases {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			app, runner, root := newClaudeTestApp(t)
+			runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+				switch strings.Join(args, " ") {
+				case "--version":
+					return []byte("claude test\n"), nil, nil
+				case "auth status --json":
+					return fakeClaudeAuthJSON(false, ""), nil, nil
+				default:
+					return nil, nil, errors.New("unexpected Claude doctor command")
+				}
+			}
+
+			fakeBin := filepath.Join(root, "bin")
+			if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+				t.Fatalf("mkdir fake bin: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte("#!/bin/sh\nprintf 'codex test\\n'\n"), 0o755); err != nil {
+				t.Fatalf("write fake Codex: %v", err)
+			}
+			t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			if err := os.MkdirAll(app.store.paths.MultisubsHome, 0o700); err != nil {
+				t.Fatalf("mkdir multisubs home: %v", err)
+			}
+			if err := os.WriteFile(app.store.paths.ConfigPath, []byte(test.registry), 0o600); err != nil {
+				t.Fatalf("write invalid registry: %v", err)
+			}
+
+			for _, jsonOutput := range []bool{false, true} {
+				format := "human"
+				args := []string(nil)
+				if jsonOutput {
+					format = "JSON"
+					args = []string{"--json"}
+				}
+				t.Run(format, func(t *testing.T) {
+					callsBefore := len(runner.Calls())
+					output, err := captureStdout(t, func() error {
+						return app.cmdAggregateDoctor(args)
+					})
+					var exitErr *ExitError
+					if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+						t.Fatalf("expected aggregate failure exit code 1, got %T %v", err, err)
+					}
+					if len(runner.Calls()) <= callsBefore {
+						t.Fatal("Claude checks did not run after Codex registry failure")
+					}
+
+					if jsonOutput {
+						var report AggregateDoctorReport
+						if err := json.Unmarshal([]byte(output), &report); err != nil {
+							t.Fatalf("decode aggregate JSON: %v\n%s", err, output)
+						}
+						if len(report.Base.Checks) == 0 || len(report.Codex.Checks) == 0 || len(report.Claude.Checks) == 0 {
+							t.Fatalf("aggregate JSON omitted a section: %#v", report)
+						}
+						assertDoctorCheckDetail(t, report.Base, "Codex profile registry", "fail", test.wantDetail)
+						assertDoctorCheckDetail(t, report.Claude, "Claude binary", "ok", "claude test")
+					} else {
+						for _, section := range []string{"== shared/base ==", "== Codex ==", "== Claude =="} {
+							if !strings.Contains(output, section) {
+								t.Fatalf("aggregate human output missing %q:\n%s", section, output)
+							}
+						}
+						if !strings.Contains(output, "[fail] Codex profile registry:") ||
+							!strings.Contains(output, test.wantDetail) ||
+							!strings.Contains(output, "[ok] Claude binary: claude test") {
+							t.Fatalf("aggregate human output missed registry or Claude checks:\n%s", output)
+						}
+					}
+
+					after, readErr := os.ReadFile(app.store.paths.ConfigPath)
+					if readErr != nil {
+						t.Fatalf("read registry after doctor: %v", readErr)
+					}
+					if string(after) != test.registry {
+						t.Fatalf("doctor mutated invalid registry: %q", after)
+					}
+					entries, readErr := os.ReadDir(app.store.paths.MultisubsHome)
+					if readErr != nil {
+						t.Fatalf("read multisubs home after doctor: %v", readErr)
+					}
+					if len(entries) != 1 || entries[0].Name() != filepath.Base(app.store.paths.ConfigPath) {
+						t.Fatalf("doctor mutated product state: %#v", entries)
+					}
+				})
+			}
+		})
+	}
+}
+
+func assertDoctorCheckDetail(t *testing.T, report DoctorReport, name, status, detail string) {
+	t.Helper()
+	for _, check := range report.Checks {
+		if check.Name != name {
+			continue
+		}
+		if check.Status != status || !strings.Contains(check.Details, detail) {
+			t.Fatalf("doctor check %q = %#v, want status %q containing %q", name, check, status, detail)
+		}
+		return
+	}
+	t.Fatalf("doctor report missing check %q: %#v", name, report)
 }
 
 func TestDoctorProfileResourcesIsReadOnly(t *testing.T) {

@@ -56,6 +56,7 @@ _multisubs_claude_profiles() {
 
 _multisubs_complete() {
   local cur top provider command
+  COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   top="${COMP_WORDS[1]:-}"
   provider="${COMP_WORDS[2]:-}"
@@ -104,9 +105,6 @@ _multisubs_complete() {
                 ;;
               doctor)
                 COMPREPLY=( $(compgen -W "--json --timeout --include-default --include-active --discover --app-server" -- "$cur") )
-                ;;
-              help)
-                COMPREPLY=( $(compgen -W "doctor completion tui help" -- "$cur") )
                 ;;
               tui)
                 COMPREPLY=( $(compgen -W "--interval --timeout --no-color --no-alt-screen --include-default --include-active --discover" -- "$cur") )
@@ -225,7 +223,6 @@ _multisubs_complete() {
             case "$command" in
               completion) compadd -- bash zsh fish ;;
               doctor) compadd -- --json --timeout --include-default --include-active --discover --app-server ;;
-              help) compadd -- doctor completion tui help ;;
               tui) compadd -- --interval --timeout --no-color --no-alt-screen --include-default --include-active --discover ;;
             esac
           fi
@@ -309,7 +306,6 @@ func fishCompletionEntries() []fishCompletionEntry {
 		{path: []string{"codex", "monitor"}, tokens: monitorCommands, longOptions: monitorTUIOptions},
 		{path: []string{"codex", "monitor", "completion"}, tokens: []string{"bash", "zsh", "fish"}},
 		{path: []string{"codex", "monitor", "doctor"}, matchPathPrefix: true, longOptions: []string{"json", "timeout", "include-default", "include-active", "discover", "app-server"}},
-		{path: []string{"codex", "monitor", "help"}, tokens: monitorCommands},
 		{path: []string{"codex", "monitor", "tui"}, matchPathPrefix: true, longOptions: monitorTUIOptions},
 		{path: []string{"codex", "help"}, tokens: codexCommands},
 		{path: []string{"claude", "help"}, tokens: claudeCommands},

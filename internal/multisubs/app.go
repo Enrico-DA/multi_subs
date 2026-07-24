@@ -573,9 +573,9 @@ func (a *App) cmdAggregateDoctor(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := a.loadConfigIfExists()
-	if err != nil {
-		return err
+	cfg, registryErr := a.loadConfigIfExists()
+	if registryErr != nil {
+		cfg = DefaultConfig()
 	}
 	claudeReport, err := a.runClaudeDoctorChecks(timeout)
 	if err != nil {
@@ -586,7 +586,7 @@ func (a *App) cmdAggregateDoctor(args []string) error {
 		}}}
 	}
 	report := AggregateDoctorReport{
-		Base:   RunBaseDoctor(a.store, cfg),
+		Base:   runBaseDoctor(a.store, cfg, registryErr),
 		Codex:  RunCodexDoctor(a.store, cfg, timeout),
 		Claude: claudeReport,
 	}

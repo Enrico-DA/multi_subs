@@ -220,7 +220,6 @@ func TestFishCompletionTokensFollowStrictCommandTree(t *testing.T) {
 		{
 			name: "Codex monitor help",
 			path: []string{"codex", "monitor", "help"},
-			want: []string{"doctor", "completion", "help", "tui"},
 		},
 		{
 			name: "Codex monitor TUI",
@@ -243,6 +242,39 @@ func TestFishCompletionTokensFollowStrictCommandTree(t *testing.T) {
 			got := fishCompletionTokens(test.path)
 			if strings.Join(got, "\x00") != strings.Join(test.want, "\x00") {
 				t.Fatalf("Fish tokens for %q: got=%q want=%q", strings.Join(test.path, " "), got, test.want)
+			}
+		})
+	}
+}
+
+func TestCompletionStopsAtCodexMonitorHelp(t *testing.T) {
+	tests := []struct {
+		name      string
+		output    string
+		forbidden string
+	}{
+		{
+			name:      "bash",
+			output:    renderBashCompletion(),
+			forbidden: `help)` + "\n" + `                COMPREPLY=( $(compgen -W "doctor completion tui help"`,
+		},
+		{
+			name:      "zsh",
+			output:    renderZshCompletion(),
+			forbidden: `help) compadd -- doctor completion tui help`,
+		},
+		{
+			name:      "fish",
+			output:    renderFishCompletion(),
+			forbidden: "__multisubs_path_is codex monitor help",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			if strings.Contains(test.output, test.forbidden) {
+				t.Fatalf("%s completion advertises arguments after codex monitor help:\n%s", test.name, test.output)
 			}
 		})
 	}

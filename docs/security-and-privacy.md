@@ -69,6 +69,7 @@ The old product namespace and state root are sensitive but unsupported.
 - Any `MULTICODEX_*` variable rejects top-level startup before state access.
 - Runtime never reads `MULTICODEX_HOME`.
 - Runtime never defaults to `~/multicodex`.
+- Monitor discovery prunes `~/multicodex`, `~/.multicodex`, and candidates canonically inside either root before reading usage signals.
 - There is no old executable alias or compatibility command.
 - `.multicodex`, `multicodex` state paths, and old environment names remain only in ignore, leak, denylist, and rejection tests so old credentials cannot be committed or inherited.
 
