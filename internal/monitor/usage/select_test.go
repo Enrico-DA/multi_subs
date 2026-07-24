@@ -1,9 +1,14 @@
 package usage
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSelectBestAccountOrdersByPriorityThenWeeklyReset(t *testing.T) {
@@ -105,6 +110,341 @@ func TestSelectBestAccountDoesNotUseUnavailablePriorityFallback(t *testing.T) {
 				t.Fatalf("expected unavailable candidates to fail, got %+v", selected)
 			}
 		})
+	}
+}
+
+func TestCollapseFetchedCandidatesFailsClosedWhenDuplicateSnapshotsDisagree(t *testing.T) {
+	first := selectionResult("egcom", 0, 70, 600)
+	first.account.AccountID = "shared-account"
+	first.account.AccountEmail = "person@example.com"
+	second := selectionResult("default", 0, 10, 60)
+	second.account.AccountEmail = "person@example.com"
+
+	collapsed := collapseFetchedCandidatesByIdentity([]accountFetchResult{first, second})
+	if len(collapsed) != 0 {
+		t.Fatalf("disagreeing duplicate added routing capacity: %+v", collapsed)
+	}
+}
+
+func TestCollapseFetchedCandidatesChoosesPhysicalHomeAfterConsistentSnapshot(t *testing.T) {
+	first := selectionResult("egcom", 0, 70, 600)
+	first.account.AccountID = "shared-account"
+	first.account.AccountEmail = "person@example.com"
+	second := selectionResult("default", 0, 70, 600)
+	second.account.AccountEmail = "person@example.com"
+
+	collapsed := collapseFetchedCandidatesByIdentity([]accountFetchResult{first, second})
+	if len(collapsed) != 1 || collapsed[0].account.Label != "egcom" {
+		t.Fatalf("expected the first stable physical home after consistency, got %+v", collapsed)
+	}
+}
+
+func TestCollapseFetchedCandidatesUsesExactAbsoluteResetDespiteCountdownDrift(t *testing.T) {
+	reset := time.Date(2026, time.July, 27, 9, 0, 0, 0, time.UTC)
+	first := selectionResult("first", 0, 70, 600)
+	first.account.AccountID = "shared-account"
+	first.account.WeeklyWindow.ResetsAt = &reset
+	second := selectionResult("second", 0, 70, 593)
+	second.account.AccountID = "shared-account"
+	second.account.WeeklyWindow.ResetsAt = &reset
+
+	collapsed := collapseFetchedCandidatesByIdentity([]accountFetchResult{first, second})
+	if len(collapsed) != 1 {
+		t.Fatalf("same absolute reset did not collapse: %+v", collapsed)
+	}
+}
+
+func TestCollapseFetchedCandidatesAcceptsOnlyBoundedRelativeResetDrift(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		drift       int64
+		wantMembers int
+	}{
+		{
+			name:        "small concurrent fetch drift",
+			drift:       relativeResetDriftToleranceSeconds,
+			wantMembers: 1,
+		},
+		{
+			name:        "material drift",
+			drift:       relativeResetDriftToleranceSeconds + 1,
+			wantMembers: 0,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first := selectionResult("first", 0, 70, 600)
+			first.account.AccountID = "shared-account"
+			second := selectionResult("second", 0, 70, 600-test.drift)
+			second.account.AccountID = "shared-account"
+
+			collapsed := collapseFetchedCandidatesByIdentity([]accountFetchResult{first, second})
+			if len(collapsed) != test.wantMembers {
+				t.Fatalf("relative reset drift %d collapsed to %d member(s), want %d: %+v",
+					test.drift, len(collapsed), test.wantMembers, collapsed)
+			}
+		})
+	}
+}
+
+func TestCollapseFetchedCandidatesRejectsRelativeResetSpreadInEveryOrder(t *testing.T) {
+	orders := [][]int64{
+		{596, 600, 592},
+		{600, 596, 592},
+		{592, 596, 600},
+	}
+	for _, order := range orders {
+		results := make([]accountFetchResult, 0, len(order))
+		for index, seconds := range order {
+			result := selectionResult(fmt.Sprintf("account-%d", index), 0, 70, seconds)
+			result.account.AccountID = "shared-account"
+			results = append(results, result)
+		}
+		if collapsed := collapseFetchedCandidatesByIdentity(results); len(collapsed) != 0 {
+			t.Fatalf("relative reset spread %v collapsed despite exceeding tolerance: %+v", order, collapsed)
+		}
+	}
+}
+
+func TestCollapseFetchedCandidatesRejectsDifferentAbsoluteAndKnownUnknownResets(t *testing.T) {
+	reset := time.Date(2026, time.July, 27, 9, 0, 0, 0, time.UTC)
+	laterReset := reset.Add(time.Second)
+	for _, test := range []struct {
+		name   string
+		first  WindowSummary
+		second WindowSummary
+	}{
+		{
+			name: "different absolute resets despite equal countdowns",
+			first: WindowSummary{
+				UsedPercent:       70,
+				ResetsAt:          &reset,
+				SecondsUntilReset: int64Ptr(600),
+			},
+			second: WindowSummary{
+				UsedPercent:       70,
+				ResetsAt:          &laterReset,
+				SecondsUntilReset: int64Ptr(600),
+			},
+		},
+		{
+			name:   "known and unknown reset",
+			first:  weeklyWindow(70, 600),
+			second: WindowSummary{UsedPercent: 70},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first := selectionResult("first", 0, 70, 600)
+			first.account.AccountID = "shared-account"
+			first.account.WeeklyWindow = test.first
+			second := selectionResult("second", 0, 70, 600)
+			second.account.AccountID = "shared-account"
+			second.account.WeeklyWindow = test.second
+
+			collapsed := collapseFetchedCandidatesByIdentity([]accountFetchResult{first, second})
+			if len(collapsed) != 0 {
+				t.Fatalf("different reset semantics added routing capacity: %+v", collapsed)
+			}
+		})
+	}
+}
+
+func TestCollapseFetchedCandidatesComparesEveryRequestedBucketSemantic(t *testing.T) {
+	unknownReset := WindowSummary{UsedPercent: 20}
+	for _, test := range []struct {
+		name   string
+		model  string
+		first  WindowSummary
+		second WindowSummary
+		spark  bool
+	}{
+		{
+			name:   "weekly availability",
+			first:  unavailableWindowSummary(),
+			second: weeklyWindow(20, 60),
+		},
+		{
+			name:   "exhaustion",
+			first:  weeklyWindow(100, 60),
+			second: weeklyWindow(99, 60),
+		},
+		{
+			name:   "used percent",
+			first:  weeklyWindow(20, 60),
+			second: weeklyWindow(21, 60),
+		},
+		{
+			name:   "reset semantics",
+			first:  weeklyWindow(20, 60),
+			second: unknownReset,
+		},
+		{
+			name:   "required Spark bucket",
+			model:  "spark",
+			first:  weeklyWindow(20, 60),
+			second: weeklyWindow(20, 60),
+			spark:  true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first := selectionResult("first", 0, 20, 60)
+			first.account.AccountID = "shared-account"
+			second := selectionResult("second", 0, 20, 60)
+			second.account.AccountID = "shared-account"
+			if test.spark {
+				first.account.RateLimitWindows = map[string]RateLimitWindow{
+					"spark": {LimitName: "Spark", WeeklyWindow: test.first},
+				}
+			} else {
+				first.account.WeeklyWindow = test.first
+				second.account.WeeklyWindow = test.second
+			}
+
+			collapsed := collapseFetchedCandidatesByIdentityForModel(
+				[]accountFetchResult{first, second},
+				test.model,
+			)
+			if len(collapsed) != 0 {
+				t.Fatalf("disagreement added routing capacity: %+v", collapsed)
+			}
+		})
+	}
+}
+
+func TestCollapseFetchedCandidatesExcludesMissingAndConflictedIdentityCapacity(t *testing.T) {
+	strongOne := selectionResult("strong-one", 0, 10, 60)
+	strongOne.account.AccountID = "account-one"
+	strongOne.account.AccountEmail = "shared@example.com"
+	strongTwo := selectionResult("strong-two", 0, 20, 120)
+	strongTwo.account.AccountID = "account-two"
+	strongTwo.account.AccountEmail = "shared@example.com"
+	ambiguous := selectionResult("ambiguous", 0, 30, 180)
+	ambiguous.account.AccountEmail = "shared@example.com"
+	missing := selectionResult("missing", 0, 40, 240)
+	missing.account.UserID = "user-only-must-not-route"
+
+	collapsed := collapseFetchedCandidatesByIdentity([]accountFetchResult{
+		strongOne,
+		strongTwo,
+		ambiguous,
+		missing,
+	})
+	if len(collapsed) != 2 {
+		t.Fatalf("collapsed count: got %d want 2", len(collapsed))
+	}
+	if collapsed[0].account.Label != "strong-one" || collapsed[1].account.Label != "strong-two" {
+		t.Fatalf("unexpected routing capacity: %+v", collapsed)
+	}
+}
+
+func TestCollapseFetchedCandidatesUsesLaterStableSuccessWhenFirstDuplicateFailed(t *testing.T) {
+	failed := accountFetchResult{
+		account: AccountSummary{
+			Label:        "alpha",
+			AccountEmail: "person@example.com",
+		},
+		fetchErr: errors.New("failed"),
+	}
+	success := selectionResult("beta", 0, 30, 180)
+	success.account.AccountEmail = "person@example.com"
+
+	collapsed := collapseFetchedCandidatesByIdentity([]accountFetchResult{failed, success})
+	if len(collapsed) != 1 || collapsed[0].account.Label != "beta" {
+		t.Fatalf("expected the stable successful duplicate, got %+v", collapsed)
+	}
+}
+
+func TestSelectAccountForModelUsesLogicalGroupForStandardAndSpark(t *testing.T) {
+	shared := routingSummary("shared-account", "person@example.com", weeklyWindow(40, 60), weeklyWindow(80, 300))
+	sharedDuplicate := routingSummary("", "person@example.com", weeklyWindow(40, 60), weeklyWindow(80, 300))
+	independent := routingSummary("other-account", "other@example.com", weeklyWindow(10, 120), weeklyWindow(20, 90))
+
+	for _, test := range []struct {
+		name        string
+		model       string
+		wantLabel   string
+		wantPercent int
+	}{
+		{name: "standard", wantLabel: "alpha", wantPercent: 40},
+		{name: "Spark", model: "gpt-5.3-codex-spark", wantLabel: "beta", wantPercent: 20},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fetcher := selectionFetcher(
+				selectionAccountFetcher("alpha", "/alpha", shared, nil),
+				selectionAccountFetcher("default", "/default", sharedDuplicate, nil),
+				selectionAccountFetcher("beta", "/beta", independent, nil),
+			)
+			defer fetcher.Close()
+
+			selected, err := fetcher.SelectAccountForModel(context.Background(), test.model)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if selected.Account.Label != test.wantLabel || selected.WeeklyUsedPercent != test.wantPercent {
+				t.Fatalf("selection: got %+v want label=%q used=%d", selected, test.wantLabel, test.wantPercent)
+			}
+		})
+	}
+}
+
+func TestSelectAccountForModelFailsDisagreeingLogicalGroupClosed(t *testing.T) {
+	first := routingSummary("shared-account", "person@example.com", weeklyWindow(10, 60), weeklyWindow(20, 60))
+	second := routingSummary("shared-account", "person@example.com", weeklyWindow(90, 60), weeklyWindow(20, 60))
+	fetcher := selectionFetcher(
+		selectionAccountFetcher("alpha", "/alpha", first, nil),
+		selectionAccountFetcher("default", "/default", second, nil),
+	)
+	defer fetcher.Close()
+
+	if selected, err := fetcher.SelectAccountForModel(context.Background(), ""); err == nil {
+		t.Fatalf("disagreeing logical group routed through %+v", selected)
+	}
+}
+
+func TestSelectAccountForModelUsesLaterSuccessfulDuplicateAfterOfficialEmailRecovery(t *testing.T) {
+	failedHome := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(failedHome, "auth.json"),
+		[]byte(`{"email":"person@example.com"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write synthetic auth identity: %v", err)
+	}
+	success := routingSummary("shared-account", "person@example.com", weeklyWindow(30, 180), weeklyWindow(40, 240))
+	fetcher := selectionFetcher(
+		selectionAccountFetcher("alpha", failedHome, nil, errors.New("synthetic usage failure")),
+		selectionAccountFetcher("beta", "/beta", success, nil),
+	)
+	defer fetcher.Close()
+
+	selected, err := fetcher.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Account.Label != "beta" || selected.WeeklyUsedPercent != 30 {
+		t.Fatalf("later successful duplicate selection: %+v", selected)
+	}
+}
+
+func TestSelectAccountForModelExcludesAmbiguousEmailAndUserIDOnlyCapacity(t *testing.T) {
+	strongOne := routingSummary("account-one", "shared@example.com", weeklyWindow(10, 60), weeklyWindow(20, 60))
+	strongTwo := routingSummary("account-two", "shared@example.com", weeklyWindow(20, 120), weeklyWindow(30, 120))
+	ambiguous := routingSummary("", "shared@example.com", weeklyWindow(1, 1), weeklyWindow(1, 1))
+	userOnly := routingSummary("", "", weeklyWindow(1, 1), weeklyWindow(1, 1))
+	userOnly.UserID = "user-only-must-not-route"
+	fetcher := selectionFetcher(
+		selectionAccountFetcher("strong-one", "/strong-one", strongOne, nil),
+		selectionAccountFetcher("strong-two", "/strong-two", strongTwo, nil),
+		selectionAccountFetcher("ambiguous", "/ambiguous", ambiguous, nil),
+		selectionAccountFetcher("user-only", "/user-only", userOnly, nil),
+	)
+	defer fetcher.Close()
+
+	selected, err := fetcher.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Account.Label != "strong-one" {
+		t.Fatalf("unverified identity added routing capacity: %+v", selected)
 	}
 }
 
@@ -228,4 +568,38 @@ func selectionResult(label string, priority, used int, resetSeconds int64) accou
 
 func weeklyWindow(used int, resetSeconds int64) WindowSummary {
 	return WindowSummary{UsedPercent: used, SecondsUntilReset: &resetSeconds}
+}
+
+func routingSummary(accountID, email string, standard, spark WindowSummary) *Summary {
+	return &Summary{
+		AccountID:    accountID,
+		AccountEmail: email,
+		WeeklyWindow: standard,
+		RateLimitWindows: map[string]RateLimitWindow{
+			"codex": {
+				LimitID:      "codex",
+				WeeklyWindow: standard,
+			},
+			"codex_bengalfox": {
+				LimitID:      "codex_bengalfox",
+				LimitName:    "Spark",
+				WeeklyWindow: spark,
+			},
+		},
+	}
+}
+
+func selectionAccountFetcher(label, home string, summary *Summary, fetchErr error) accountFetcher {
+	return accountFetcher{
+		account: MonitorAccount{Label: label, CodexHome: home},
+		primary: &fakeSource{
+			name: "synthetic-" + label,
+			out:  summary,
+			err:  fetchErr,
+		},
+	}
+}
+
+func selectionFetcher(accounts ...accountFetcher) *Fetcher {
+	return &Fetcher{accounts: accounts}
 }

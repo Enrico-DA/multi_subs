@@ -44,16 +44,20 @@ After valid argument parsing, all three sections are emitted even when the Codex
 
 Prints one read-only quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter.
 
-The account set is exact:
+The physical target set is exact:
 
 1. every managed Codex profile in name order, then the normal default Codex account;
 2. every managed Claude profile in name order, then the normal default Claude account.
 
-Monitor-only account-file entries, active-home overrides, and filesystem-discovered accounts are excluded. No usage command creates or changes product or provider state.
+Monitor-only account-file entries, active-home overrides, and filesystem-discovered accounts are excluded. No usage command creates or changes product or provider state or persists identity in config.
 
-Each account is printed separately. Percentages mean used quota and are never combined or averaged. Structured Codex resets render a countdown and exact local time. Missing resets are `reset unknown`; expired resets are `reset due`. Claude reset text is printed only when it matches a supported countdown, weekday, month-and-day, or time-only grammar, with an optional safe IANA timezone. All other provider reset text becomes `reset unknown`; no timestamp or timezone is invented.
+The physical targets are reconciled into logical subscriptions before output. A duplicate group has one row, one availability count, sorted managed aliases, and one deterministic successful quota snapshot; quota is never averaged. A failed Codex probe may still join a successful duplicate when its protected local auth file supplies the same strictly validated official email. The failed member keeps the logical row partial. A group that contains the default account ends with `(also default)` and stays in the provider's final position.
 
-A missing optional window is `not reported`. A failed account is `unavailable` with a fixed safe reason. A safe Codex session can remain visible with a `partial` reason when required weekly data is unavailable. Source cleanup failure uses a fixed safe reason and fails that account. Every success is still printed. Exit code 0 means every account probe succeeded, exit code 1 means at least one account or provider failed, and exit code 2 means invocation misuse. No arguments or flags are accepted. `--json` is not available in this release.
+This local-only report prints a full, strictly validated, normalized account email beside every identified row. Codex uses non-empty account ID as its strongest internal key and validated email as fallback. User ID alone is never an identity. Different non-empty account IDs remain separate even when their emails match. An email-only record joins one strong record with the same email, but cannot join when that email matches several strong IDs. Claude uses the official organization ID as its strongest internal key; email is display-only, and different organizations never merge by email. Account, user, and organization IDs are never printed.
+
+Percentages mean used quota. Structured Codex resets render a countdown and exact local time. Missing resets are `reset unknown`; expired resets are `reset due`. Codex prints only fixed product-owned extra-limit labels, currently `Spark weekly`; unknown provider limit names are suppressed. Claude reset text is printed only when it matches a supported countdown, weekday, month-and-day, or time-only grammar, with an optional safe IANA timezone. All other provider reset text becomes `reset unknown`; no timestamp or timezone is invented.
+
+A missing optional window is `not reported`. A failed account is `unavailable` with a fixed safe reason. If identity is missing, malformed, or conflicted while quota succeeds, the quota row is retained as a separate row, its identity is `identity unavailable`, and it contributes one unavailable count because no safe logical collapse is proven. A safe Codex session can remain visible with a `partial` reason when required weekly data is unavailable. Source cleanup failure uses a fixed safe reason and fails that account. Every success is still printed. Exit code 0 means every logical account probe and identity check succeeded, exit code 1 means at least one account, identity, or provider failed, and exit code 2 means invocation misuse. No arguments or flags are accepted. `--json` is not available in this release.
 
 ### `multisubs completion <bash|zsh|fish>`
 
@@ -110,6 +114,7 @@ Exact `multisubs codex cli <name> --help` and `multisubs codex cli <name> -h` re
 Runs official `codex exec` after weekly-only account selection.
 
 - The default account and managed profiles have equal selection priority.
+- Fetched physical targets are reconciled by official Codex account identity before selection. Successful duplicates must agree on requested-bucket presence, weekly availability, exhaustion, used percentage, and reset meaning. When both snapshots carry an absolute reset timestamp, those timestamps must match exactly even if their countdowns differ. Only when both snapshots lack an absolute timestamp may relative countdowns differ, and then by at most five seconds to cover concurrent-fetch drift. Known and unknown resets, mixed absolute and relative-only resets, and larger drift disagree. Disagreement excludes the whole logical group. A deterministic physical home is chosen only after agreement. One failed duplicate can fall back to a consistent success only when protected official email identity safely joins them. Missing or conflicting fallback identity contributes no separate capacity.
 - Accounts with unavailable or exhausted weekly usage are skipped.
 - Known weekly resets are tried soonest first.
 - A requested Spark model requires that account's Spark weekly bucket.
@@ -129,9 +134,9 @@ Shows safe, profile-local authentication state. It is read-only and accepts no e
 
 Prints the Codex-only view of the shared usage report. It shows `Session (5h)` for a declared 300-minute window. If there is no declared five-hour window, one unambiguous declared non-weekly window is labeled with its actual duration. Missing durations are not guessed by position, and several ambiguous non-weekly durations leave session usage unreported.
 
-The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Reported model-specific weekly limits are sorted by stable labels such as `Spark weekly`. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses the unmanaged source. The command does not use the TUI or observed-token estimates.
+The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Only fixed product-owned extra-limit labels are reported; the current known label is `Spark weekly`. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses the unmanaged source. Duplicate logical subscriptions use one deterministic successful snapshot. The command does not use the TUI or observed-token estimates.
 
-This report does not change routing: Codex account and model selection remains weekly-only. No arguments are accepted.
+Codex account and model scoring remains weekly-only. Identity reconciliation happens before that existing scoring. No arguments are accepted.
 
 ### `multisubs codex reconcile`
 
@@ -228,7 +233,7 @@ Uses official `claude auth status --json` for the default account and each manag
 
 ### `multisubs claude usage`
 
-Prints the Claude-only view of the shared usage report. One bounded collector runs the free official non-persistent `/usage` probe for managed profiles in name order and the normal default account last.
+Prints the Claude-only view of the shared usage report. For each managed profile and the normal default account, one bounded context covers official `claude auth status --json`, the free non-persistent `/usage` probe, and a second official auth status. Usage identity requires logged-in status, a non-empty organization ID, and a strictly normalized email; it does not apply Max, provider, or auth-method routing restrictions. Grouping is allowed only when organization ID and normalized email are unchanged across both status results. Identity change or failure keeps valid quota as an ungrouped `identity unavailable` partial row. Targets with the same stable organization collapse into one logical row; different non-empty organization IDs never merge by email.
 
 The labels are `Session (~5h)`, `Weekly all models`, and `Fable weekly`. Only an explicit bounded parenthesized duration in the session heading, such as `(5h)`, replaces `~5h`; reset countdown text never supplies the duration. Session and weekly all-model data are required provider sections. Missing optional Fable data is `not reported`, not an account failure. Reset text is printed only for supported `Resets in N ...`, weekday, month-and-day, or `Resets at ...` forms, with an optional safe IANA timezone. Parser, authentication, path, timeout, and binary failures affect only the relevant account and use fixed safe reasons. It accepts no extra arguments.
 

@@ -49,9 +49,15 @@ func accountEmailFromAuthFile(path string) (string, error) {
 	return strings.TrimSpace(claims.Email), nil
 }
 
-func accountEmailFromAuthFileForHome(codexHome string) (string, error) {
+// AccountEmailFromAuthFileForHome returns only a strictly normalized email
+// recovered through the same protected auth-file path used by routing.
+func AccountEmailFromAuthFileForHome(codexHome string) (string, error) {
 	if home := normalizeHome(codexHome); home != "" {
-		return accountEmailFromAuthFile(filepath.Join(home, "auth.json"))
+		email, err := accountEmailFromAuthFile(filepath.Join(home, "auth.json"))
+		if err != nil {
+			return "", err
+		}
+		return NormalizeAccountEmail(email), nil
 	}
 	return "", nil
 }
