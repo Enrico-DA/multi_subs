@@ -53,11 +53,20 @@ multisubs claude usage
 multisubs claude exec "Review this change."
 ```
 
+Show one quota snapshot across both providers, or filter the same report by provider:
+
+```bash
+multisubs usage
+multisubs codex usage
+multisubs claude usage
+```
+
 ## Command tree
 
 ```text
 multisubs init
 multisubs doctor
+multisubs usage
 multisubs completion <shell>
 multisubs version
 multisubs help [topic]
@@ -69,6 +78,7 @@ multisubs codex login-all
 multisubs codex cli <name> [...]
 multisubs codex exec [...]
 multisubs codex status
+multisubs codex usage
 multisubs codex reconcile
 multisubs codex heartbeat
 multisubs codex monitor [...]
@@ -85,6 +95,12 @@ multisubs claude doctor
 ```
 
 `multisubs init` and `multisubs codex init` call the same shared initialization path. `multisubs doctor` is the aggregate read-only check. It prints shared/base, Codex, and Claude sections. The two provider doctors stay focused on their own provider.
+
+The three usage commands share one report format. The combined command prints Codex first, then Claude. Within each provider it prints managed profiles in name order and the normal default account last. Codex rows are `Session`, `Weekly`, and stable model-specific weekly limits such as `Spark weekly`. Claude rows are `Session (~5h)`, `Weekly all models`, and `Fable weekly`; a concrete provider session duration replaces the approximate label, and an absent optional Fable window is `not reported`. Percentages always mean used quota, and accounts are never averaged together.
+
+Usage snapshots are read-only. They do not create product or provider state, include monitor-only account files, inspect active-home overrides, discover filesystem accounts, or estimate observed tokens. A partial account failure still prints every successful account and exits with code 1; invalid arguments, including `--json`, exit with code 2. JSON output is not available in this release.
+
+Use `multisubs usage` for a quick point-in-time view. Use `multisubs codex monitor` for the live Codex terminal interface. The snapshot adds Codex session display but does not change the monitor or weekly-only Codex routing.
 
 The Codex monitor also accepts the nested topics `tui`, `doctor`, `completion`, and `help`. The argument-free `multisubs codex monitor help` path is a leaf, so completion does not offer anything after it. Use `multisubs help codex monitor doctor` for details.
 
@@ -137,6 +153,7 @@ Codex:
 - Exact target-scoped login help runs `codex login --help|-h` with the same state-free neutral boundary and without post-login checks.
 - Managed execution enforces file-backed Codex auth.
 - Automatic `exec` routing applies the same weekly, model, and reset policy to the default account and managed profiles.
+- The usage snapshot preserves a declared five-hour session window, or one other unambiguous declared non-weekly duration, alongside weekly and model-specific weekly limits. It never guesses a session window from response position.
 - `exec` resolves the effective model from `--model`/`-m`, exact root `model` config overrides, or one common root model across every candidate config. Conflicting candidate models fail with code 2. A Codex `--profile`/`-p` selector requires an explicit model.
 - The default account is skipped when its usage is unavailable, exhausted, or missing a required model bucket. Its execution remains unmanaged and receives no managed auth override.
 - `heartbeat` uses an ephemeral, read-only Codex request and a private lock under `MULTISUBS_HOME`.
@@ -146,6 +163,7 @@ Claude:
 
 - Each managed profile receives a derived `CLAUDE_CONFIG_DIR`.
 - Login, status, usage, and routing use the official Claude CLI.
+- Claude usage collection is shared by the combined and provider-only snapshots and uses the official non-persistent `/usage` probe.
 - Exact target-scoped login help runs `claude auth login --claudeai --help|-h` without profile state, `CLAUDE_CONFIG_DIR`, probes, or post-login checks.
 - `exec` parses the original model, fallback, settings-source, explicit-settings, and session-restoration intent once without changing the arguments passed to Claude. It then resolves effective settings separately for each candidate. The default account uses `~/.claude/settings.json`; a managed account uses its profile-local `settings.json`.
 - Candidate settings also include selected project and local files, explicit inline or path-based `--settings`, and local macOS managed settings. Managed and server-side values that cannot be proved from local files remain unknown.
@@ -164,7 +182,7 @@ multisubs codex dry-run
 multisubs codex dry-run login personal
 ```
 
-All doctor commands and dry-run startup are non-mutating. Aggregate doctor output always includes shared/base, Codex, and Claude sections after successful argument parsing, even when the Codex profile registry is invalid. Help, version, completion, invalid commands, and dynamic profile completion also avoid state creation.
+All doctor commands, usage reports, and dry-run startup are non-mutating. Aggregate doctor output always includes shared/base, Codex, and Claude sections after successful argument parsing, even when the Codex profile registry is invalid. Help, version, completion, invalid commands, and dynamic profile completion also avoid state creation.
 
 ## Completion
 

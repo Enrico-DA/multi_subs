@@ -40,6 +40,21 @@ Runs an aggregate read-only report with these sections:
 The JSON result has `base`, `codex`, and `claude` objects. Each contains a `checks` array.
 After valid argument parsing, all three sections are emitted even when the Codex profile registry is malformed, uses an unsupported version, or contains invalid stored names. That registry error becomes a failed shared/base check, and safe Codex and independent Claude checks continue against an empty Codex profile set.
 
+### `multisubs usage`
+
+Prints one read-only quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter.
+
+The account set is exact:
+
+1. every managed Codex profile in name order, then the normal default Codex account;
+2. every managed Claude profile in name order, then the normal default Claude account.
+
+Monitor-only account-file entries, active-home overrides, and filesystem-discovered accounts are excluded. No usage command creates or changes product or provider state.
+
+Each account is printed separately. Percentages mean used quota and are never combined or averaged. Structured Codex resets render a countdown and exact local time. Missing resets are `reset unknown`; expired resets are `reset due`. Claude reset text remains provider text after control and identity-like content is removed; no timestamp or timezone is invented.
+
+A missing optional window is `not reported`. A failed account is `unavailable` with a fixed safe reason. Every success is still printed. Exit code 0 means every account probe succeeded, exit code 1 means at least one account or provider failed, and exit code 2 means invocation misuse. No arguments or flags are accepted. `--json` is not available in this release.
+
 ### `multisubs completion <bash|zsh|fish>`
 
 Prints completion for both provider namespaces, all nested help and monitor topics, and dynamic Codex and Claude profile names. It is read-only and does not create config.
@@ -110,6 +125,14 @@ Runs official `codex exec` after weekly-only account selection.
 
 Shows safe, profile-local authentication state. It is read-only and accepts no extra arguments.
 
+### `multisubs codex usage`
+
+Prints the Codex-only view of the shared usage report. It shows `Session (5h)` for a declared 300-minute window. If there is no declared five-hour window, one unambiguous declared non-weekly window is labeled with its actual duration. Missing durations are not guessed by position, and several ambiguous non-weekly durations leave session usage unreported.
+
+The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. Reported model-specific weekly limits are sorted by stable labels such as `Spark weekly`. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses the unmanaged source. The command does not use the TUI or observed-token estimates.
+
+This report does not change routing: Codex account and model selection remains weekly-only. No arguments are accepted.
+
 ### `multisubs codex reconcile`
 
 Applies the current guidance and skill resource policy to every Codex profile. It does not inspect auth or launch Codex. It accepts no extra arguments.
@@ -140,7 +163,7 @@ Nested topics:
 
 `multisubs codex monitor help` accepts no arguments and is a completion leaf.
 
-The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. Default and active homes follow their explicit inclusion rules.
+The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. Default and active homes follow their explicit inclusion rules. It remains the live Codex view; `multisubs usage` is the separate quick snapshot.
 
 `MULTISUBS_MONITOR_ACCOUNTS_FILE` may point to an explicit monitor account file.
 
@@ -205,7 +228,9 @@ Uses official `claude auth status --json` for the default account and each manag
 
 ### `multisubs claude usage`
 
-Uses the free official `/usage` command and reports session, weekly all-model, and Fable windows. It accepts no extra arguments.
+Prints the Claude-only view of the shared usage report. One bounded collector runs the free official non-persistent `/usage` probe for managed profiles in name order and the normal default account last.
+
+The labels are `Session (~5h)`, `Weekly all models`, and `Fable weekly`. If the provider supplies a concrete session duration, that duration replaces `~5h`. Session and weekly all-model data are required provider sections. Missing optional Fable data is `not reported`, not an account failure. Parser, authentication, path, timeout, and binary failures affect only the relevant account and use fixed safe reasons. It accepts no extra arguments.
 
 ### `multisubs claude doctor`
 

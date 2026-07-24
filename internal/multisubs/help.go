@@ -18,6 +18,7 @@ var commandSummaries = []struct {
 }{
 	{Name: "init", Summary: "initialize shared multisubs state"},
 	{Name: "doctor [flags]", Summary: "run aggregate shared, Codex, and Claude checks"},
+	{Name: "usage", Summary: "show one quota snapshot for every routed account"},
 	{Name: "codex <command>", Summary: "manage and route isolated Codex accounts"},
 	{Name: "claude <command>", Summary: "manage and route isolated Claude accounts"},
 	{Name: "completion <shell>", Summary: "print shell completion for bash, zsh, or fish"},
@@ -36,6 +37,7 @@ var codexCommandSummaries = []struct {
 	{Name: "cli <name> [args...]", Summary: "run the interactive Codex CLI with one profile"},
 	{Name: "exec [args...]", Summary: "run codex exec on the best available account"},
 	{Name: "status", Summary: "show Codex profile authentication states"},
+	{Name: "usage", Summary: "show Codex quota for every routed account"},
 	{Name: "reconcile", Summary: "reconcile resources for all Codex profiles"},
 	{Name: "heartbeat", Summary: "send a small keepalive for logged-in Codex profiles"},
 	{Name: "monitor [args...]", Summary: "show live Codex subscription usage"},
@@ -52,6 +54,10 @@ var commandHelpByName = map[string]commandHelp{
 	"doctor": {
 		Usage:       "multisubs doctor [--json] [--timeout 8s]",
 		Description: "Run one read-only product check with shared/base, Codex, and Claude sections.",
+	},
+	"usage": {
+		Usage:       "multisubs usage",
+		Description: "Show a read-only Codex and Claude quota snapshot for managed profiles and both default accounts. Partial account failures exit 1. JSON output is not available yet.",
 	},
 	"completion": {
 		Usage:       "multisubs completion <bash|zsh|fish>",
@@ -106,6 +112,10 @@ var commandHelpByName = map[string]commandHelp{
 	"codex status": {
 		Usage:       "multisubs codex status",
 		Description: "Show profile-local Codex login status and safe account hints.",
+	},
+	"codex usage": {
+		Usage:       "multisubs codex usage",
+		Description: "Show session, weekly, and reported model-specific Codex quota for managed profiles and the default account. This snapshot does not change weekly-only routing.",
 	},
 	"codex reconcile": {
 		Usage:       "multisubs codex reconcile",
@@ -173,7 +183,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"claude usage": {
 		Usage:       "multisubs claude usage",
-		Description: "Show fresh session, weekly all-model, and Fable usage for each Claude target.",
+		Description: "Show fresh session, weekly all-model, and optional Fable quota for every managed profile and the default account through the shared usage report.",
 	},
 	"claude doctor": {
 		Usage:       "multisubs claude doctor",
@@ -199,6 +209,7 @@ func printHelp() {
 	fmt.Println("Examples:")
 	fmt.Println("  multisubs init")
 	fmt.Println("  multisubs codex status")
+	fmt.Println("  multisubs usage")
 	fmt.Println("  multisubs codex exec -s read-only \"Summarize this repository.\"")
 	fmt.Println("  multisubs claude status")
 	fmt.Println("  multisubs doctor")
@@ -206,6 +217,7 @@ func printHelp() {
 	fmt.Println("Notes:")
 	fmt.Println("  - Codex commands live under `multisubs codex`.")
 	fmt.Println("  - Claude commands live under `multisubs claude`.")
+	fmt.Println("  - Usage snapshots are read-only; JSON output is not available yet.")
 }
 
 func printCodexHelp() {
@@ -236,7 +248,7 @@ func printClaudeHelp() {
 		{"cli <name|default> [args...]", "run the official interactive Claude CLI"},
 		{"exec [args...]", "route official Claude print mode by fresh usage"},
 		{"status", "show auth status for default and managed profiles"},
-		{"usage", "show session, weekly, and Fable usage"},
+		{"usage", "show session, weekly, and Fable quota"},
 		{"doctor", "run focused, read-only Claude checks"},
 		{"help [command]", "show Claude namespace help"},
 	} {

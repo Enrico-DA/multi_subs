@@ -176,6 +176,7 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 		out.UserID = activeSuccess.UserID
 		out.RateLimitWindows = cloneRateLimitWindows(activeSuccess.RateLimitWindows)
 		out.WindowDataAvailable = summaryHasWeeklyData(activeSuccess)
+		out.SessionWindow = cloneWindowSummary(activeSuccess.SessionWindow)
 		out.WeeklyWindow = activeSuccess.WeeklyWindow
 		out.AdditionalLimitCount = activeSuccess.AdditionalLimitCount
 		out.FetchedAt = activeSuccess.FetchedAt
@@ -628,6 +629,7 @@ func (f *Fetcher) fetchAccountResult(ctx context.Context, account accountFetcher
 		result.account.AccountEmail = snapshot.AccountEmail
 		result.account.AccountID = snapshot.AccountID
 		result.account.UserID = snapshot.UserID
+		result.account.SessionWindow = cloneWindowSummary(snapshot.SessionWindow)
 		result.account.WeeklyWindow = snapshot.WeeklyWindow
 		result.account.RateLimitWindows = cloneRateLimitWindows(snapshot.RateLimitWindows)
 		result.account.AdditionalLimitCount = snapshot.AdditionalLimitCount

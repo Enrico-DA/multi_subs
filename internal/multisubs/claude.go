@@ -12,10 +12,11 @@ import (
 var claudeProbeTimeout = 15 * time.Second
 
 type claudeTarget struct {
-	Name      string
-	Kind      string
-	ConfigDir string
-	Profile   *claudeProfile
+	Name        string
+	DisplayName string
+	Kind        string
+	ConfigDir   string
+	Profile     *claudeProfile
 }
 
 func runClaudeCLI(args []string) error {
@@ -78,7 +79,7 @@ func (a *App) cmdClaude(args []string) error {
 		}
 		return printClaudeCommandHelp(args[1])
 	}
-	if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+	if args[0] != "usage" && len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
 		return printClaudeCommandHelp(args[0])
 	}
 
@@ -304,40 +305,7 @@ func (a *App) cmdClaudeStatus(args []string) error {
 }
 
 func (a *App) cmdClaudeUsage(args []string) error {
-	if len(args) != 0 {
-		return &ExitError{Code: 2, Message: "usage: multisubs claude usage"}
-	}
-	store := newClaudeStore(a.store.paths)
-	cfg, err := store.LoadIfExists()
-	if err != nil {
-		return err
-	}
-	fmt.Println("multisubs claude usage")
-	for _, target := range claudeTargets(cfg) {
-		fmt.Println()
-		fmt.Printf("%s (%s)\n", target.Name, target.Kind)
-		if target.Profile != nil {
-			if err := store.EnsureProfileReady(*target.Profile); err != nil {
-				fmt.Printf("  unavailable: %s\n", err)
-				continue
-			}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
-		usage, usageErr := fetchClaudeUsage(ctx, a.claudeCommandRunner(), target.ConfigDir)
-		cancel()
-		if usageErr != nil {
-			fmt.Printf("  unavailable: %s\n", usageErr)
-			continue
-		}
-		printClaudeUsageWindow("session", usage.Session)
-		printClaudeUsageWindow("weekly all models", usage.WeeklyAll)
-		if usage.Fable == nil {
-			fmt.Println("  Fable: unavailable")
-		} else {
-			printClaudeUsageWindow("Fable", *usage.Fable)
-		}
-	}
-	return nil
+	return a.cmdUsage(args, usageProviderClaude)
 }
 
 func (a *App) cmdClaudeDoctor(args []string) error {
@@ -455,14 +423,6 @@ func compactClaudeAuthDescription(status claudeAuthStatus) string {
 		return "-"
 	}
 	return strings.Join(parts, ", ")
-}
-
-func printClaudeUsageWindow(label string, window claudeUsageWindow) {
-	if strings.TrimSpace(window.ResetText) == "" {
-		fmt.Printf("  %s: %s used\n", label, formatClaudePercent(window.UsedPercent))
-		return
-	}
-	fmt.Printf("  %s: %s used; %s\n", label, formatClaudePercent(window.UsedPercent), window.ResetText)
 }
 
 func valueOrDash(value string) string {

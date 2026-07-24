@@ -74,6 +74,19 @@ func TestParseClaudeUsageEnvelopeRejectsMalformedAndErrorShapes(t *testing.T) {
 	}
 }
 
+func TestParseClaudeUsageEnvelopeClassifiesLoggedOutWithoutReturningProviderText(t *testing.T) {
+	_, err := parseClaudeUsageEnvelope([]byte(`{
+		"is_error": true,
+		"result": "Please log in to Claude. synthetic-provider-secret"
+	}`))
+	if err == nil || err.Error() != "Claude account is not logged in" {
+		t.Fatalf("logged-out usage error: %v", err)
+	}
+	if strings.Contains(err.Error(), "synthetic-provider-secret") {
+		t.Fatalf("logged-out category exposed provider text: %v", err)
+	}
+}
+
 func TestParseClaudeUsageResultRejectsMissingOrInvalidRequiredWindows(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -127,6 +140,26 @@ func TestParseClaudeUsageAllowsFableWithoutResetText(t *testing.T) {
 	}
 	if usage.Fable == nil || usage.Fable.UsedPercent != 0 || usage.Fable.ResetText != "" {
 		t.Fatalf("unexpected Fable usage: %+v", usage.Fable)
+	}
+}
+
+func TestParseClaudeUsagePreservesConcreteSessionDuration(t *testing.T) {
+	usage, err := parseClaudeUsageResult(
+		"Current session (5 hours)\n" +
+			"10% used\n" +
+			"Resets later\n" +
+			"Current week (all models)\n" +
+			"20% used\n" +
+			"Resets Sunday",
+	)
+	if err != nil {
+		t.Fatalf("parse concrete session duration: %v", err)
+	}
+	if usage.Session.DurationMins == nil || *usage.Session.DurationMins != 300 {
+		t.Fatalf("session duration: %+v", usage.Session.DurationMins)
+	}
+	if got := claudeSessionLabel(usage.Session); got != "Session (5h)" {
+		t.Fatalf("session label: %q", got)
 	}
 }
 

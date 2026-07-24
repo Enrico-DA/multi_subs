@@ -787,9 +787,14 @@ func TestFetcherClonesRateLimitWindowsForActiveAndAccountRows(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "/a")
 
+	sessionMinutes := 300
 	baseWindows := map[string]RateLimitWindow{
 		"codex": {
 			LimitID: "codex",
+			SessionWindow: WindowSummary{
+				UsedPercent:        10,
+				WindowDurationMins: &sessionMinutes,
+			},
 			WeeklyWindow: WindowSummary{
 				UsedPercent: 20,
 			},
@@ -804,10 +809,14 @@ func TestFetcherClonesRateLimitWindowsForActiveAndAccountRows(t *testing.T) {
 	}
 
 	outSummary := &Summary{
-		Source:               "app-server",
-		PlanType:             "pro",
-		AccountEmail:         "a@example.com",
-		WindowDataAvailable:  true,
+		Source:              "app-server",
+		PlanType:            "pro",
+		AccountEmail:        "a@example.com",
+		WindowDataAvailable: true,
+		SessionWindow: WindowSummary{
+			UsedPercent:        10,
+			WindowDurationMins: &sessionMinutes,
+		},
 		WeeklyWindow:         WindowSummary{UsedPercent: 20},
 		AdditionalLimitCount: 1,
 		RateLimitWindows:     baseWindows,
@@ -845,6 +854,9 @@ func TestFetcherClonesRateLimitWindowsForActiveAndAccountRows(t *testing.T) {
 	if out.RateLimitWindows["codex_bengalfox"].WeeklyWindow.UsedPercent != 30 {
 		t.Fatalf("expected top-level codex_bengalfox usage preserved")
 	}
+	if out.SessionWindow.UsedPercent != 10 || out.Accounts[0].SessionWindow.UsedPercent != 10 {
+		t.Fatalf("expected session window copied to top-level and account summaries")
+	}
 	if out.Accounts[0].RateLimitWindows["codex_bengalfox"].WeeklyWindow.UsedPercent != 30 {
 		t.Fatalf("expected account row codex_bengalfox usage preserved")
 	}
@@ -855,6 +867,10 @@ func TestFetcherClonesRateLimitWindowsForActiveAndAccountRows(t *testing.T) {
 	mutated := baseWindows["codex_bengalfox"]
 	mutated.WeeklyWindow.UsedPercent = 99
 	baseWindows["codex_bengalfox"] = mutated
+	mutatedDefault := outSummary.RateLimitWindows["codex"]
+	mutatedDefault.SessionWindow.UsedPercent = 77
+	*mutatedDefault.SessionWindow.WindowDurationMins = 120
+	outSummary.RateLimitWindows["codex"] = mutatedDefault
 	mutatedSecondary := outSummary.RateLimitWindows["codex_bengalfox"]
 	mutatedSecondary.WeeklyWindow.UsedPercent = 88
 	outSummary.RateLimitWindows["codex_bengalfox"] = mutatedSecondary
@@ -864,6 +880,13 @@ func TestFetcherClonesRateLimitWindowsForActiveAndAccountRows(t *testing.T) {
 	}
 	if out.Accounts[0].RateLimitWindows["codex_bengalfox"].WeeklyWindow.UsedPercent != 30 {
 		t.Fatalf("expected account row snapshot clone to be isolated from source mutation")
+	}
+	if out.RateLimitWindows["codex"].SessionWindow.UsedPercent != 10 ||
+		out.Accounts[0].RateLimitWindows["codex"].SessionWindow.UsedPercent != 10 {
+		t.Fatalf("expected session window clones to be isolated from source mutation")
+	}
+	if got := *out.RateLimitWindows["codex"].SessionWindow.WindowDurationMins; got != 300 {
+		t.Fatalf("expected session duration clone to stay 300 minutes, got %d", got)
 	}
 }
 

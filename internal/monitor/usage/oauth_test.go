@@ -57,12 +57,20 @@ func TestOAuthSourceFetchLeavesNonWeeklyPrimaryOnlyWindowUnknown(t *testing.T) {
 	if summary.WeeklyWindow.UsedPercent != unavailableUsedPercent {
 		t.Fatalf("expected missing weekly window to be unavailable, got %d", summary.WeeklyWindow.UsedPercent)
 	}
+	if summary.SessionWindow.UsedPercent != 12 ||
+		summary.SessionWindow.WindowDurationMins == nil ||
+		*summary.SessionWindow.WindowDurationMins != 300 {
+		t.Fatalf("expected OAuth five-hour session window, got %+v", summary.SessionWindow)
+	}
 	codexWindow, ok := summary.RateLimitWindows["codex"]
 	if !ok {
 		t.Fatalf("expected codex rate limit window")
 	}
 	if codexWindow.WeeklyWindow.UsedPercent != unavailableUsedPercent {
 		t.Fatalf("expected codex weekly window to be unavailable, got %d", codexWindow.WeeklyWindow.UsedPercent)
+	}
+	if codexWindow.SessionWindow.UsedPercent != 12 {
+		t.Fatalf("expected per-limit OAuth session window, got %+v", codexWindow.SessionWindow)
 	}
 }
 

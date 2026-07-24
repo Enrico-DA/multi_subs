@@ -196,6 +196,19 @@ func TestColorAndNoColorModesHaveSameText(t *testing.T) {
 
 func TestFetchResultKeepsLastGoodWeeklyCardsAsStale(t *testing.T) {
 	m := fixtureModel(90, 22, true)
+	sessionDuration := 300
+	sessionReset := m.now.Add(90 * time.Minute)
+	sessionResetSeconds := int64((90 * time.Minute) / time.Second)
+	session := usage.WindowSummary{
+		UsedPercent:        81,
+		WindowDurationMins: &sessionDuration,
+		ResetsAt:           &sessionReset,
+		SecondsUntilReset:  &sessionResetSeconds,
+	}
+	m.summary.SessionWindow = session
+	defaultBucket := m.summary.RateLimitWindows["codex"]
+	defaultBucket.SessionWindow = session
+	m.summary.RateLimitWindows["codex"] = defaultBucket
 	m.lastGoodWindowData = cloneSummary(m.summary)
 	current := &usage.Summary{
 		WindowDataAvailable: false, TotalAccounts: 1, SuccessfulAccounts: 0,
@@ -206,9 +219,27 @@ func TestFetchResultKeepsLastGoodWeeklyCardsAsStale(t *testing.T) {
 	if !got.showingStaleWindows || got.summary.WeeklyWindow.UsedPercent != 35 {
 		t.Fatalf("expected last good weekly snapshot, got %+v", got.summary)
 	}
+	if got.summary.SessionWindow.UsedPercent != 81 {
+		t.Fatalf("expected last good session snapshot, got %+v", got.summary.SessionWindow)
+	}
+	if got.summary.SessionWindow.WindowDurationMins == m.lastGoodWindowData.SessionWindow.WindowDurationMins ||
+		got.summary.SessionWindow.ResetsAt == m.lastGoodWindowData.SessionWindow.ResetsAt ||
+		got.summary.WeeklyWindow.ResetsAt == m.lastGoodWindowData.WeeklyWindow.ResetsAt {
+		t.Fatal("expected stale top-level session and weekly windows to be deep-cloned")
+	}
+	gotDefaultBucket := got.summary.RateLimitWindows["codex"]
+	cachedDefaultBucket := m.lastGoodWindowData.RateLimitWindows["codex"]
+	if gotDefaultBucket.SessionWindow.UsedPercent != 81 ||
+		gotDefaultBucket.SessionWindow.WindowDurationMins == cachedDefaultBucket.SessionWindow.WindowDurationMins ||
+		gotDefaultBucket.SessionWindow.ResetsAt == cachedDefaultBucket.SessionWindow.ResetsAt {
+		t.Fatalf("expected stale model-specific session window to be preserved independently, got %+v", gotDefaultBucket.SessionWindow)
+	}
 	view := ansi.Strip(got.View())
-	if !strings.Contains(view, "weekly usage [alpha] [stale]") {
+	if !strings.Contains(view, "weekly usage [alpha] [stale]") || !strings.Contains(view, "35%") {
 		t.Fatalf("expected stale weekly card:\n%s", view)
+	}
+	if strings.Contains(view, "81%") || strings.Contains(strings.ToLower(view), "five-hour") {
+		t.Fatalf("expected stale view to remain weekly-only:\n%s", view)
 	}
 }
 
@@ -223,6 +254,80 @@ func TestFetchResultKeepsLastGoodWeeklyCardsWhenFetchHasNoWeeklyWindow(t *testin
 	got := updated.(Model)
 	if !got.showingStaleWindows || got.summary.WeeklyWindow.UsedPercent != 35 {
 		t.Fatalf("expected last good weekly snapshot after a weekly-less fetch, got %+v", got.summary)
+	}
+}
+
+func TestCloneSummaryDeepClonesSessionWindowPointers(t *testing.T) {
+	topDuration := 300
+	topReset := time.Date(2026, 7, 20, 13, 30, 0, 0, time.UTC)
+	topResetSeconds := int64(5400)
+	accountDuration := 360
+	accountReset := topReset.Add(time.Hour)
+	accountResetSeconds := int64(9000)
+	modelDuration := 420
+	modelReset := accountReset.Add(time.Hour)
+	modelResetSeconds := int64(12600)
+	summary := &usage.Summary{
+		SessionWindow: usage.WindowSummary{
+			UsedPercent:        10,
+			WindowDurationMins: &topDuration,
+			ResetsAt:           &topReset,
+			SecondsUntilReset:  &topResetSeconds,
+		},
+		Accounts: []usage.AccountSummary{{
+			Label: "alpha",
+			SessionWindow: usage.WindowSummary{
+				UsedPercent:        20,
+				WindowDurationMins: &accountDuration,
+				ResetsAt:           &accountReset,
+				SecondsUntilReset:  &accountResetSeconds,
+			},
+		}},
+		RateLimitWindows: map[string]usage.RateLimitWindow{
+			"codex": {
+				LimitID: "codex",
+				SessionWindow: usage.WindowSummary{
+					UsedPercent:        30,
+					WindowDurationMins: &modelDuration,
+					ResetsAt:           &modelReset,
+					SecondsUntilReset:  &modelResetSeconds,
+				},
+			},
+		},
+	}
+
+	cloned := cloneSummary(summary)
+	originalModelWindow := summary.RateLimitWindows["codex"]
+	clonedModelWindow := cloned.RateLimitWindows["codex"]
+	cases := []struct {
+		name     string
+		original usage.WindowSummary
+		cloned   usage.WindowSummary
+	}{
+		{name: "top-level", original: summary.SessionWindow, cloned: cloned.SessionWindow},
+		{name: "account", original: summary.Accounts[0].SessionWindow, cloned: cloned.Accounts[0].SessionWindow},
+		{name: "model-specific", original: originalModelWindow.SessionWindow, cloned: clonedModelWindow.SessionWindow},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.original.WindowDurationMins == tc.cloned.WindowDurationMins ||
+				tc.original.ResetsAt == tc.cloned.ResetsAt ||
+				tc.original.SecondsUntilReset == tc.cloned.SecondsUntilReset {
+				t.Fatal("expected independent session reset and duration pointers")
+			}
+
+			wantDuration := *tc.cloned.WindowDurationMins
+			wantReset := *tc.cloned.ResetsAt
+			wantResetSeconds := *tc.cloned.SecondsUntilReset
+			*tc.original.WindowDurationMins = *tc.original.WindowDurationMins + 1
+			*tc.original.ResetsAt = tc.original.ResetsAt.Add(time.Hour)
+			*tc.original.SecondsUntilReset = *tc.original.SecondsUntilReset + 1
+			if *tc.cloned.WindowDurationMins != wantDuration ||
+				!tc.cloned.ResetsAt.Equal(wantReset) ||
+				*tc.cloned.SecondsUntilReset != wantResetSeconds {
+				t.Fatalf("original mutation changed cloned session window: %+v", tc.cloned)
+			}
+		})
 	}
 }
 

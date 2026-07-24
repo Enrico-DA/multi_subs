@@ -13,6 +13,8 @@ func TestRunCLIHelpNamespacesDoNotCreateState(t *testing.T) {
 		{"help"},
 		{"codex", "help"},
 		{"claude", "help"},
+		{"help", "usage"},
+		{"help", "codex", "usage"},
 		{"help", "codex", "exec"},
 		{"help", "claude", "usage"},
 	} {
@@ -146,6 +148,7 @@ func TestRunCLIRejectsUndocumentedArgumentsBeforeCreatingState(t *testing.T) {
 		{"codex", "init", "unexpected"},
 		{"codex", "login-all", "unexpected"},
 		{"codex", "status", "unexpected"},
+		{"codex", "usage", "--json"},
 		{"codex", "reconcile", "unexpected"},
 		{"codex", "cli", "--help", "unexpected"},
 		{"codex", "cli", "-h", "missing-profile"},
@@ -154,7 +157,9 @@ func TestRunCLIRejectsUndocumentedArgumentsBeforeCreatingState(t *testing.T) {
 		{"codex", "monitor", "doctor", "unexpected"},
 		{"codex", "monitor", "tui", "unexpected"},
 		{"claude", "status", "unexpected"},
+		{"claude", "usage", "--json"},
 		{"claude", "doctor", "unexpected"},
+		{"usage", "--json"},
 	}
 
 	for _, args := range commands {
@@ -191,24 +196,21 @@ func TestRunCLICodexStatusDoesNotCreateState(t *testing.T) {
 	}
 }
 
-func TestRunCLIRejectsTopLevelUsageAsUnknownWithoutStateMutation(t *testing.T) {
+func TestRunCLIRejectsTopLevelUsageArgumentsWithoutStateMutation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("MULTISUBS_HOME", "")
 	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", "")
 
-	err := RunCLI([]string{"usage"})
+	err := RunCLI([]string{"usage", "--json"})
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
-		t.Fatalf("expected unknown-command error, got %T (%v)", err, err)
+		t.Fatalf("expected usage error, got %T (%v)", err, err)
 	}
-	if !strings.Contains(exitErr.Message, "unknown command: usage") {
+	if exitErr.Message != "usage: multisubs usage" {
 		t.Fatalf("unexpected usage error: %q", exitErr.Message)
 	}
-	if strings.Contains(exitErr.Message, "reserved") || strings.Contains(exitErr.Message, "next release") {
-		t.Fatalf("top-level usage still has special stub wording: %q", exitErr.Message)
-	}
 	if _, statErr := os.Stat(filepath.Join(home, "multisubs")); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("unknown top-level usage created state: %v", statErr)
+		t.Fatalf("invalid top-level usage created state: %v", statErr)
 	}
 }
