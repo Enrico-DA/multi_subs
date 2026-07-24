@@ -275,8 +275,80 @@ compdef _multisubs_complete multisubs
 `) + "\n"
 }
 
+type fishCompletionEntry struct {
+	path               []string
+	matchPathPrefix    bool
+	tokens             []string
+	argumentExpression string
+	longOptions        []string
+}
+
+func fishCompletionEntries() []fishCompletionEntry {
+	codexCommands := []string{"init", "add", "login", "login-all", "cli", "exec", "status", "reconcile", "heartbeat", "monitor", "doctor", "dry-run", "help"}
+	claudeCommands := []string{"add", "login", "cli", "exec", "status", "usage", "doctor", "help"}
+	monitorCommands := []string{"doctor", "completion", "help", "tui"}
+	monitorTUIOptions := []string{"interval", "timeout", "no-color", "no-alt-screen", "include-default", "include-active", "discover"}
+
+	return []fishCompletionEntry{
+		{tokens: []string{"init", "doctor", "codex", "claude", "completion", "version", "help"}},
+		{path: []string{"codex"}, tokens: codexCommands},
+		{path: []string{"claude"}, tokens: claudeCommands},
+		{path: []string{"help"}, tokens: []string{"init", "doctor", "codex", "claude", "completion", "version", "help"}},
+		{path: []string{"help", "codex"}, tokens: codexCommands},
+		{path: []string{"help", "claude"}, tokens: claudeCommands},
+		{path: []string{"help", "codex", "monitor"}, tokens: monitorCommands},
+		{path: []string{"codex", "login"}, argumentExpression: "(__multisubs_codex_profiles)"},
+		{path: []string{"codex", "cli"}, argumentExpression: "(__multisubs_codex_profiles)"},
+		{path: []string{"claude", "login"}, argumentExpression: "(__multisubs_claude_profiles)"},
+		{path: []string{"claude", "cli"}, argumentExpression: "default (__multisubs_claude_profiles)"},
+		{path: []string{"codex", "dry-run"}, tokens: []string{"login"}},
+		{path: []string{"codex", "dry-run", "login"}, argumentExpression: "(__multisubs_codex_profiles)"},
+		{path: []string{"completion"}, tokens: []string{"bash", "zsh", "fish"}},
+		{path: []string{"doctor"}, matchPathPrefix: true, longOptions: []string{"json", "timeout"}},
+		{path: []string{"codex", "doctor"}, matchPathPrefix: true, longOptions: []string{"json", "timeout"}},
+		{path: []string{"codex", "monitor"}, tokens: monitorCommands, longOptions: monitorTUIOptions},
+		{path: []string{"codex", "monitor", "completion"}, tokens: []string{"bash", "zsh", "fish"}},
+		{path: []string{"codex", "monitor", "doctor"}, matchPathPrefix: true, longOptions: []string{"json", "timeout", "include-default", "include-active", "discover", "app-server"}},
+		{path: []string{"codex", "monitor", "help"}, tokens: monitorCommands},
+		{path: []string{"codex", "monitor", "tui"}, matchPathPrefix: true, longOptions: monitorTUIOptions},
+		{path: []string{"codex", "help"}, tokens: codexCommands},
+		{path: []string{"claude", "help"}, tokens: claudeCommands},
+	}
+}
+
+func fishCompletionEntryMatches(entry fishCompletionEntry, path []string) bool {
+	if entry.matchPathPrefix {
+		if len(path) < len(entry.path) {
+			return false
+		}
+	} else if len(path) != len(entry.path) {
+		return false
+	}
+	for index := range entry.path {
+		if entry.path[index] != path[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func fishCompletionTokens(path []string) []string {
+	var tokens []string
+	for _, entry := range fishCompletionEntries() {
+		if !fishCompletionEntryMatches(entry, path) {
+			continue
+		}
+		tokens = append(tokens, entry.tokens...)
+		for _, option := range entry.longOptions {
+			tokens = append(tokens, "--"+option)
+		}
+	}
+	return tokens
+}
+
 func renderFishCompletion() string {
-	return strings.TrimSpace(`
+	var completion strings.Builder
+	completion.WriteString(strings.TrimSpace(`
 function __multisubs_codex_profiles
     multisubs __complete-codex-profiles 2>/dev/null
 end
@@ -285,24 +357,53 @@ function __multisubs_claude_profiles
     multisubs __complete-claude-profiles 2>/dev/null
 end
 
-complete -c multisubs -f -n '__fish_use_subcommand' -a 'init doctor codex claude completion version help'
-complete -c multisubs -f -n '__fish_seen_subcommand_from codex' -a 'init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help'
-complete -c multisubs -f -n '__fish_seen_subcommand_from claude' -a 'add login cli exec status usage doctor help'
-complete -c multisubs -f -n '__fish_seen_subcommand_from help' -a 'init doctor codex claude completion version help'
-complete -c multisubs -f -n '__fish_seen_subcommand_from codex; and __fish_seen_subcommand_from login cli' -a '(__multisubs_codex_profiles)'
-complete -c multisubs -f -n '__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from login' -a '(__multisubs_claude_profiles)'
-complete -c multisubs -f -n '__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from cli' -a 'default (__multisubs_claude_profiles)'
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor' -a 'doctor completion help tui'
-complete -c multisubs -f -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'
-complete -c multisubs -f -n '__fish_seen_subcommand_from doctor' -l json
-complete -c multisubs -f -n '__fish_seen_subcommand_from doctor' -l timeout
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor' -l interval
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor' -l timeout
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor' -l no-color
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor' -l no-alt-screen
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor' -l include-default
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor' -l include-active
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor' -l discover
-complete -c multisubs -f -n '__fish_seen_subcommand_from monitor; and __fish_seen_subcommand_from doctor' -l app-server
-`) + "\n"
+function __multisubs_path_is
+    set -l words (commandline -opc)
+    if test (count $words) -gt 0
+        set -e words[1]
+    end
+    test (count $words) -eq (count $argv); or return 1
+    set -l index 1
+    while test $index -le (count $argv)
+        test "$words[$index]" = "$argv[$index]"; or return 1
+        set index (math "$index + 1")
+    end
+    return 0
+end
+
+function __multisubs_path_starts_with
+    set -l words (commandline -opc)
+    if test (count $words) -gt 0
+        set -e words[1]
+    end
+    test (count $words) -ge (count $argv); or return 1
+    set -l index 1
+    while test $index -le (count $argv)
+        test "$words[$index]" = "$argv[$index]"; or return 1
+        set index (math "$index + 1")
+    end
+    return 0
+end
+`))
+	completion.WriteString("\n")
+	for _, entry := range fishCompletionEntries() {
+		condition := "__multisubs_path_is"
+		if entry.matchPathPrefix {
+			condition = "__multisubs_path_starts_with"
+		}
+		if len(entry.path) > 0 {
+			condition += " " + strings.Join(entry.path, " ")
+		}
+		arguments := entry.argumentExpression
+		if arguments == "" {
+			arguments = strings.Join(entry.tokens, " ")
+		}
+		if arguments != "" {
+			fmt.Fprintf(&completion, "complete -c multisubs -f -n '%s' -a '%s'\n", condition, arguments)
+		}
+		for _, option := range entry.longOptions {
+			fmt.Fprintf(&completion, "complete -c multisubs -f -n '%s' -l %s\n", condition, option)
+		}
+	}
+	return completion.String()
 }

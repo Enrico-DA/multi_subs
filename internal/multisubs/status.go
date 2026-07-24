@@ -30,6 +30,7 @@ type profileStatus struct {
 var emailRe = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
 
 var codexLoginStatusTimeout = 5 * time.Second
+var codexLoginStatusCommandContext = exec.CommandContext
 var profileCheckWorkerLimit = 6
 
 func PrintStatus(store *Store, cfg *Config) error {
@@ -139,11 +140,15 @@ func parallelWorkers(total int) int {
 }
 
 func codexLoginStatus(codexHome string) (state, account, detail string) {
-	ctx, cancel := context.WithTimeout(context.Background(), codexLoginStatusTimeout)
+	return codexLoginStatusWithTimeout(codexHome, codexLoginStatusTimeout)
+}
+
+func codexLoginStatusWithTimeout(codexHome string, timeout time.Duration) (state, account, detail string) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	args := codexstate.WithManagedAuthOverride([]string{"login", "status"})
-	cmd := exec.CommandContext(ctx, "codex", args...)
+	cmd := codexLoginStatusCommandContext(ctx, "codex", args...)
 	cmd.WaitDelay = 500 * time.Millisecond
 	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")
 	var out bytes.Buffer
@@ -174,11 +179,12 @@ func codexLoginStatus(codexHome string) (state, account, detail string) {
 		return "ok", account, firstLineOrDash(all)
 	}
 
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "error", account, fmt.Sprintf("codex login status timed out after %s", timeout)
+	}
+
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "error", account, fmt.Sprintf("codex login status timed out after %s", codexLoginStatusTimeout)
-		}
 		if loginStatusTextIndicatesLoggedOut(lower) {
 			return "logged-out", account, "not logged in"
 		}

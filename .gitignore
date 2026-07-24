@@ -28,6 +28,8 @@ plan/
 
 # Logs and temp artifacts
 *.log
+__pycache__/
+*.py[cod]
 tmp/
 /multisubs
 /multicodex

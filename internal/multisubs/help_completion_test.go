@@ -131,6 +131,123 @@ func TestCompletionScriptsCoverSymmetricCommandTree(t *testing.T) {
 	}
 }
 
+func TestFishCompletionUsesExactCommandPaths(t *testing.T) {
+	output := renderFishCompletion()
+	if strings.Contains(output, "__fish_seen_subcommand_from") {
+		t.Fatalf("Fish completion still uses broad seen-subcommand conditions:\n%s", output)
+	}
+	for _, want := range []string{
+		"__multisubs_path_is codex",
+		"__multisubs_path_is claude",
+		"__multisubs_path_starts_with doctor",
+		"__multisubs_path_starts_with codex doctor",
+		"__multisubs_path_is codex monitor",
+		"__multisubs_path_starts_with codex monitor doctor",
+		"__multisubs_path_is help codex monitor",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("Fish completion output missing condition %q", want)
+		}
+	}
+	if strings.Contains(output, "__multisubs_path_starts_with claude doctor") ||
+		strings.Contains(output, "__multisubs_path_is claude doctor") {
+		t.Fatalf("Fish completion attaches flags or arguments to claude doctor:\n%s", output)
+	}
+}
+
+func TestFishCompletionTokensFollowStrictCommandTree(t *testing.T) {
+	tests := []struct {
+		name string
+		path []string
+		want []string
+	}{
+		{
+			name: "top level",
+			want: []string{"init", "doctor", "codex", "claude", "completion", "version", "help"},
+		},
+		{
+			name: "Claude provider",
+			path: []string{"claude"},
+			want: []string{"add", "login", "cli", "exec", "status", "usage", "doctor", "help"},
+		},
+		{
+			name: "Claude doctor has no flags",
+			path: []string{"claude", "doctor"},
+		},
+		{
+			name: "Codex status has no deeper commands",
+			path: []string{"codex", "status"},
+		},
+		{
+			name: "top-level doctor flags",
+			path: []string{"doctor"},
+			want: []string{"--json", "--timeout"},
+		},
+		{
+			name: "top-level doctor flags after option",
+			path: []string{"doctor", "--json"},
+			want: []string{"--json", "--timeout"},
+		},
+		{
+			name: "focused Codex doctor flags",
+			path: []string{"codex", "doctor"},
+			want: []string{"--json", "--timeout"},
+		},
+		{
+			name: "focused Codex doctor flags after value",
+			path: []string{"codex", "doctor", "--timeout", "2s"},
+			want: []string{"--json", "--timeout"},
+		},
+		{
+			name: "Codex monitor root",
+			path: []string{"codex", "monitor"},
+			want: []string{
+				"doctor", "completion", "help", "tui",
+				"--interval", "--timeout", "--no-color", "--no-alt-screen",
+				"--include-default", "--include-active", "--discover",
+			},
+		},
+		{
+			name: "Codex monitor doctor",
+			path: []string{"codex", "monitor", "doctor"},
+			want: []string{"--json", "--timeout", "--include-default", "--include-active", "--discover", "--app-server"},
+		},
+		{
+			name: "Codex monitor completion",
+			path: []string{"codex", "monitor", "completion"},
+			want: []string{"bash", "zsh", "fish"},
+		},
+		{
+			name: "Codex monitor help",
+			path: []string{"codex", "monitor", "help"},
+			want: []string{"doctor", "completion", "help", "tui"},
+		},
+		{
+			name: "Codex monitor TUI",
+			path: []string{"codex", "monitor", "tui"},
+			want: []string{
+				"--interval", "--timeout", "--no-color", "--no-alt-screen",
+				"--include-default", "--include-active", "--discover",
+			},
+		},
+		{
+			name: "nested global help",
+			path: []string{"help", "codex", "monitor"},
+			want: []string{"doctor", "completion", "help", "tui"},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			got := fishCompletionTokens(test.path)
+			if strings.Join(got, "\x00") != strings.Join(test.want, "\x00") {
+				t.Fatalf("Fish tokens for %q: got=%q want=%q", strings.Join(test.path, " "), got, test.want)
+			}
+		})
+	}
+}
+
 func TestCompletionCommandRejectsUnsupportedShell(t *testing.T) {
 	app := newTestAppForCLI(t)
 	_, err := captureStdout(t, func() error {

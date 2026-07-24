@@ -93,7 +93,7 @@ func RunCodexDoctor(store *Store, cfg *Config, timeout time.Duration) DoctorRepo
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	profileChecks := collectProfileDoctorChecks(store.paths, cfg, names, codexFound)
+	profileChecks := collectProfileDoctorChecks(store.paths, cfg, names, codexFound, timeout)
 	for i := range profileChecks {
 		checks = append(checks, profileChecks[i]...)
 	}
@@ -115,12 +115,12 @@ func checkProfileResources(store *Store, resources *ProfileResources) DoctorChec
 	return DoctorCheck{Name: "profile resources", Status: "ok", Details: describeProfileResources(resources, resolved)}
 }
 
-func collectProfileDoctorChecks(paths Paths, cfg *Config, names []string, codexFound bool) [][]DoctorCheck {
+func collectProfileDoctorChecks(paths Paths, cfg *Config, names []string, codexFound bool, timeout time.Duration) [][]DoctorCheck {
 	result := make([][]DoctorCheck, len(names))
 	workers := parallelWorkers(len(names))
 	if workers == 1 {
 		for i, name := range names {
-			result[i] = profileDoctorChecks(paths, name, cfg.Profiles[name], codexFound)
+			result[i] = profileDoctorChecks(paths, name, cfg.Profiles[name], codexFound, timeout)
 		}
 		return result
 	}
@@ -136,14 +136,14 @@ func collectProfileDoctorChecks(paths Paths, cfg *Config, names []string, codexF
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			result[i] = profileDoctorChecks(paths, name, profile, codexFound)
+			result[i] = profileDoctorChecks(paths, name, profile, codexFound, timeout)
 		}()
 	}
 	wg.Wait()
 	return result
 }
 
-func profileDoctorChecks(paths Paths, name string, profile Profile, codexFound bool) []DoctorCheck {
+func profileDoctorChecks(paths Paths, name string, profile Profile, codexFound bool, timeout time.Duration) []DoctorCheck {
 	prefix := "profile " + name
 	out := make([]DoctorCheck, 0, 4)
 
@@ -164,7 +164,7 @@ func profileDoctorChecks(paths Paths, name string, profile Profile, codexFound b
 	out = append(out, authCheck)
 
 	if codexFound && configCheck.Status != "fail" && authCheck.Status != "fail" {
-		state, account, detail := codexLoginStatus(profile.CodexHome)
+		state, account, detail := codexLoginStatusWithTimeout(profile.CodexHome, timeout)
 		status := "warn"
 		if state == "logged-in" || state == "ok" {
 			status = "ok"

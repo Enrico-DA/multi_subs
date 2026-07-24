@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -81,6 +82,85 @@ func TestRunDoctorMinimal(t *testing.T) {
 	report := RunDoctor(store, cfg, 50*time.Millisecond)
 	if len(report.Checks) == 0 {
 		t.Fatalf("expected non-empty checks")
+	}
+}
+
+func TestProfileDoctorChecksUseSuppliedShortAndLongTimeouts(t *testing.T) {
+	root := t.TempDir()
+	paths := Paths{ProfilesDir: filepath.Join(root, "profiles")}
+	codexHome := filepath.Join(paths.ProfilesDir, "work", "codex-home")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatalf("mkdir codex home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(generatedProfileConfigContent), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(`{"tokens":{"access_token":"a"}}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+
+	previousCommandContext := codexLoginStatusCommandContext
+	t.Cleanup(func() {
+		codexLoginStatusCommandContext = previousCommandContext
+	})
+
+	var remainingTimeouts []time.Duration
+	codexLoginStatusCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if name != "codex" {
+			t.Fatalf("unexpected command: %s", name)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("doctor login status command has no deadline")
+		}
+		remainingTimeouts = append(remainingTimeouts, time.Until(deadline))
+		return exec.Command("sh", "-c", "printf 'logged in\\n'")
+	}
+
+	timeouts := []time.Duration{250 * time.Millisecond, 45 * time.Second}
+	for _, timeout := range timeouts {
+		checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: codexHome}, true, timeout)
+		foundLoginStatus := false
+		for _, check := range checks {
+			if check.Name == "profile work login status" {
+				foundLoginStatus = true
+				if check.Status != "ok" {
+					t.Fatalf("timeout %s produced login check %v", timeout, check)
+				}
+			}
+		}
+		if !foundLoginStatus {
+			t.Fatalf("timeout %s did not run the login status check: %v", timeout, checks)
+		}
+	}
+
+	if len(remainingTimeouts) != len(timeouts) {
+		t.Fatalf("captured %d timeouts, want %d", len(remainingTimeouts), len(timeouts))
+	}
+	for index, timeout := range timeouts {
+		remaining := remainingTimeouts[index]
+		if remaining <= 0 || remaining > timeout {
+			t.Fatalf("timeout %s reached command as %s", timeout, remaining)
+		}
+		if timeout-remaining > 100*time.Millisecond {
+			t.Fatalf("timeout %s lost too much time before command creation: remaining=%s", timeout, remaining)
+		}
+	}
+}
+
+func TestAggregateAndFocusedDoctorParseTheSameTimeout(t *testing.T) {
+	const timeoutArgument = "375ms"
+	for _, command := range []string{"multisubs doctor", "multisubs codex doctor"} {
+		jsonOutput, timeout, err := parseDoctorArguments([]string{"--timeout", timeoutArgument}, command)
+		if err != nil {
+			t.Fatalf("%s rejected timeout: %v", command, err)
+		}
+		if jsonOutput {
+			t.Fatalf("%s unexpectedly enabled JSON output", command)
+		}
+		if timeout != 375*time.Millisecond {
+			t.Fatalf("%s parsed timeout as %s", command, timeout)
+		}
 	}
 }
 
@@ -334,7 +414,7 @@ func TestProfileDoctorChecksSkipLoginStatusWhenConfigFails(t *testing.T) {
 		t.Fatalf("write auth file: %v", err)
 	}
 
-	checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: codexHome}, true)
+	checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: codexHome}, true, time.Second)
 	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected codex login status not to run, stat err=%v", err)
 	}
@@ -393,7 +473,7 @@ func TestProfileDoctorChecksSkipLoginStatusWhenAuthFails(t *testing.T) {
 		t.Fatalf("symlink auth file: %v", err)
 	}
 
-	checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: codexHome}, true)
+	checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: codexHome}, true, time.Second)
 	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected codex login status not to run, stat err=%v", err)
 	}
@@ -435,7 +515,7 @@ func TestProfileDoctorChecksRejectSymlinkedHomeBeforeAuthProbe(t *testing.T) {
 	}
 	linkHome := filepath.Join(profileDir, "codex-home")
 
-	checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: linkHome}, true)
+	checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: linkHome}, true, time.Second)
 	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected codex login status not to run, stat err=%v", err)
 	}

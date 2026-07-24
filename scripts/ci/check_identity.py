@@ -9,34 +9,158 @@ from pathlib import Path
 
 EXPECTED_MODULE = "github.com/Enrico-DA/multi_subs"
 EXPECTED_COMMAND_DIR = "cmd/multisubs"
+LEGACY_PRODUCT = "multi" + "codex"
+LEGACY_ENV_PREFIX = "MULTI" + "CODEX"
 
-# These files contain reviewed legacy names for attribution, hard-cut rejection,
-# child-environment denylists, sensitive-path protection, or tests of those rules.
-LEGACY_TEXT_ALLOWLIST = frozenset(
-    {
-        ".gitignore",
-        "AGENTS.md",
-        "CONTRIBUTING.md",
-        "README.md",
-        "docs/README.md",
-        "docs/command-spec.md",
-        "docs/decisions.md",
-        "docs/security-and-privacy.md",
-        "docs/upstream-sync.md",
-        "internal/codexstate/env.go",
-        "internal/codexstate/env_test.go",
-        "internal/multisubs/app.go",
-        "internal/multisubs/claude_process.go",
-        "internal/multisubs/claude_process_test.go",
-        "internal/multisubs/doctor.go",
-        "internal/multisubs/doctor_test.go",
-        "internal/multisubs/help_completion_test.go",
-        "internal/multisubs/paths_test.go",
-        "internal/multisubs/process_test.go",
-        "internal/multisubs/run_cli_test.go",
-        "scripts/ci/check_identity.py",
-    }
-)
+
+def legacy_lines(*templates: str) -> frozenset[str]:
+    return frozenset(
+        template.replace("{legacy}", LEGACY_PRODUCT).replace(
+            "{LEGACY}", LEGACY_ENV_PREFIX
+        )
+        for template in templates
+    )
+
+
+# Each reviewed legacy occurrence must remain on one exact line for its approved
+# attribution, rejection, denylist, leak-protection, or negative-test purpose.
+# A whole file is never exempt from the scan.
+APPROVED_LEGACY_LINES = {
+    ".gitignore": legacy_lines(
+        ".{legacy}/",
+        "**/.{legacy}/config.json",
+        "**/.{legacy}/profiles/",
+        "**/{legacy}/config.json",
+        "**/{legacy}/profiles/",
+        "**/{legacy}/providers/claude/",
+        "/{legacy}",
+    ),
+    "AGENTS.md": legacy_lines(
+        "- The upstream project is `olliecrow/{legacy}`; preserve its attribution and license.",
+        "- A read-only upstream remote may reference `github.com/olliecrow/{legacy}`.",
+    ),
+    "CONTRIBUTING.md": legacy_lines(
+        "Pull-request CI runs a non-publishing identity check. When syncing from `olliecrow/{legacy}`, apply the translation map in `docs/upstream-sync.md` and preserve upstream attribution and license text.",
+    ),
+    "README.md": legacy_lines(
+        "Any legacy `{LEGACY}_*` variable causes startup to fail before state access. Clear it before running `multisubs`. Runtime never reads the old product home or old environment namespace. Old variables are still removed from provider child environments as a denylist.",
+        "This fork is based on [olliecrow/{legacy}](https://github.com/olliecrow/{legacy}) and preserves its attribution and license.",
+    ),
+    "docs/README.md": legacy_lines(
+        "- [`upstream-sync.md`](upstream-sync.md) records the durable identity and command translation from `olliecrow/{legacy}`.",
+    ),
+    "docs/command-spec.md": legacy_lines(
+        "Startup checks the environment before path resolution. If any `{LEGACY}_*` variable is present, the command exits with code 2 and tells the user to clear it.",
+        "Runtime never reads the old environment namespace or the old `~/{legacy}` state root. Known old variables remain on provider child-environment denylists to prevent account-routing leakage.",
+    ),
+    "docs/decisions.md": legacy_lines(
+        "Decision: Preserve the Apache 2.0 license terms and attribution to `olliecrow/{legacy}`.",
+        "Decision: Old `{LEGACY}_*` variables cause startup to fail before state access.",
+        "Enforcement: Top-level startup rejects any old product-prefixed variable. Provider child environments still strip old controls. The old `~/{legacy}` and `.{legacy}` patterns remain only as legacy-sensitive ignore and leak protection.",
+    ),
+    "docs/security-and-privacy.md": legacy_lines(
+        "- known legacy `{LEGACY}_*` controls.",
+        "- Any `{LEGACY}_*` variable rejects top-level startup before state access.",
+        "- Runtime never reads `{LEGACY}_HOME`.",
+        "- Runtime never defaults to `~/{legacy}`.",
+        "- `.{legacy}`, `{legacy}` state paths, and old environment names remain only in ignore, leak, denylist, and rejection tests so old credentials cannot be committed or inherited.",
+        "Tests and examples use synthetic values and dummy paths. Upstream attribution to `olliecrow/{legacy}` is not a runtime compatibility reference.",
+    ),
+    "docs/upstream-sync.md": legacy_lines(
+        "This fork keeps `olliecrow/{legacy}` as its read-only upstream source and preserves Ollie's attribution and license. Fork work is pushed only to `Enrico-DA/multi_subs`.",
+        "| `olliecrow/{legacy}` | `Enrico-DA/multi_subs` |",
+        "| `github.com/olliecrow/{legacy}` | `github.com/Enrico-DA/multi_subs` |",
+        "| `{legacy}` executable and product text | `multisubs` |",
+        "| `cmd/{legacy}` | `cmd/multisubs` |",
+        "| `internal/{legacy}` package and directory | `internal/multisubs` |",
+        "| `package {legacy}` | `package multisubs` |",
+        "| `~/{legacy}` active state | `~/multisubs` |",
+        "| `{LEGACY}_*` active controls | `MULTISUBS_*` |",
+    ),
+    "internal/codexstate/env.go": legacy_lines(
+        '\tif strings.HasPrefix(key, "{LEGACY}_") {',
+    ),
+    "internal/codexstate/env_test.go": legacy_lines(
+        '\t\t"{LEGACY}_HOME=/legacy-product-state",',
+        '\t\t"{LEGACY}_ACTIVE_PROFILE=legacy",',
+        '\tfor _, forbidden := range []string{"CODEX_HOME=/stale", "MULTISUBS_HOME=", "MULTISUBS_ACTIVE_PROFILE=", "{LEGACY}_HOME=", "{LEGACY}_ACTIVE_PROFILE=", "CODEX_USAGE_MONITOR_ACCOUNTS_FILE=", "OPENAI_API_KEY=", "CODEX_AUTH_TOKEN=", "INVALID_ENTRY"} {',
+    ),
+    "internal/multisubs/app.go": legacy_lines(
+        '\t\tif ok && strings.HasPrefix(name, "{LEGACY}_") {',
+        '\t\tMessage: fmt.Sprintf("legacy {LEGACY}_* environment variable(s) are set: %s; clear them before running multisubs", strings.Join(names, ", ")),',
+    ),
+    "internal/multisubs/claude_process.go": legacy_lines(
+        '\tif strings.HasPrefix(key, "{LEGACY}_") {',
+    ),
+    "internal/multisubs/claude_process_test.go": legacy_lines(
+        '\t\t"{LEGACY}_HOME=/tmp/legacy",',
+        '\t\t"{LEGACY}_CLAUDE_PROFILE=legacy",',
+        '\t\t"{LEGACY}_HOME",',
+        '\t\t"{LEGACY}_CLAUDE_PROFILE",',
+    ),
+    "internal/multisubs/doctor.go": legacy_lines(
+        '\t\t".{legacy}/",',
+        '\t\t"**/{legacy}/config.json",',
+        '\t\t"**/{legacy}/profiles/",',
+        '\t\t"**/{legacy}/providers/claude/",',
+        '\t\t"**/.{legacy}/config.json",',
+        '\t\t"**/.{legacy}/profiles/",',
+        '\t\t"{legacy}/config.json",',
+        '\t\t".{legacy}/config.json",',
+        '\t\t"github.com/olliecrow/{legacy}/config.json",',
+        '\t\t"github.com/olliecrow/.{legacy}/config.json",',
+        '\t\t"github.com/enrico-da/{legacy}/config.json",',
+        '\t\t"github.com/enrico-da/.{legacy}/config.json",',
+        '\t\tstrings.Contains(clean, "/{legacy}/config.json") ||',
+        '\t\tstrings.Contains(clean, "/.{legacy}/config.json") {',
+        '\t\t"{legacy}/profiles/",',
+        '\t\t".{legacy}/profiles/",',
+        '\t\t"github.com/olliecrow/{legacy}/profiles/",',
+        '\t\t"github.com/olliecrow/.{legacy}/profiles/",',
+        '\t\t"github.com/enrico-da/{legacy}/profiles/",',
+        '\t\t"github.com/enrico-da/.{legacy}/profiles/",',
+        '\t\tstrings.Contains(clean, "/{legacy}/profiles/") ||',
+        '\t\tstrings.Contains(clean, "/.{legacy}/profiles/") {',
+        '\t\tstrings.Contains(clean, "/{legacy}/providers/claude/") ||',
+        '\t\tstrings.HasPrefix(clean, "{legacy}/providers/claude/") {',
+    ),
+    "internal/multisubs/doctor_test.go": legacy_lines(
+        '\t\t"**/{legacy}/config.json",',
+        '\t\t"**/{legacy}/profiles/",',
+        '\t\t"**/{legacy}/providers/claude/",',
+        '\t\t"**/.{legacy}/config.json",',
+        '\t\t"**/.{legacy}/profiles/",',
+        '\t\t".{legacy}/",',
+        '\tfor _, want := range []string{".multisubs/", ".{legacy}/", "**/multisubs/config.json", "**/{legacy}/config.json", "**/auth.json"} {',
+        '\tfor _, want := range []string{".{legacy}/", "**/{legacy}/config.json", "**/{legacy}/profiles/"} {',
+        '\t\t{path: "github.com/olliecrow/{legacy}/config.json", sensitive: true},',
+        '\t\t{path: "github.com/olliecrow/{legacy}/profiles/work/codex-home/config.toml", sensitive: true},',
+        '\t\t{path: ".{legacy}/config.json", sensitive: true},',
+        '\t\t{path: ".{legacy}/profiles/work/codex-home/config.toml", sensitive: true},',
+        '\t\t{path: "github.com/olliecrow/.{legacy}/config.json", sensitive: true},',
+        '\t\t{path: "github.com/olliecrow/{legacy}/docs/readme.md", sensitive: false},',
+    ),
+    "internal/multisubs/help_completion_test.go": legacy_lines(
+        '\tif strings.Contains(out, "{legacy}") {',
+        '\tif !strings.HasPrefix(out, "multisubs ") || strings.Contains(out, "{legacy}") {',
+        '\t\t\tif strings.Contains(test.out, "{legacy}") || strings.Contains(test.out, "__complete-profiles") {',
+    ),
+    "internal/multisubs/paths_test.go": legacy_lines(
+        '\tlegacyHome := filepath.Join(t.TempDir(), "{legacy}")',
+        '\tt.Setenv("{LEGACY}_HOME", legacyHome)',
+        '\tt.Setenv("{LEGACY}_DEFAULT_CODEX_HOME", filepath.Join(t.TempDir(), "legacy-codex"))',
+    ),
+    "internal/multisubs/process_test.go": legacy_lines(
+        '\t\t"{LEGACY}_HOME=/tmp/legacy",',
+        '\t\t"{LEGACY}_ACTIVE_PROFILE=legacy",',
+        '\t\t"{LEGACY}_HOME=",',
+        '\t\t"{LEGACY}_ACTIVE_PROFILE=",',
+    ),
+    "internal/multisubs/run_cli_test.go": legacy_lines(
+        '\tlegacyHome := filepath.Join(home, "{legacy}")',
+        '\tt.Setenv("{LEGACY}_HOME", legacyHome)',
+    ),
+}
 
 IGNORED_SCAN_DIRECTORIES = frozenset({".git", "__pycache__", "dist", "plan"})
 
@@ -103,24 +227,46 @@ def check_command_directory(root: Path, errors: list[str]) -> None:
 
 
 def check_legacy_text(root: Path, errors: list[str]) -> None:
+    legacy_bytes = LEGACY_PRODUCT.encode("ascii")
+    approved_line_counts: dict[tuple[str, str], int] = {}
+
     for path in sorted(root.rglob("*")):
-        if path.is_symlink() or not path.is_file():
-            continue
         relative = path.relative_to(root)
         if any(part in IGNORED_SCAN_DIRECTORIES for part in relative.parts):
             continue
         relative_path = relative.as_posix()
-        if relative_path in LEGACY_TEXT_ALLOWLIST:
+        if LEGACY_PRODUCT in relative_path.casefold():
+            errors.append(
+                f"{relative_path}: legacy product text is prohibited in repository paths"
+            )
+        if path.is_symlink() or not path.is_file():
             continue
         try:
             data = path.read_bytes()
         except OSError as error:
             errors.append(f"{relative_path}: cannot scan for legacy identity: {error}")
             continue
-        if b"multicodex" in data.lower():
+        if legacy_bytes not in data.lower():
+            continue
+        try:
+            text = data.decode("utf-8")
+        except UnicodeError as error:
             errors.append(
-                f"{relative_path}: legacy product text is outside the reviewed allowlist"
+                f"{relative_path}: cannot decode legacy identity occurrence: {error}"
             )
+            continue
+
+        approved_lines = APPROVED_LEGACY_LINES.get(relative_path, frozenset())
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if LEGACY_PRODUCT not in line.casefold():
+                continue
+            key = (relative_path, line)
+            approved_line_counts[key] = approved_line_counts.get(key, 0) + 1
+            if line not in approved_lines or approved_line_counts[key] > 1:
+                errors.append(
+                    f"{relative_path}:{line_number}: legacy product text is outside "
+                    "the reviewed occurrence rules"
+                )
 
 
 def check_repository(root: Path) -> list[str]:
