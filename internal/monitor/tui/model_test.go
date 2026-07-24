@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/Enrico-DA/multicodex/internal/monitor/usage"
+	"github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
 
 func TestWeeklyAccountCardShowsDefaultSparkAndExactReset(t *testing.T) {
@@ -40,7 +40,7 @@ func TestWeeklyAccountCardNarrowViewKeepsCoreValuesAndHidesDecoration(t *testing
 			t.Fatalf("expected narrow view to keep %q:\n%s", want, view)
 		}
 	}
-	for _, want := range []string{"multicodex", "healthy", "<1m", "12:00"} {
+	for _, want := range []string{"multisubs", "healthy", "<1m", "12:00"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected narrow header to keep %q:\n%s", want, view)
 		}
@@ -229,7 +229,7 @@ func TestFetchResultKeepsLastGoodWeeklyCardsWhenFetchHasNoWeeklyWindow(t *testin
 func TestHeaderAndFooterStayHumanFriendly(t *testing.T) {
 	m := fixtureModel(80, 16, true)
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"multicodex monitor", "[refresh <1m]", "local 2026-07-20 12:00", "Ctrl+C to exit"} {
+	for _, want := range []string{"multisubs codex monitor", "[refresh <1m]", "local 2026-07-20 12:00", "Ctrl+C to exit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in header/footer:\n%s", want, view)
 		}

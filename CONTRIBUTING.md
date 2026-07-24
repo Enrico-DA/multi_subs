@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve multicodex.
+Thanks for helping improve multisubs.
 
 ## Development
 
@@ -25,6 +25,6 @@ Explain the user-visible outcome and the checks you ran. CI tests Linux and macO
 
 ## Releases
 
-Do not create or publish version tags from `Enrico-DA/multi_subs` before the planned product and module rename. Install-from-module and release-download instructions are not valid for this fork during the transition.
+Release publication is guarded to `Enrico-DA/multi_subs`. Release archives, checksums, linker targets, command paths, and version output must use the `multisubs` identity.
 
-The imported tag release workflow remains available for later adaptation, but its current repository guard allows publication only from `olliecrow/multicodex`. Do not widen that guard in an upstream-sync change.
+Pull-request CI runs a non-publishing identity check. When syncing from `olliecrow/multicodex`, apply the translation map in `docs/upstream-sync.md` and preserve upstream attribution and license text.

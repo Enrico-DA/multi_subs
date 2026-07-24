@@ -1,48 +1,113 @@
-# Security and Privacy
+# Security and privacy contract
 
-## Trust model
-- `multicodex` is local-only.
-- No external auth relay.
-- No third-party secret storage.
+## Trust boundary
 
-## Secret handling rules
-- Never print auth tokens, refresh tokens, or raw credential blobs.
-- Never commit auth files or secret-bearing local state.
-- Never copy, sync, transmit, transfer, or share Codex auth files or auth details between machines. Each machine must sign in through the official Codex login flow.
-- Keep auth directories permissioned to the local user only.
-- Keep profile `auth.json` files readable only by the local user.
-- Use atomic writes to prevent partial secret files.
-- Zero secret data from logs and diagnostics by default.
-- User-visible diagnostics must never echo raw provider response bodies, app-server error messages, or Codex subprocess failure output. Preserve only safe status codes and allowlisted recovery guidance.
-- Profile-scoped Codex subprocesses must scrub inherited Codex/OpenAI account override environment variables before setting the selected profile `CODEX_HOME`.
-- Every managed-profile Codex child must receive `-c 'cli_auth_credentials_store="file"'` as the final CLI override before standalone `--`. This includes monitor app-server sessions only when `MonitorAccount.UseAppServer` records a validated multicodex profile. User config and profile arguments remain present but cannot override this enforced credential store. Default-account exec, exact exec-help delegation, and explicit raw app-server diagnostics must not receive it.
-- Multicodex never reads, copies, writes, exports, or refreshes Claude credentials. Official Claude commands own login and token lifecycle.
-- Managed Claude subprocesses scrub inherited Claude/Anthropic account overrides before setting the selected `CLAUDE_CONFIG_DIR`.
-- The default Claude subprocess must receive no `CLAUDE_CONFIG_DIR`; an empty value is not equivalent.
-- Claude usage inspection uses the official local `/usage` command and never calls OAuth endpoints directly.
-- Claude usage probes disable session persistence, user/project settings, and MCP servers and run from a neutral directory.
-- Claude auth, usage, and version probe failures discard captured standard error and arbitrary subprocess error text. Claude usage parser failures also discard provider result lines and response bodies. User-visible failures use only local deterministic categories.
-- Profile resource settings may name local directories outside the default Codex home. The user owns the trust decision for those sources; multicodex only creates symlinks and does not execute or copy source contents.
-- Skill sources and selected top-level entries must be fully resolved and validated before reconciliation, including omitted/default sources and legacy default inheritance. Profile links pin the final canonical entry directories, so alias retargeting cannot redirect an existing link without a later successful validation. A forbidden new target fails without changing the old pin. Explicit skill sources must not overlap multicodex-owned state or the default Codex home, except for the canonical default skills directory. Reconciliation removes or retargets only symlinks at documented managed positions and preserves regular profile guidance and skill entries. `.system` is never inherited: a regular profile-local directory is preserved, only a safely resolved default-tree symlink is removed, and unsafe or broken links fail closed without mutation.
+`multisubs` manages local routing metadata and isolated provider directories. It does not own either normal default provider account.
 
-## Repository safeguards
-- `.gitignore` must ignore local auth and profile state.
-- Recommended ignore coverage includes targeted current state paths: `**/multicodex/config.json` and `**/multicodex/profiles/`.
-- Claude provider sidecars and profile state under `**/multicodex/providers/claude/` are sensitive local state and must remain untracked.
-- Legacy `.multicodex/` state paths remain sensitive and should stay ignored.
-- Tests must use synthetic fixtures only.
-- Example files must never include real credentials.
-- CI should run secret scanning before merge.
-- `multicodex doctor` should be used before release to verify leak-guard checks.
-- Committed tests, examples, logs, and review artifacts must use temporary or dummy resource paths and must not include private resource contents or machine-specific paths.
+- The default Codex account is a read-only monitor source and a normal routing candidate.
+- The default Claude account is a normal routing candidate.
+- No command changes, copies, restores, backs up, links, or migrates either default account.
 
-## Global auth boundary
-- Multicodex must not change, restore, back up, symlink, lock, or otherwise manage the shared default Codex auth account.
-- The system default Codex account is managed by normal Codex tooling outside multicodex.
-- `multicodex exec` may run `codex exec` with the existing default Codex home as the final protected reserve account only when no configured profile has usable weekly usage. It must not mutate default auth state or expose default auth details.
-- Monitor defaults include the global Codex home through direct read-only usage requests. Normal monitor usage may start profile-scoped read-only Codex app-server sessions only for validated multicodex profile homes, and those managed sessions force file-backed auth. Active `CODEX_HOME`, filesystem discovery, and extra raw app-server checks require explicit monitor flags; those homes are not inferred to be managed from `CODEX_HOME`, raw checks stay unforced, and `--include-default=false` omits the global home.
-- Multicodex must not change, restore, back up, symlink, or otherwise manage the shared default Claude auth account.
-- Managed Claude accounts live in private derived config directories. Profile paths, sidecars, and reservation files reject symlinks, hard links, unsafe permissions, and paths outside the provider tree.
-- Claude routing accepts only first-party Max auth with a stable organization ID and deduplicates profiles that spend the same organization quota.
-- Claude routing locks are keyed by a one-way hash of the organization ID and contain no credentials. The official child inherits the descriptor, so the lock remains held until that child exits even if the wrapper dies.
-- On file-backed platforms, managed `.credentials.json` metadata must be a private regular single-link file. Multicodex validates metadata only and never reads its contents.
+## State isolation
+
+The default state root is `~/multisubs`. `MULTISUBS_HOME` may replace it.
+
+Each managed Codex profile keeps auth, sessions, threads, `/goal`, and related state inside:
+
+```text
+MULTISUBS_HOME/profiles/<name>/codex-home
+```
+
+Each managed Claude profile keeps official CLI state inside:
+
+```text
+MULTISUBS_HOME/providers/claude/profiles/<name>/config
+```
+
+The Codex and Claude registries remain separate. Their auth and routing stores are never merged.
+
+## Credentials
+
+- Never copy, sync, transmit, transfer, or share provider auth files or auth details between machines.
+- Use official `codex login` and `claude auth login` flows.
+- Managed Codex profiles require file-backed auth so each profile has an isolated `auth.json`.
+- The product does not read, copy, or write Claude credential contents.
+- Output must not include raw credentials or raw provider failure text.
+
+## Filesystem rules
+
+Product state directories, profile directories, provider config directories, locks, routing metadata, and sensitive files must be private regular filesystem entries.
+
+- Unsafe symlinks and hard links fail closed.
+- Product-controlled runtime paths stay below `MULTISUBS_HOME`.
+- Resource reconciliation does not overwrite regular user guidance, config, or skill entries.
+- Only documented product-owned links may be created, changed, or removed.
+- Runtime-managed `.system` skills remain profile-local.
+
+A managed Codex `config.toml` is allowed only as a regular non-symlink with a verifiable hard-link count of one, or as a symlink whose resolved path exactly matches the resolved default Codex config and whose target is regular. One shared filesystem-only validator enforces this before any managed caller reads TOML. Hard-linked configs are rejected without automatic repair. Raw symlink targets may be shown in safe doctor diagnostics, but config contents are not exposed.
+
+The default Codex account and its config remain unmanaged. This managed-config boundary does not copy, rewrite, or take ownership of default-account state.
+
+## Environment rules
+
+Official provider variables remain:
+
+- `CODEX_HOME`
+- `CLAUDE_CONFIG_DIR`
+
+Active product controls use `MULTISUBS_*`.
+
+Before a provider child starts, the environment removes:
+
+- stale provider home overrides;
+- API keys, tokens, base URL overrides, and provider selectors;
+- every inherited `MULTISUBS_*` variable, including unknown future controls;
+- all legacy `MULTICODEX_*` controls.
+
+The child then receives exactly the provider home required for its selected context. A managed Codex child also receives exactly one product variable: the selected `MULTISUBS_ACTIVE_PROFILE` marker added by multisubs. It does not inherit a caller-supplied marker. Default-account Codex, neutral provider help, and every Claude child receive no `MULTISUBS_*` variable. Default Codex execution receives no managed auth override, and neutral or default Claude execution receives no `CLAUDE_CONFIG_DIR`.
+
+## Legacy-sensitive rejection
+
+The old product namespace and state root are sensitive but unsupported.
+
+- Any `MULTICODEX_*` variable rejects top-level startup before state access.
+- Runtime never reads `MULTICODEX_HOME`.
+- Runtime never defaults to `~/multicodex`.
+- Monitor discovery prunes `~/multicodex`, `~/.multicodex`, and candidates canonically inside either root before reading usage signals.
+- There is no old executable alias or compatibility command.
+- `.multicodex`, `multicodex` state paths, and old environment names remain only in ignore, leak, denylist, and rejection tests so old credentials cannot be committed or inherited.
+
+This rename phase does not migrate live state or an installed binary.
+
+## Read-only commands
+
+These paths must not create product state:
+
+- help and nested provider help;
+- version;
+- completion and dynamic profile completion;
+- unknown commands and rejected arguments;
+- `multisubs codex status`;
+- aggregate and focused doctors;
+- Codex dry run;
+- exact provider help passthrough, including target-scoped Codex CLI help and target-scoped login help for both providers without requiring a configured profile.
+
+## Usage and routing
+
+Codex routing and monitoring use weekly usage only. The default account and managed profiles use the same weekly, model, and reset policy. Unavailable, exhausted, or model-ineligible accounts are skipped. The existing narrow fallback for older official responses remains limited to weekly-compatible data.
+
+Claude routing scores the default account and managed profiles together using fresh official session and weekly all-model usage. It includes the Fable window only when that candidate's effective CLI and settings state says Fable is applicable or possible. The three-state policy fails closed per candidate: uncertainty requires Fable capacity but does not fail routing for other candidates.
+
+To classify a candidate, routing inspects only `model`, `fallbackModel`, `env.ANTHROPIC_MODEL`, and the default Opus, Sonnet, Haiku, and Fable model mappings. It streams those fields from regular settings files capped at 2 MiB and does not retain or report unrelated settings. Read and parse failures are reduced to safe source categories; output never includes a settings path, content, value, or underlying error.
+
+The default and managed user settings roots stay separate. Selected project and local settings, explicit `--settings`, and local macOS managed files are merged for the candidate without reading credentials or executing policy helpers. Server-managed, account, organization, or operating-system policy values that cannot be proved locally stay uncertain at field level. A conclusive higher-precedence CLI value can make an unknown lower value irrelevant.
+
+Usage probe failure excludes only the affected candidate. Organization deduplication and reservation locking apply to every candidate. The tool does not infer usage from credential contents.
+
+Both default accounts remain outside product ownership. Routing never changes their auth, config, or state.
+
+## Repository leak protection
+
+The repository keeps current and legacy-sensitive state patterns in `.gitignore` and doctor leak checks. It also checks for tracked credential-shaped paths and sensitive text.
+
+Tests and examples use synthetic values and dummy paths. Upstream attribution to `olliecrow/multicodex` is not a runtime compatibility reference.

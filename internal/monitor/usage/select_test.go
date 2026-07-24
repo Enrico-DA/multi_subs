@@ -8,7 +8,7 @@ import (
 
 func TestSelectBestAccountOrdersByPriorityThenWeeklyReset(t *testing.T) {
 	results := []accountFetchResult{
-		selectionResult("reserve", 100, 20, 60),
+		selectionResult("lower-priority", 100, 20, 60),
 		selectionResult("later", 0, 10, 3600),
 		selectionResult("sooner", 0, 90, 120),
 	}
@@ -90,7 +90,7 @@ func TestSelectBestAccountSkipsMissingAndExhaustedWeeklyUsage(t *testing.T) {
 	}
 }
 
-func TestSelectBestAccountUsesProtectedReserveFallback(t *testing.T) {
+func TestSelectBestAccountDoesNotUseUnavailablePriorityFallback(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		profile accountFetchResult
@@ -100,28 +100,24 @@ func TestSelectBestAccountUsesProtectedReserveFallback(t *testing.T) {
 		{name: "fetch failed", profile: accountFetchResult{codexHome: "/profile", account: AccountSummary{Label: "profile"}, fetchErr: errors.New("failed")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reserve := selectionResult("default", 100, unavailableUsedPercent, -1)
-			selected, err := selectBestAccountFromResultsForModel([]accountFetchResult{tc.profile, reserve}, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if selected.Account.Label != "default" || selected.WeeklyUsedPercent != unavailableUsedPercent {
-				t.Fatalf("expected protected reserve fallback, got %+v", selected)
+			fallback := selectionResult("fallback", 100, unavailableUsedPercent, -1)
+			if selected, err := selectBestAccountFromResultsForModel([]accountFetchResult{tc.profile, fallback}, ""); err == nil {
+				t.Fatalf("expected unavailable candidates to fail, got %+v", selected)
 			}
 		})
 	}
 }
 
-func TestSelectBestAccountKeepsReserveBehindUsableProfile(t *testing.T) {
+func TestSelectBestAccountHonorsGenericSelectionPriority(t *testing.T) {
 	selected, err := selectBestAccountFromResultsForModel([]accountFetchResult{
-		selectionResult("default", 100, 1, 60),
-		selectionResult("profile", 0, 99, -1),
+		selectionResult("lower-priority", 100, 1, 60),
+		selectionResult("higher-priority", 0, 99, -1),
 	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected.Account.Label != "profile" {
-		t.Fatalf("expected configured profile before reserve, got %q", selected.Account.Label)
+	if selected.Account.Label != "higher-priority" {
+		t.Fatalf("expected generic priority to win before reset order, got %q", selected.Account.Label)
 	}
 }
 
@@ -160,6 +156,34 @@ func TestSelectBestAccountForSparkUsesSparkWeeklyWindow(t *testing.T) {
 	}
 }
 
+func TestSelectBestAccountAppliesSparkPolicyEquallyToDefaultAndManaged(t *testing.T) {
+	defaultAccount := selectionResult("default", 0, 10, 600)
+	defaultAccount.account.RateLimitWindows = map[string]RateLimitWindow{
+		"codex_bengalfox": {LimitName: "Spark", WeeklyWindow: weeklyWindow(20, 60)},
+	}
+	managedAccount := selectionResult("managed", 0, 10, 600)
+	managedAccount.account.RateLimitWindows = map[string]RateLimitWindow{
+		"codex_bengalfox": {LimitName: "Spark", WeeklyWindow: weeklyWindow(30, 120)},
+	}
+
+	selected, err := selectBestAccountFromResultsForModel([]accountFetchResult{managedAccount, defaultAccount}, "spark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Account.Label != "default" {
+		t.Fatalf("expected default account with sooner Spark reset, got %q", selected.Account.Label)
+	}
+
+	defaultAccount.account.RateLimitWindows = nil
+	selected, err = selectBestAccountFromResultsForModel([]accountFetchResult{defaultAccount, managedAccount}, "spark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Account.Label != "managed" {
+		t.Fatalf("expected managed account when default lacks Spark usage, got %q", selected.Account.Label)
+	}
+}
+
 func TestSelectBestAccountForSparkRequiresSparkWeeklyWindow(t *testing.T) {
 	withoutSpark := selectionResult("standard", 0, 10, 60)
 	_, err := selectBestAccountFromResultsForModel([]accountFetchResult{withoutSpark}, "spark")
@@ -177,15 +201,11 @@ func TestSelectBestAccountForSparkRequiresSparkWeeklyWindow(t *testing.T) {
 	}
 }
 
-func TestSelectBestAccountForSparkCanUseReserveFallback(t *testing.T) {
+func TestSelectBestAccountForSparkDoesNotUseMissingModelFallback(t *testing.T) {
 	profile := selectionResult("profile", 0, 20, 60)
-	reserve := selectionResult("default", 100, 10, 60)
-	selected, err := selectBestAccountFromResultsForModel([]accountFetchResult{profile, reserve}, "spark")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if selected.Account.Label != "default" || selected.WeeklyUsedPercent != unavailableUsedPercent {
-		t.Fatalf("expected default reserve for missing Spark buckets, got %+v", selected)
+	fallback := selectionResult("fallback", 100, 10, 60)
+	if selected, err := selectBestAccountFromResultsForModel([]accountFetchResult{profile, fallback}, "spark"); err == nil {
+		t.Fatalf("expected missing Spark buckets to fail, got %+v", selected)
 	}
 }
 

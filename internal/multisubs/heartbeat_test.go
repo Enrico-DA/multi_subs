@@ -1,0 +1,561 @@
+package multisubs
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestCmdHeartbeatSuccessWithSkippedProfiles(t *testing.T) {
+	app := newHeartbeatTestApp(t, fakeCodexScript{
+		loginStatusByProfile: map[string]fakeStatus{
+			"alpha":   {exitCode: 0, output: "Logged in using ChatGPT"},
+			"bravo":   {exitCode: 1, output: "Not logged in"},
+			"default": {exitCode: 0, output: "Logged in using ChatGPT"},
+		},
+		execByProfile: map[string]fakeStatus{
+			"alpha": {exitCode: 0, output: "ok"},
+		},
+	})
+	createHeartbeatProfiles(t, app, "alpha", "bravo")
+
+	if err := app.cmdHeartbeat(nil); err != nil {
+		t.Fatalf("expected heartbeat success, got %v", err)
+	}
+}
+
+func TestCmdHeartbeatAppliesCustomResourcePolicy(t *testing.T) {
+	app := newHeartbeatTestApp(t, fakeCodexScript{
+		loginStatusByProfile: map[string]fakeStatus{"alpha": {exitCode: 1, output: "Not logged in"}},
+	})
+	createHeartbeatProfiles(t, app, "alpha")
+	source := filepath.Join(t.TempDir(), "skills")
+	if err := os.MkdirAll(filepath.Join(source, "shared"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := app.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inherit := true
+	sources := []string{source}
+	cfg.ProfileResources = &ProfileResources{Skills: &SkillResources{Inherit: &inherit, Sources: &sources}}
+	if err := app.store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	err = app.cmdHeartbeat(nil)
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || !strings.Contains(exitErr.Message, "no logged-in profiles") {
+		t.Fatalf("expected logged-out heartbeat result, got %v", err)
+	}
+	assertLinkTarget(t, filepath.Join(cfg.Profiles["alpha"].CodexHome, "skills", "shared"), filepath.Join(source, "shared"))
+}
+
+func TestCmdHeartbeatFailsWhenAnyLoggedInProfileFails(t *testing.T) {
+	app := newHeartbeatTestApp(t, fakeCodexScript{
+		loginStatusByProfile: map[string]fakeStatus{
+			"alpha":   {exitCode: 0, output: "Logged in using ChatGPT"},
+			"bravo":   {exitCode: 0, output: "Logged in using ChatGPT"},
+			"default": {exitCode: 0, output: "Logged in using ChatGPT"},
+		},
+		execByProfile: map[string]fakeStatus{
+			"alpha": {exitCode: 0, output: "ok"},
+			"bravo": {exitCode: 1, output: "provider unavailable"},
+		},
+	})
+	createHeartbeatProfiles(t, app, "alpha", "bravo")
+
+	err := app.cmdHeartbeat(nil)
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected ExitError, got %T (%v)", err, err)
+	}
+	if exitErr.Code != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitErr.Code)
+	}
+}
+
+func TestCmdHeartbeatFailsWhenNoLoggedInProfiles(t *testing.T) {
+	app := newHeartbeatTestApp(t, fakeCodexScript{
+		loginStatusByProfile: map[string]fakeStatus{
+			"alpha":   {exitCode: 1, output: "Not logged in"},
+			"bravo":   {exitCode: 1, output: "Not logged in"},
+			"default": {exitCode: 1, output: "Not logged in"},
+		},
+		execByProfile: map[string]fakeStatus{},
+	})
+	createHeartbeatProfiles(t, app, "alpha", "bravo")
+
+	err := app.cmdHeartbeat(nil)
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected ExitError, got %T (%v)", err, err)
+	}
+	if exitErr.Code != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitErr.Code)
+	}
+	if !strings.Contains(exitErr.Message, "no logged-in profiles") {
+		t.Fatalf("unexpected message: %s", exitErr.Message)
+	}
+}
+
+func TestCmdHeartbeatSkipsWhenRunAlreadyInProgress(t *testing.T) {
+	app := newHeartbeatTestApp(t, fakeCodexScript{
+		loginStatusByProfile: map[string]fakeStatus{
+			"alpha": {exitCode: 0, output: "Logged in using ChatGPT"},
+		},
+		execByProfile: map[string]fakeStatus{
+			"alpha": {exitCode: 0, output: "ok"},
+		},
+	})
+	createHeartbeatProfiles(t, app, "alpha")
+
+	settings, err := loadHeartbeatSettings(app.store.paths)
+	if err != nil {
+		t.Fatalf("load heartbeat settings: %v", err)
+	}
+	lockFile, acquired, err := acquireHeartbeatLock(settings.LockPath)
+	if err != nil {
+		t.Fatalf("acquire heartbeat lock: %v", err)
+	}
+	if !acquired {
+		t.Fatalf("expected first lock acquisition to succeed")
+	}
+	defer releaseHeartbeatLock(lockFile)
+
+	out, err := captureStdout(t, func() error {
+		return app.cmdHeartbeat(nil)
+	})
+	if err != nil {
+		t.Fatalf("expected skip without error, got %v", err)
+	}
+	if !strings.Contains(out, "already in progress") {
+		t.Fatalf("expected lock skip output, got %q", out)
+	}
+}
+
+func TestAcquireHeartbeatLockRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	lockPath := filepath.Join(root, "heartbeat.lock")
+	if err := os.Symlink(target, lockPath); err != nil {
+		t.Fatalf("symlink lock: %v", err)
+	}
+
+	_, _, err := acquireHeartbeatLock(lockPath)
+	if err == nil {
+		t.Fatal("expected symlink lock to fail")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink error, got %v", err)
+	}
+	b, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("read target: %v", readErr)
+	}
+	if string(b) != "keep\n" {
+		t.Fatalf("expected target not to be truncated, got %q", string(b))
+	}
+}
+
+func TestAcquireHeartbeatLockRejectsSymlinkedAncestor(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.MkdirAll(realDir, 0o700); err != nil {
+		t.Fatalf("mkdir real dir: %v", err)
+	}
+	linkedDir := filepath.Join(root, "link")
+	if err := os.Symlink(realDir, linkedDir); err != nil {
+		t.Fatalf("symlink lock ancestor: %v", err)
+	}
+	lockPath := filepath.Join(linkedDir, "subdir", "heartbeat.lock")
+
+	_, _, err := acquireHeartbeatLock(lockPath)
+	if err == nil {
+		t.Fatal("expected symlinked lock ancestor to fail")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(realDir, "subdir")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected setup not to write through symlink ancestor, stat err=%v", statErr)
+	}
+}
+
+func TestAcquireHeartbeatLockRejectsHardLink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	lockPath := filepath.Join(root, "heartbeat.lock")
+	if err := os.Link(target, lockPath); err != nil {
+		t.Skipf("hard links are not supported here: %v", err)
+	}
+
+	_, _, err := acquireHeartbeatLock(lockPath)
+	if err == nil {
+		t.Fatal("expected hard-linked lock to fail")
+	}
+	if !strings.Contains(err.Error(), "multiple hard links") {
+		t.Fatalf("expected hard-link error, got %v", err)
+	}
+	b, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("read target: %v", readErr)
+	}
+	if string(b) != "keep\n" {
+		t.Fatalf("expected target not to be truncated, got %q", string(b))
+	}
+}
+
+func TestCmdHeartbeatFailsWhenSharedConfigDoesNotUseFileStore(t *testing.T) {
+	app := newHeartbeatTestApp(t, fakeCodexScript{
+		loginStatusByProfile: map[string]fakeStatus{
+			"alpha": {exitCode: 0, output: "Logged in using ChatGPT"},
+		},
+		execByProfile: map[string]fakeStatus{
+			"alpha": {exitCode: 0, output: "ok"},
+		},
+	})
+	createHeartbeatProfiles(t, app, "alpha")
+	writeDefaultConfig(t, app, "model = \"global\"\n")
+	if err := os.WriteFile(filepath.Join(app.store.paths.ProfilesDir, "alpha", "codex-home", "auth.json"), []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return app.cmdHeartbeat(nil)
+	})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected ExitError, got %T (%v)", err, err)
+	}
+	if exitErr.Code != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitErr.Code)
+	}
+	if !strings.Contains(out, "requires file-backed auth") {
+		t.Fatalf("expected heartbeat output to mention file-backed auth, got %q", out)
+	}
+}
+
+func TestRunCodexHeartbeatTimeout(t *testing.T) {
+	root := t.TempDir()
+	profileHome := filepath.Join(root, "profile")
+	if err := os.MkdirAll(profileHome, 0o700); err != nil {
+		t.Fatalf("mkdir profile home: %v", err)
+	}
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	codexPath := filepath.Join(fakeBin, "codex")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "exec" ]; then
+  sleep 3
+  echo "ok"
+  exit 0
+fi
+if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
+  echo "Logged in using ChatGPT"
+  exit 0
+fi
+if [ "${1:-}" = "--version" ]; then
+  echo "codex-cli fake"
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(codexPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
+
+	prev := codexHeartbeatTimeout
+	codexHeartbeatTimeout = 150 * time.Millisecond
+	defer func() { codexHeartbeatTimeout = prev }()
+
+	detail, err := runCodexHeartbeat(profileHome, heartbeatSettings{
+		Timeout:  codexHeartbeatTimeout,
+		Retries:  heartbeatRetryCount,
+		Backoff:  heartbeatBackoff,
+		LockPath: filepath.Join(root, "heartbeat.lock"),
+	})
+	if err == nil {
+		t.Fatalf("expected timeout error")
+	}
+	if !strings.Contains(detail, "timed out") {
+		t.Fatalf("expected timeout detail, got %q", detail)
+	}
+}
+
+func TestRunCodexHeartbeatRedactsCLIOutputOnFailure(t *testing.T) {
+	root := t.TempDir()
+	profileHome := filepath.Join(root, "profile")
+	if err := os.MkdirAll(profileHome, 0o700); err != nil {
+		t.Fatalf("mkdir profile home: %v", err)
+	}
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	codexPath := filepath.Join(fakeBin, "codex")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "exec" ]; then
+  echo "Authorization: Bearer REDACTED_SECRET_PLACEHOLDER"
+  exit 1
+fi
+if [ "${1:-}" = "--version" ]; then
+  echo "codex-cli fake"
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(codexPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
+
+	detail, err := runCodexHeartbeat(profileHome, heartbeatSettings{
+		Timeout:  codexHeartbeatTimeout,
+		Retries:  heartbeatRetryCount,
+		Backoff:  heartbeatBackoff,
+		LockPath: filepath.Join(root, "heartbeat.lock"),
+	})
+	if err == nil {
+		t.Fatalf("expected failure")
+	}
+	if strings.Contains(detail, "REDACTED_SECRET_PLACEHOLDER") {
+		t.Fatalf("expected redacted detail, got %q", detail)
+	}
+	if !strings.Contains(detail, "exit code 1") {
+		t.Fatalf("expected exit code detail, got %q", detail)
+	}
+}
+
+func TestRunCodexHeartbeatRetriesWithEphemeralReadOnlyExec(t *testing.T) {
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+
+	attemptsPath := filepath.Join(root, "attempts.txt")
+	argsPath := filepath.Join(root, "args.txt")
+	cwdPath := filepath.Join(root, "cwd.txt")
+	codexPath := filepath.Join(fakeBin, "codex")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "exec" ]; then
+  printf '%s\n' "$*" > ` + shellQuote(argsPath) + `
+  printf '%s\n' "$PWD" > ` + shellQuote(cwdPath) + `
+  count=0
+  if [ -f ` + shellQuote(attemptsPath) + ` ]; then
+    count="$(cat ` + shellQuote(attemptsPath) + `)"
+  fi
+  count=$((count + 1))
+  printf '%s\n' "$count" > ` + shellQuote(attemptsPath) + `
+  if [ "$count" -eq 1 ]; then
+    exit 1
+  fi
+  echo ok
+  exit 0
+fi
+if [ "${1:-}" = "--version" ]; then
+  echo "codex-cli fake"
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(codexPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
+
+	profileHome := filepath.Join(root, "profile")
+	if err := os.MkdirAll(profileHome, 0o700); err != nil {
+		t.Fatalf("mkdir profile home: %v", err)
+	}
+
+	detail, err := runCodexHeartbeatWithRetries(profileHome, heartbeatSettings{
+		Timeout:  codexHeartbeatTimeout,
+		Retries:  1,
+		Backoff:  0,
+		LockPath: filepath.Join(root, "heartbeat.lock"),
+	})
+	if err != nil {
+		t.Fatalf("expected retry success, got %v", err)
+	}
+	if !strings.Contains(detail, "after 2 attempts") {
+		t.Fatalf("expected retry detail, got %q", detail)
+	}
+
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	argsText := strings.TrimSpace(string(argsBytes))
+	wantArgs := "exec --skip-git-repo-check --ephemeral --sandbox read-only --color never hello -c " + managedCodexAuthConfig
+	if argsText != wantArgs {
+		t.Fatalf("expected heartbeat args %q, got %q", wantArgs, argsText)
+	}
+
+	cwdBytes, err := os.ReadFile(cwdPath)
+	if err != nil {
+		t.Fatalf("read cwd: %v", err)
+	}
+	gotCWD := strings.TrimSpace(string(cwdBytes))
+	wantCanonical, err := filepath.EvalSymlinks(profileHome)
+	if err != nil {
+		t.Fatalf("eval want cwd: %v", err)
+	}
+	gotCanonical, err := filepath.EvalSymlinks(gotCWD)
+	if err != nil {
+		t.Fatalf("eval got cwd: %v", err)
+	}
+	if gotCanonical != wantCanonical {
+		t.Fatalf("expected heartbeat cwd %q, got %q", wantCanonical, gotCanonical)
+	}
+}
+
+func TestLoadHeartbeatSettingsRejectsLockPathOutsideMultisubsHome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("MULTISUBS_HEARTBEAT_LOCK_PATH", filepath.Join(t.TempDir(), "heartbeat.lock"))
+
+	_, err := loadHeartbeatSettings(Paths{MultisubsHome: root})
+	if err == nil {
+		t.Fatal("expected outside heartbeat lock path to fail")
+	}
+	if !strings.Contains(err.Error(), "must stay under") {
+		t.Fatalf("expected under-root error, got %v", err)
+	}
+}
+
+func TestHeartbeatSkipDetailCodexMissing(t *testing.T) {
+	t.Parallel()
+	got := heartbeatSkipDetail("error", `exec: "codex": executable file not found in $PATH`)
+	if got != "codex binary not found in PATH" {
+		t.Fatalf("unexpected message: %q", got)
+	}
+}
+
+type fakeStatus struct {
+	exitCode int
+	output   string
+}
+
+type fakeCodexScript struct {
+	loginStatusByProfile map[string]fakeStatus
+	execByProfile        map[string]fakeStatus
+}
+
+func newHeartbeatTestApp(t *testing.T, cfg fakeCodexScript) *App {
+	t.Helper()
+
+	root := t.TempDir()
+	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multi"))
+	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
+	t.Setenv("MULTISUBS_HEARTBEAT_BACKOFF_SECONDS", "0")
+
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+
+	loginDefault := cfg.loginStatusByProfile["default"]
+	if loginDefault.output == "" {
+		loginDefault = fakeStatus{exitCode: 1, output: "Not logged in"}
+	}
+	execDefault := cfg.execByProfile["default"]
+	if execDefault.output == "" {
+		execDefault = fakeStatus{exitCode: 0, output: "ok"}
+	}
+
+	var script strings.Builder
+	script.WriteString("#!/usr/bin/env bash\nset -euo pipefail\n")
+	script.WriteString("profile=\"$(basename \"$(dirname \"$CODEX_HOME\")\")\"\n")
+	script.WriteString("if [ \"${1:-}\" = \"login\" ] && [ \"${2:-}\" = \"status\" ]; then\n")
+	script.WriteString("  case \"$profile\" in\n")
+	for name, st := range cfg.loginStatusByProfile {
+		script.WriteString("    ")
+		script.WriteString(name)
+		script.WriteString(")\n")
+		script.WriteString("      echo ")
+		script.WriteString(shellQuote(st.output))
+		script.WriteString("\n")
+		script.WriteString("      exit ")
+		script.WriteString(strconv.Itoa(st.exitCode))
+		script.WriteString("\n")
+		script.WriteString("      ;;\n")
+	}
+	script.WriteString("    *)\n")
+	script.WriteString("      echo ")
+	script.WriteString(shellQuote(loginDefault.output))
+	script.WriteString("\n")
+	script.WriteString("      exit ")
+	script.WriteString(strconv.Itoa(loginDefault.exitCode))
+	script.WriteString("\n")
+	script.WriteString("      ;;\n")
+	script.WriteString("  esac\n")
+	script.WriteString("fi\n")
+	script.WriteString("if [ \"${1:-}\" = \"exec\" ]; then\n")
+	script.WriteString("  case \"$profile\" in\n")
+	for name, st := range cfg.execByProfile {
+		script.WriteString("    ")
+		script.WriteString(name)
+		script.WriteString(")\n")
+		script.WriteString("      echo ")
+		script.WriteString(shellQuote(st.output))
+		script.WriteString("\n")
+		script.WriteString("      exit ")
+		script.WriteString(strconv.Itoa(st.exitCode))
+		script.WriteString("\n")
+		script.WriteString("      ;;\n")
+	}
+	script.WriteString("    *)\n")
+	script.WriteString("      echo ")
+	script.WriteString(shellQuote(execDefault.output))
+	script.WriteString("\n")
+	script.WriteString("      exit ")
+	script.WriteString(strconv.Itoa(execDefault.exitCode))
+	script.WriteString("\n")
+	script.WriteString("      ;;\n")
+	script.WriteString("  esac\n")
+	script.WriteString("fi\n")
+	script.WriteString("if [ \"${1:-}\" = \"--version\" ]; then echo 'codex-cli fake'; exit 0; fi\n")
+	script.WriteString("echo 'unexpected invocation' >&2\nexit 1\n")
+
+	codexPath := filepath.Join(fakeBin, "codex")
+	if err := os.WriteFile(codexPath, []byte(script.String()), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
+
+	app, err := NewApp()
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	writeDefaultFileStoreConfig(t, app)
+	return app
+}
+
+func createHeartbeatProfiles(t *testing.T, app *App, names ...string) {
+	t.Helper()
+
+	createTestProfiles(t, app, names...)
+}
+
+func shellQuote(s string) string {
+	s = strings.ReplaceAll(s, `'`, `'\''`)
+	return "'" + s + "'"
+}

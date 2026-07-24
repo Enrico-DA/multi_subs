@@ -8,11 +8,56 @@ import (
 )
 
 const credentialStoreKey = "cli_auth_credentials_store"
+const modelKey = "model"
 
 // CredentialStoreFromTOML returns the root-level Codex credential store.
 func CredentialStoreFromTOML(content string) (string, bool, error) {
+	return rootStringFromTOML(content, credentialStoreKey, false)
+}
+
+// ModelFromTOML returns the effective root-level Codex model. Duplicate root
+// model declarations are rejected because Codex rejects duplicate TOML keys.
+func ModelFromTOML(content string) (string, bool, error) {
+	return rootStringFromTOML(content, modelKey, true)
+}
+
+// ModelFromConfigOverride returns a model only for the exact root `model`
+// override accepted by Codex's -c/--config option. Quoted TOML strings and
+// Codex's unquoted string fallback are both supported.
+func ModelFromConfigOverride(override string) (string, bool, error) {
+	key, rawValue, ok := strings.Cut(override, "=")
+	if !ok {
+		if strings.TrimSpace(override) == modelKey {
+			return "", true, errors.New("model override is missing '='")
+		}
+		return "", false, nil
+	}
+	if strings.TrimSpace(key) != modelKey {
+		return "", false, nil
+	}
+
+	value := strings.TrimSpace(rawValue)
+	if value == "" {
+		return "", true, errors.New("model override has an empty value")
+	}
+	if value[0] == '"' || value[0] == '\'' {
+		model, err := parseTOMLStringValue(modelKey, value)
+		if err != nil {
+			return "", true, err
+		}
+		if strings.TrimSpace(model) == "" {
+			return "", true, errors.New("model override has an empty value")
+		}
+		return model, true, nil
+	}
+	return value, true, nil
+}
+
+func rootStringFromTOML(content, wantedKey string, rejectDuplicate bool) (string, bool, error) {
 	inRootTable := true
 	multilineDelimiter := ""
+	foundValue := ""
+	found := false
 	for _, rawLine := range strings.Split(content, "\n") {
 		line := strings.TrimSpace(stripTOMLComment(rawLine))
 		if line == "" {
@@ -45,7 +90,7 @@ func CredentialStoreFromTOML(content string) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
-		if key != credentialStoreKey {
+		if key != wantedKey {
 			value := strings.TrimSpace(line[assignIndex+1:])
 			switch {
 			case strings.HasPrefix(value, `"""`) && strings.Count(value, `"""`)%2 == 1:
@@ -56,13 +101,20 @@ func CredentialStoreFromTOML(content string) (string, bool, error) {
 			continue
 		}
 
-		value, err := parseTOMLStringValue(line[assignIndex+1:])
+		if found && rejectDuplicate {
+			return "", false, fmt.Errorf("duplicate root %s key", wantedKey)
+		}
+		value, err := parseTOMLStringValue(wantedKey, line[assignIndex+1:])
 		if err != nil {
 			return "", false, err
 		}
-		return value, true, nil
+		foundValue = value
+		found = true
+		if !rejectDuplicate {
+			return foundValue, true, nil
+		}
 	}
-	return "", false, nil
+	return foundValue, found, nil
 }
 
 func parseTOMLKey(raw string) (string, error) {
@@ -83,22 +135,25 @@ func parseTOMLKey(raw string) (string, error) {
 	return key, nil
 }
 
-func parseTOMLStringValue(raw string) (string, error) {
+func parseTOMLStringValue(key, raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
-		return "", errors.New("cli_auth_credentials_store has empty value")
+		return "", fmt.Errorf("%s has empty value", key)
 	}
 	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
 		unquoted, err := strconv.Unquote(value)
 		if err != nil {
-			return "", fmt.Errorf("invalid quoted cli_auth_credentials_store value %q: %w", value, err)
+			return "", fmt.Errorf("invalid quoted %s value: %w", key, err)
 		}
 		return unquoted, nil
 	}
 	if len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'' {
+		if strings.Contains(value[1:len(value)-1], "'") {
+			return "", fmt.Errorf("invalid literal %s value", key)
+		}
 		return value[1 : len(value)-1], nil
 	}
-	return "", fmt.Errorf("invalid cli_auth_credentials_store value %q", value)
+	return "", fmt.Errorf("invalid %s value", key)
 }
 
 func stripTOMLComment(line string) string {

@@ -86,9 +86,6 @@ func selectBestAccountFromResultsForModel(results []accountFetchResult, model st
 		if usageWindowIsKnownExhausted(weeklyWindow) {
 			continue
 		}
-		if reserveCandidateBlockedByLowerPriorityAccount(results, result.selectionPriority, model) {
-			continue
-		}
 
 		candidate := accountWindowCandidate{
 			resultIndex:       i,
@@ -105,9 +102,6 @@ func selectBestAccountFromResultsForModel(results []accountFetchResult, model st
 	}
 
 	if selected, ok := choosePrioritizedEligibleAccount(results, knownResetCandidates, unknownResetCandidates); ok {
-		return selected, nil
-	}
-	if selected, ok := chooseReserveFallbackAccount(results, model); ok {
 		return selected, nil
 	}
 	if modelIsSpark && !hadModelWindow {
@@ -128,36 +122,6 @@ func choosePrioritizedEligibleAccount(results []accountFetchResult, knownResetCa
 			return selected, true
 		}
 		if selected, ok := chooseSelectedAccount(results, candidatesWithPriority(unknownResetCandidates, priority)); ok {
-			return selected, true
-		}
-	}
-	return SelectedAccount{}, false
-}
-
-func chooseReserveFallbackAccount(results []accountFetchResult, model string) (SelectedAccount, bool) {
-	candidates := []accountWindowCandidate{}
-	for i, result := range results {
-		if result.selectionPriority <= 0 {
-			continue
-		}
-		if reserveCandidateBlockedByLowerPriorityAccount(results, result.selectionPriority, model) {
-			continue
-		}
-		weeklyUsedPercent := unavailableUsedPercent
-		if result.fetchErr == nil && result.snapshot != nil {
-			weeklyWindow, hasModelWindow := selectWeeklyWindowForModel(result.account, model)
-			if !isSparkModel(model) || hasModelWindow {
-				weeklyUsedPercent = weeklyWindow.UsedPercent
-			}
-		}
-		candidates = append(candidates, accountWindowCandidate{
-			resultIndex:       i,
-			selectionPriority: result.selectionPriority,
-			weeklyUsedPercent: weeklyUsedPercent,
-		})
-	}
-	for _, priority := range sortedCandidatePriorities(candidates) {
-		if selected, ok := chooseSelectedAccount(results, candidatesWithPriority(candidates, priority)); ok {
 			return selected, true
 		}
 	}
@@ -224,22 +188,6 @@ func usageWindowAvailable(weekly WindowSummary) bool {
 
 func usageWindowIsKnownExhausted(win WindowSummary) bool {
 	return win.UsedPercent != unavailableUsedPercent && win.UsedPercent >= 100
-}
-
-func reserveCandidateBlockedByLowerPriorityAccount(results []accountFetchResult, priority int, model string) bool {
-	for _, result := range results {
-		if result.selectionPriority >= priority || result.fetchErr != nil || result.snapshot == nil {
-			continue
-		}
-		weeklyWindow, hasModelWindow := selectWeeklyWindowForModel(result.account, model)
-		if isSparkModel(model) && !hasModelWindow {
-			continue
-		}
-		if usageWindowAvailable(weeklyWindow) && !usageWindowIsKnownExhausted(weeklyWindow) {
-			return true
-		}
-	}
-	return false
 }
 
 func chooseSelectedAccount(results []accountFetchResult, candidates []accountWindowCandidate) (SelectedAccount, bool) {

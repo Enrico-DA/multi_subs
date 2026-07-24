@@ -1,4 +1,4 @@
-# multicodex repository guidance
+# multisubs repository guidance
 
 ## Repository ownership
 
@@ -9,17 +9,17 @@
 
 ## Purpose and layout
 
-- `multicodex` is a local-first Go CLI for isolated Codex and Claude subscription profiles, provider-specific execution routing, heartbeat checks, and usage monitoring.
-- `cmd/multicodex/` contains the entry point. Product code and tests live under `internal/`.
+- `multisubs` is a local-first Go CLI for isolated Codex and Claude subscription profiles, provider-specific execution routing, heartbeat checks, and usage monitoring.
+- `cmd/multisubs/` contains the entry point. Product code and tests live under `internal/`.
 - `README.md` is the user guide. `docs/command-spec.md` is the command contract, `docs/security-and-privacy.md` is the security contract, and `docs/decisions.md` records durable cross-cutting rationale.
 
 ## Product invariants
 
 - Keep each profile's auth, sessions, threads, `/goal`, and other Codex state inside its profile-local `CODEX_HOME`.
 - Keep each managed Claude account inside its derived profile-local `CLAUDE_CONFIG_DIR`.
-- Never change, copy, restore, back up, symlink, or otherwise manage either shared default auth account. Each default account is only a protected routing reserve; the default Codex home is also a read-only monitor source.
+- Never change, copy, restore, back up, symlink, or otherwise manage either shared default auth account. Each default account participates normally in routing while remaining outside product ownership; the default Codex home is also a read-only monitor source.
 - Never print raw credentials or raw subprocess failure output that could contain credentials. Tests and examples must use synthetic state and dummy paths.
-- Preserve resource reconciliation's no-clobber behavior: regular profile guidance, config, and skill entries are user overrides; only documented multicodex-owned symlinks may be changed. Runtime-managed `.system` skills remain profile-local.
+- Preserve resource reconciliation's no-clobber behavior: regular profile guidance, config, and skill entries are user overrides; only documented multisubs-owned symlinks may be changed. Runtime-managed `.system` skills remain profile-local.
 - Keep Codex usage and routing weekly-only. Prefer declared 10,080-minute windows and retain only the existing narrow compatibility fallback for older provider responses.
 - Keep Claude routing based on fresh official session, weekly all-model, and Fable usage without reading credential contents.
 - Keep the CLI surface and error behavior aligned with `docs/command-spec.md`.
@@ -34,7 +34,7 @@
 ## Change discipline
 
 - Make small, evidence-backed changes and fail closed when routing, auth, or local state cannot be verified safely.
-- Keep one clear current path. Do not add speculative fallbacks that hide failures or spend protected account quota unexpectedly.
+- Keep one clear current path. Do not add speculative fallbacks that hide failures or spend account quota unexpectedly.
 - Treat user docs, command contracts, and security contracts as behavior.
 - Verify close to the change first, then run the broader repository checks.
 

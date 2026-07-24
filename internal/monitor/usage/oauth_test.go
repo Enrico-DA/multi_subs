@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Enrico-DA/multicodex/internal/buildinfo"
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

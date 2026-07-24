@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/Enrico-DA/multicodex/internal/monitor/usage"
+	"github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
 
 type FetchFunc func(context.Context) (*usage.Summary, error)
@@ -223,7 +223,7 @@ func (m Model) View() string {
 }
 
 func (m Model) renderHeader() string {
-	title := m.styles.title.Render(" multicodex monitor ")
+	title := m.styles.title.Render(" multisubs codex monitor ")
 
 	stateText := "idle"
 	stateStyle := m.styles.dim
@@ -239,7 +239,7 @@ func (m Model) renderHeader() string {
 	}
 
 	if m.width < 60 {
-		left := m.styles.accent.Render("multicodex") + " " + stateStyle.Render(stateText)
+		left := m.styles.accent.Render("multisubs") + " " + stateStyle.Render(stateText)
 		if !m.nextFetchAt.IsZero() {
 			left += " " + m.styles.dim.Render(humanDuration(m.nextFetchAt.Sub(m.now)))
 		}

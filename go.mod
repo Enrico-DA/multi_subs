@@ -1,4 +1,4 @@
-module github.com/Enrico-DA/multicodex
+module github.com/Enrico-DA/multi_subs
 
 go 1.25.0
 

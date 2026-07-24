@@ -15,11 +15,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Enrico-DA/multicodex/internal/buildinfo"
-	"github.com/Enrico-DA/multicodex/internal/codexstate"
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
+	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 )
 
-const clientName = "multicodex-monitor"
+const clientName = "multisubs-monitor"
 
 type rpcRequest struct {
 	JSONRPC string `json:"jsonrpc"`

@@ -113,7 +113,7 @@ func TestCheckCodexBinaryScrubsCodexEnvironment(t *testing.T) {
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("USAGE_TEST_ENV_LOG", logPath)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "stale-codex"))
-	t.Setenv("MULTICODEX_ACTIVE_PROFILE", "stale")
+	t.Setenv("MULTISUBS_ACTIVE_PROFILE", "stale")
 	t.Setenv("OPENAI_API_KEY", "stale")
 	t.Setenv("CODEX_AUTH_TOKEN", "stale")
 
@@ -127,7 +127,7 @@ func TestCheckCodexBinaryScrubsCodexEnvironment(t *testing.T) {
 		t.Fatalf("read codex env log: %v", err)
 	}
 	log := string(data)
-	for _, forbidden := range []string{"CODEX_HOME", "MULTICODEX_ACTIVE_PROFILE", "OPENAI_API_KEY", "CODEX_AUTH_TOKEN"} {
+	for _, forbidden := range []string{"CODEX_HOME", "MULTISUBS_ACTIVE_PROFILE", "OPENAI_API_KEY", "CODEX_AUTH_TOKEN"} {
 		if envLogContainsKey(log, forbidden) {
 			t.Fatalf("expected %s to be scrubbed from codex version env", forbidden)
 		}

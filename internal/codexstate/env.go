@@ -21,12 +21,12 @@ func SanitizedEnv(base []string, codexHome string) []string {
 }
 
 func environmentVariableIsAccountScoped(key string) bool {
+	if strings.HasPrefix(key, "MULTISUBS_") || strings.HasPrefix(key, "MULTICODEX_") {
+		return true
+	}
 	switch key {
 	case "CODEX_HOME",
-		"MULTICODEX_ACTIVE_PROFILE",
-		"MULTICODEX_SELECTED_PROFILE_PATH",
-		"MULTICODEX_HEARTBEAT_LOCK_PATH",
-		"MULTICODEX_HEARTBEAT_PROMPT",
+		"CODEX_USAGE_MONITOR_ACCOUNTS_FILE",
 		"OPENAI_API_KEY",
 		"OPENAI_ORG_ID",
 		"OPENAI_ORGANIZATION",
