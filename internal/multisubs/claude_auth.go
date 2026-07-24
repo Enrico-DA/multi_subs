@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	monitorusage "github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
 
 type claudeAuthStatus struct {
@@ -107,4 +109,27 @@ func validateClaudeRoutingAuth(status claudeAuthStatus) error {
 		return errors.New("Claude auth status did not report an organization ID")
 	}
 	return nil
+}
+
+type claudeUsageIdentity struct {
+	Organization string
+	AccountEmail string
+}
+
+func validateClaudeUsageIdentity(status claudeAuthStatus) (claudeUsageIdentity, error) {
+	if !status.LoggedIn {
+		return claudeUsageIdentity{}, errors.New("not logged in")
+	}
+	organization := strings.TrimSpace(status.OrgID)
+	if organization == "" {
+		return claudeUsageIdentity{}, errors.New("Claude auth status did not report an organization ID")
+	}
+	accountEmail := monitorusage.NormalizeAccountEmail(status.Identity)
+	if accountEmail == "" {
+		return claudeUsageIdentity{}, errors.New("Claude auth status did not report a valid account email")
+	}
+	return claudeUsageIdentity{
+		Organization: organization,
+		AccountEmail: accountEmail,
+	}, nil
 }

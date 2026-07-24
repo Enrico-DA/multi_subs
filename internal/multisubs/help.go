@@ -57,7 +57,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"usage": {
 		Usage:       "multisubs usage",
-		Description: "Show a read-only Codex and Claude quota snapshot for managed profiles and both default accounts. Partial account failures exit 1. JSON output is not available yet.",
+		Description: "Show a read-only Codex and Claude quota snapshot with validated full local account emails for managed profiles and both default accounts. Partial account failures exit 1. JSON output is not available yet.",
 	},
 	"completion": {
 		Usage:       "multisubs completion <bash|zsh|fish>",
@@ -115,7 +115,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"codex usage": {
 		Usage:       "multisubs codex usage",
-		Description: "Show session, weekly, and reported model-specific Codex quota for managed profiles and the default account. This snapshot does not change weekly-only routing.",
+		Description: "Show session, weekly, and reported model-specific Codex quota with validated full local account emails for managed profiles and the default account. This snapshot does not change weekly-only routing.",
 	},
 	"codex reconcile": {
 		Usage:       "multisubs codex reconcile",
@@ -183,7 +183,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"claude usage": {
 		Usage:       "multisubs claude usage",
-		Description: "Show fresh session, weekly all-model, and optional Fable quota for every managed profile and the default account through the shared usage report.",
+		Description: "Show fresh session, weekly all-model, and optional Fable quota with validated full local account emails for every managed profile and the default account through the shared usage report.",
 	},
 	"claude doctor": {
 		Usage:       "multisubs claude doctor",

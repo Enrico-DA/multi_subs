@@ -775,7 +775,7 @@ func (f *Fetcher) fetchAccountResult(ctx context.Context, account accountFetcher
 	snapshot, fetchErr := fetchWithFallback(ctx, account.primary, account.fallback)
 	if fetchErr != nil {
 		result.fetchErr = fetchErr
-		if email, err := accountEmailFromAuthFileForHome(account.account.CodexHome); err == nil {
+		if email, err := AccountEmailFromAuthFileForHome(account.account.CodexHome); err == nil {
 			result.account.AccountEmail = email
 		}
 		result.account.Error = fetchErr.Error()
