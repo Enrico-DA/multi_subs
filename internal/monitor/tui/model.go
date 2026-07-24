@@ -839,7 +839,8 @@ func mergeStaleWindowData(current, cached *usage.Summary) *usage.Summary {
 	out.AccountID = cached.AccountID
 	out.UserID = cached.UserID
 	out.WindowDataAvailable = cached.WindowDataAvailable
-	out.WeeklyWindow = cached.WeeklyWindow
+	out.SessionWindow = cloneWindowSummary(cached.SessionWindow)
+	out.WeeklyWindow = cloneWindowSummary(cached.WeeklyWindow)
 	out.WindowAccountLabel = cached.WindowAccountLabel
 	out.AdditionalLimitCount = cached.AdditionalLimitCount
 	out.Accounts = cloneAccountSummaries(cached.Accounts)
@@ -856,6 +857,8 @@ func cloneSummary(summary *usage.Summary) *usage.Summary {
 		return nil
 	}
 	out := *summary
+	out.SessionWindow = cloneWindowSummary(summary.SessionWindow)
+	out.WeeklyWindow = cloneWindowSummary(summary.WeeklyWindow)
 	out.Accounts = cloneAccountSummaries(summary.Accounts)
 	out.RateLimitWindows = cloneRateLimitWindows(summary.RateLimitWindows)
 	out.Warnings = append([]string(nil), summary.Warnings...)
@@ -877,6 +880,8 @@ func cloneAccountSummaries(in []usage.AccountSummary) []usage.AccountSummary {
 	out := make([]usage.AccountSummary, len(in))
 	copy(out, in)
 	for i := range out {
+		out[i].SessionWindow = cloneWindowSummary(in[i].SessionWindow)
+		out[i].WeeklyWindow = cloneWindowSummary(in[i].WeeklyWindow)
 		out[i].Warnings = append([]string(nil), in[i].Warnings...)
 		if in[i].ObservedWindowWeekly != nil {
 			clone := *in[i].ObservedWindowWeekly
@@ -904,12 +909,17 @@ func cloneRateLimitWindows(in map[string]usage.RateLimitWindow) map[string]usage
 
 func cloneRateLimitWindow(window usage.RateLimitWindow) usage.RateLimitWindow {
 	cloned := window
+	cloned.SessionWindow = cloneWindowSummary(window.SessionWindow)
 	cloned.WeeklyWindow = cloneWindowSummary(window.WeeklyWindow)
 	return cloned
 }
 
 func cloneWindowSummary(win usage.WindowSummary) usage.WindowSummary {
 	cloned := win
+	if win.WindowDurationMins != nil {
+		windowDurationMins := *win.WindowDurationMins
+		cloned.WindowDurationMins = &windowDurationMins
+	}
 	if win.ResetsAt != nil {
 		resetsAt := *win.ResetsAt
 		cloned.ResetsAt = &resetsAt

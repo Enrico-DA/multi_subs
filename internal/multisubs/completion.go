@@ -63,7 +63,7 @@ _multisubs_complete() {
   command="${COMP_WORDS[3]:-}"
 
   if (( COMP_CWORD == 1 )); then
-    COMPREPLY=( $(compgen -W "init doctor codex claude completion version help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "init doctor usage codex claude completion version help" -- "$cur") )
     return 0
   fi
 
@@ -76,7 +76,7 @@ _multisubs_complete() {
       ;;
     codex)
       if (( COMP_CWORD == 2 )); then
-        COMPREPLY=( $(compgen -W "init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
         return 0
       fi
       case "$provider" in
@@ -114,7 +114,7 @@ _multisubs_complete() {
           ;;
         help)
           if (( COMP_CWORD == 3 )); then
-            COMPREPLY=( $(compgen -W "init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
           fi
           ;;
       esac
@@ -144,11 +144,11 @@ _multisubs_complete() {
       ;;
     help)
       if (( COMP_CWORD == 2 )); then
-        COMPREPLY=( $(compgen -W "init doctor codex claude completion version help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "init doctor usage codex claude completion version help" -- "$cur") )
       elif (( COMP_CWORD == 3 )); then
         case "${COMP_WORDS[2]}" in
           codex)
-            COMPREPLY=( $(compgen -W "init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
             ;;
           claude)
             COMPREPLY=( $(compgen -W "add login cli exec status usage doctor help" -- "$cur") )
@@ -188,7 +188,7 @@ _multisubs_complete() {
   command="${words[4]:-}"
 
   if (( CURRENT == 2 )); then
-    compadd -- init doctor codex claude completion version help
+    compadd -- init doctor usage codex claude completion version help
     return
   fi
 
@@ -201,7 +201,7 @@ _multisubs_complete() {
       ;;
     codex)
       if (( CURRENT == 3 )); then
-        compadd -- init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help
+        compadd -- init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help
         return
       fi
       case "$provider" in
@@ -233,7 +233,7 @@ _multisubs_complete() {
           ;;
         help)
           if (( CURRENT == 4 )); then
-            compadd -- init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help
+            compadd -- init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help
           fi
           ;;
       esac
@@ -263,10 +263,10 @@ _multisubs_complete() {
       ;;
     help)
       if (( CURRENT == 3 )); then
-        compadd -- init doctor codex claude completion version help
+        compadd -- init doctor usage codex claude completion version help
       elif (( CURRENT == 4 )); then
         case "${words[3]:-}" in
-          codex) compadd -- init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help ;;
+          codex) compadd -- init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help ;;
           claude) compadd -- add login cli exec status usage doctor help ;;
         esac
       elif (( CURRENT == 5 )) && [[ "${words[3]:-}" == "codex" && "${words[4]:-}" == "monitor" ]]; then
@@ -289,16 +289,16 @@ type fishCompletionEntry struct {
 }
 
 func fishCompletionEntries() []fishCompletionEntry {
-	codexCommands := []string{"init", "add", "login", "login-all", "cli", "exec", "status", "reconcile", "heartbeat", "monitor", "doctor", "dry-run", "help"}
+	codexCommands := []string{"init", "add", "login", "login-all", "cli", "exec", "status", "usage", "reconcile", "heartbeat", "monitor", "doctor", "dry-run", "help"}
 	claudeCommands := []string{"add", "login", "cli", "exec", "status", "usage", "doctor", "help"}
 	monitorCommands := []string{"doctor", "completion", "help", "tui"}
 	monitorTUIOptions := []string{"interval", "timeout", "no-color", "no-alt-screen", "include-default", "include-active", "discover"}
 
 	return []fishCompletionEntry{
-		{tokens: []string{"init", "doctor", "codex", "claude", "completion", "version", "help"}},
+		{tokens: []string{"init", "doctor", "usage", "codex", "claude", "completion", "version", "help"}},
 		{path: []string{"codex"}, tokens: codexCommands},
 		{path: []string{"claude"}, tokens: claudeCommands},
-		{path: []string{"help"}, tokens: []string{"init", "doctor", "codex", "claude", "completion", "version", "help"}},
+		{path: []string{"help"}, tokens: []string{"init", "doctor", "usage", "codex", "claude", "completion", "version", "help"}},
 		{path: []string{"help", "codex"}, tokens: codexCommands},
 		{path: []string{"help", "claude"}, tokens: claudeCommands},
 		{path: []string{"help", "codex", "monitor"}, tokens: monitorCommands},

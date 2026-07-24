@@ -1138,6 +1138,30 @@ func TestSelectExecProfileUsesDefaultMetadataSource(t *testing.T) {
 	}
 }
 
+func TestCodexRoutingTargetsKeepTypedDefaultWhenManagedHomeIsTampered(t *testing.T) {
+	app := newTestAppForCLI(t)
+	cfg := DefaultConfig()
+	cfg.Profiles["tampered"] = Profile{
+		Name:      "tampered",
+		CodexHome: app.store.paths.DefaultCodexHome,
+	}
+
+	targets := codexRoutingTargets(cfg, app.store.paths.DefaultCodexHome)
+	if len(targets) != 2 {
+		t.Fatalf("routing target count: got %d want 2", len(targets))
+	}
+	if targets[0].Kind != codexRoutingTargetManaged ||
+		targets[0].Account.Label != "tampered" ||
+		targets[0].Profile == nil {
+		t.Fatalf("typed managed routing target: %+v", targets[0])
+	}
+	if targets[1].Kind != codexRoutingTargetDefault ||
+		targets[1].Account.Label != defaultExecAccountLabel ||
+		targets[1].Profile != nil {
+		t.Fatalf("typed default routing target: %+v", targets[1])
+	}
+}
+
 func TestSelectExecProfileCannotResolveBuiltInDefaultHomeToManagedProfileByLabel(t *testing.T) {
 	app := newTestAppForCLI(t)
 	cfg := DefaultConfig()

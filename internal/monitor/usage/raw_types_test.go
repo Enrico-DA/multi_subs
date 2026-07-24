@@ -31,6 +31,60 @@ func TestNormalizeSummaryExtractsDeclaredWeeklyWindowFromEitherPosition(t *testi
 	}
 }
 
+func TestNormalizeSummaryExtractsDeclaredSessionWindowWithoutPositionGuessing(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		primary   *rateLimitWindowRaw
+		secondary *rateLimitWindowRaw
+		wantUsed  int
+		wantMins  int
+	}{
+		{name: "session then weekly", primary: rawWindow(24, 300), secondary: rawWeeklyWindow(61), wantUsed: 24, wantMins: 300},
+		{name: "weekly then session", primary: rawWeeklyWindow(61), secondary: rawWindow(24, 300), wantUsed: 24, wantMins: 300},
+		{name: "short only", primary: rawWindow(18, 90), wantUsed: 18, wantMins: 90},
+		{name: "weekly only", primary: rawWeeklyWindow(44), wantUsed: unavailableUsedPercent},
+		{name: "missing duration", primary: &rateLimitWindowRaw{UsedPercent: 18}, wantUsed: unavailableUsedPercent},
+		{
+			name:      "ambiguous non-weekly",
+			primary:   rawWindow(18, 90),
+			secondary: rawWindow(23, 120),
+			wantUsed:  unavailableUsedPercent,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			summary, err := normalizeSummary("app-server", rateLimitSnapshotRaw{
+				LimitID:   "codex",
+				Primary:   test.primary,
+				Secondary: test.secondary,
+			}, nil, 0, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if summary.SessionWindow.UsedPercent != test.wantUsed {
+				t.Fatalf("session used percent: got %d want %d (%+v)", summary.SessionWindow.UsedPercent, test.wantUsed, summary.SessionWindow)
+			}
+			if test.wantMins > 0 && (summary.SessionWindow.WindowDurationMins == nil || *summary.SessionWindow.WindowDurationMins != test.wantMins) {
+				t.Fatalf("session duration: got %+v want %d", summary.SessionWindow.WindowDurationMins, test.wantMins)
+			}
+		})
+	}
+}
+
+func TestNormalizeSummaryDeclaredFiveHourSessionWinsOtherNonWeeklyDuration(t *testing.T) {
+	summary, err := normalizeSummary("app-server", rateLimitSnapshotRaw{
+		Primary:   rawWindow(70, 120),
+		Secondary: rawWindow(24, 300),
+	}, nil, 0, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.SessionWindow.UsedPercent != 24 ||
+		summary.SessionWindow.WindowDurationMins == nil ||
+		*summary.SessionWindow.WindowDurationMins != 300 {
+		t.Fatalf("expected declared five-hour session, got %+v", summary.SessionWindow)
+	}
+}
+
 func TestNormalizeSummaryUsesOnlyNarrowLegacySecondaryFallback(t *testing.T) {
 	summary, err := normalizeSummary("oauth", rateLimitSnapshotRaw{
 		Primary:   &rateLimitWindowRaw{UsedPercent: 7},
@@ -111,6 +165,33 @@ func TestNormalizeSummaryBuildsDefaultAndSparkWeeklyBuckets(t *testing.T) {
 	spark := summary.RateLimitWindows["codex_bengalfox"]
 	if spark.LimitName != "Spark" || spark.WeeklyWindow.UsedPercent != 55 {
 		t.Fatalf("unexpected Spark weekly bucket: %+v", spark)
+	}
+	if got := summary.RateLimitWindows["codex"].SessionWindow.UsedPercent; got != 10 {
+		t.Fatalf("expected default model session 10, got %d", got)
+	}
+}
+
+func TestNormalizeSummaryPropagatesModelSpecificSessionAndWeeklyWindows(t *testing.T) {
+	summary, err := normalizeSummary("app-server", rateLimitSnapshotRaw{
+		LimitID:   "codex",
+		Primary:   rawWindow(10, 300),
+		Secondary: rawWeeklyWindow(25),
+	}, map[string]rateLimitSnapshotRaw{
+		"codex_bengalfox": {
+			LimitName: stringPtr("Spark"),
+			Primary:   rawWeeklyWindow(55),
+			Secondary: rawWindow(12, 300),
+		},
+	}, 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spark := summary.RateLimitWindows["codex_bengalfox"]
+	if spark.SessionWindow.UsedPercent != 12 || spark.WeeklyWindow.UsedPercent != 55 {
+		t.Fatalf("model-specific windows were not both propagated: %+v", spark)
+	}
+	if summary.WeeklyWindow.UsedPercent != 25 {
+		t.Fatalf("session propagation changed the weekly route window: %+v", summary.WeeklyWindow)
 	}
 }
 

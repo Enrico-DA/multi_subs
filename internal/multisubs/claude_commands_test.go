@@ -214,12 +214,16 @@ func TestClaudeUsageReportsAllWindowsAndMissingFable(t *testing.T) {
 		t.Fatalf("Claude usage: %v", err)
 	}
 	for _, want := range []string{
-		"default (default)",
-		"work (managed)",
-		"session: 10% used; Resets in 2 hours",
-		"weekly all models: 20% used; Resets Monday at 09:00",
-		"Fable: 30% used; Resets Tuesday at 10:00",
-		"Fable: unavailable",
+		"work",
+		"default",
+		"Session (~5h)",
+		"10% used · Resets in 2 hours",
+		"Weekly all models",
+		"20% used · Resets Monday at 09:00",
+		"Fable weekly",
+		"30% used · Resets Tuesday at 10:00",
+		"not reported",
+		"Result: complete · 2 of 2 accounts available",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("usage output missing %q:\n%s", want, out)
@@ -238,14 +242,15 @@ func TestClaudeUsageHidesMalformedProviderResultText(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error { return app.cmdClaudeUsage(nil) })
-	if err != nil {
-		t.Fatalf("Claude usage: %v", err)
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("Claude usage malformed-result exit: %T %v", err, err)
 	}
 	if strings.Contains(out, marker) {
 		t.Fatalf("Claude usage exposed provider result text: %s", out)
 	}
-	if !strings.Contains(out, "parse Claude usage result: multiple percentages in one line") {
-		t.Fatalf("Claude usage omitted structural parse category: %s", out)
+	if !strings.Contains(out, "unavailable · usage response malformed") {
+		t.Fatalf("Claude usage omitted safe structural parse category: %s", out)
 	}
 }
 
@@ -302,7 +307,7 @@ func TestClaudeCommandProbeFailuresDoNotExposeCapturedDiagnostics(t *testing.T) 
 		run          func(*App) error
 	}{
 		{name: "status", wantCategory: "unknown failure", run: func(app *App) error { return app.cmdClaudeStatus(nil) }},
-		{name: "usage", wantCategory: "unknown failure", run: func(app *App) error { return app.cmdClaudeUsage(nil) }},
+		{name: "usage", wantCategory: "usage probe failed", run: func(app *App) error { return app.cmdClaudeUsage(nil) }},
 		{name: "doctor", wantCategory: "unknown failure", run: func(app *App) error { return app.cmdClaudeDoctor(nil) }},
 		{name: "exec", wantCategory: "no usable Claude account", run: func(app *App) error { return app.cmdClaudeExec([]string{"hello"}) }},
 	}

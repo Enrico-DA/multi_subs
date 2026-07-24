@@ -22,6 +22,7 @@ func TestGlobalHelpShowsSymmetricProviderNamespaces(t *testing.T) {
 		"codex <command>",
 		"claude <command>",
 		"doctor [flags]",
+		"usage",
 		"completion <shell>",
 	} {
 		if !strings.Contains(out, want) {
@@ -31,8 +32,8 @@ func TestGlobalHelpShowsSymmetricProviderNamespaces(t *testing.T) {
 	if strings.Contains(out, "multicodex") {
 		t.Fatalf("global help contains the old product command: %s", out)
 	}
-	if strings.Contains(out, "multisubs usage") || strings.Contains(out, "reserved") {
-		t.Fatalf("global help advertises top-level usage: %s", out)
+	if strings.Contains(out, "reserved") {
+		t.Fatalf("global help contains retired usage stub wording: %s", out)
 	}
 }
 
@@ -43,6 +44,8 @@ func TestProviderAndNestedHelpTopics(t *testing.T) {
 	}{
 		{args: []string{"codex", "help"}, want: "multisubs codex"},
 		{args: []string{"claude", "help"}, want: "multisubs claude"},
+		{args: []string{"help", "usage"}, want: "multisubs usage"},
+		{args: []string{"help", "codex", "usage"}, want: "multisubs codex usage"},
 		{args: []string{"help", "codex", "heartbeat"}, want: "multisubs codex heartbeat"},
 		{args: []string{"help", "codex", "monitor", "doctor"}, want: "multisubs codex monitor doctor"},
 		{args: []string{"help", "claude", "exec"}, want: "multisubs claude exec"},
@@ -124,9 +127,6 @@ func TestCompletionScriptsCoverSymmetricCommandTree(t *testing.T) {
 			if strings.Contains(test.out, "multicodex") || strings.Contains(test.out, "__complete-profiles") {
 				t.Errorf("completion output contains a legacy command or helper")
 			}
-			if strings.Contains(test.out, "completion version usage help") {
-				t.Errorf("completion output advertises top-level usage")
-			}
 		})
 	}
 }
@@ -163,7 +163,7 @@ func TestFishCompletionTokensFollowStrictCommandTree(t *testing.T) {
 	}{
 		{
 			name: "top level",
-			want: []string{"init", "doctor", "codex", "claude", "completion", "version", "help"},
+			want: []string{"init", "doctor", "usage", "codex", "claude", "completion", "version", "help"},
 		},
 		{
 			name: "Claude provider",
@@ -294,7 +294,7 @@ func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
 			output:    renderBashCompletion(),
 			guarded: "        help)\n" +
 				"          if (( COMP_CWORD == 3 )); then\n" +
-				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help\" -- \"$cur\") )\n" +
+				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help\" -- \"$cur\") )\n" +
 				"          fi",
 		},
 		{
@@ -312,7 +312,7 @@ func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
 			output:    renderZshCompletion(),
 			guarded: "        help)\n" +
 				"          if (( CURRENT == 4 )); then\n" +
-				"            compadd -- init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help\n" +
+				"            compadd -- init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help\n" +
 				"          fi",
 		},
 		{

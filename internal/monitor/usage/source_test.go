@@ -49,3 +49,36 @@ func TestUsageSourcesWithoutManagedProofRemainUnforced(t *testing.T) {
 		t.Fatalf("raw fallback source type: got %T want *OAuthSource", raw.fallback)
 	}
 }
+
+func TestReportUsageSourceForManagedAccountUsesReportFallbackMode(t *testing.T) {
+	t.Parallel()
+
+	source := NewReportUsageSourceForAccount(MonitorAccount{
+		Label:        "managed",
+		CodexHome:    "/managed",
+		UseAppServer: true,
+	})
+	reportSource, ok := source.(*UsageSource)
+	if !ok {
+		t.Fatalf("managed report source type: got %T want *UsageSource", source)
+	}
+	if !reportSource.report {
+		t.Fatal("managed report source did not enable report fallback semantics")
+	}
+}
+
+func TestUsageSourceCloseIsIdempotent(t *testing.T) {
+	primary := &fakeSource{name: "primary"}
+	fallback := &fakeSource{name: "fallback"}
+	source := &UsageSource{primary: primary, fallback: fallback}
+
+	if err := source.Close(); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	if err := source.Close(); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+	if primary.closeCount != 1 || fallback.closeCount != 1 {
+		t.Fatalf("source close counts: primary=%d fallback=%d", primary.closeCount, fallback.closeCount)
+	}
+}
