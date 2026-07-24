@@ -67,6 +67,23 @@ func TestProviderAndNestedHelpTopics(t *testing.T) {
 	}
 }
 
+func TestAllUsageHelpTopicsDiscloseValidatedFullLocalEmailOutput(t *testing.T) {
+	app := newTestAppForCLI(t)
+	for _, args := range [][]string{
+		{"help", "usage"},
+		{"help", "codex", "usage"},
+		{"help", "claude", "usage"},
+	} {
+		output, err := captureStdout(t, func() error { return app.Run(args) })
+		if err != nil {
+			t.Fatalf("help %q: %v", args, err)
+		}
+		if !strings.Contains(output, "validated full local account emails") {
+			t.Fatalf("usage help %q omitted local email disclosure:\n%s", args, output)
+		}
+	}
+}
+
 func TestHelpUnknownTopic(t *testing.T) {
 	app := newTestAppForCLI(t)
 	_, err := captureStdout(t, func() error {

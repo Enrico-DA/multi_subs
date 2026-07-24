@@ -40,9 +40,10 @@ type usageProviderReport struct {
 }
 
 type usageAccountReport struct {
-	Name    string
-	Windows []usageWindowReport
-	Failure string
+	Name     string
+	Identity string
+	Windows  []usageWindowReport
+	Failure  string
 }
 
 type usageWindowReport struct {
@@ -57,6 +58,12 @@ type codexUsageSourceFactory func(monitorusage.MonitorAccount) monitorusage.Sour
 type codexUsageTarget struct {
 	codexRoutingTarget
 	DisplayName string
+}
+
+type codexUsageCollection struct {
+	Target  codexUsageTarget
+	Account usageAccountReport
+	Summary *monitorusage.Summary
 }
 
 func (a *App) cmdUsage(args []string, provider string) error {
@@ -120,9 +127,10 @@ func (a *App) collectCodexUsage() usageProviderReport {
 	}
 
 	targets := codexUsageTargets(cfg, a.store.paths.DefaultCodexHome)
-	provider.Accounts = collectConcurrent(targets, func(target codexUsageTarget) usageAccountReport {
-		return a.collectCodexUsageTarget(target)
+	collected := collectConcurrent(targets, func(target codexUsageTarget) codexUsageCollection {
+		return a.collectCodexUsageCollection(target)
 	})
+	provider.Accounts = collapseCodexUsageCollections(collected)
 	return provider
 }
 
@@ -143,15 +151,21 @@ func codexUsageTargets(cfg *Config, defaultHome string) []codexUsageTarget {
 }
 
 func (a *App) collectCodexUsageTarget(target codexUsageTarget) usageAccountReport {
+	return a.collectCodexUsageCollection(target).Account
+}
+
+func (a *App) collectCodexUsageCollection(target codexUsageTarget) codexUsageCollection {
 	displayName := target.DisplayName
 	if displayName == "" {
 		displayName = target.Account.Label
 	}
 	account := usageAccountReport{Name: displayName}
+	collected := codexUsageCollection{Target: target, Account: account}
 	if target.Profile != nil {
 		if err := ensureProfileCodexExecutionReady(a.store.paths, *target.Profile); err != nil {
 			account.Failure = "profile state unavailable"
-			return account
+			collected.Account = account
+			return collected
 		}
 	}
 
@@ -162,7 +176,9 @@ func (a *App) collectCodexUsageTarget(target codexUsageTarget) usageAccountRepor
 	source := sourceFactory(target.Account)
 	if source == nil {
 		account.Failure = "usage source unavailable"
-		return account
+		collected.Account = account
+		recoverCodexUsageCollectionIdentity(&collected)
+		return collected
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), usageAccountTimeout)
@@ -171,26 +187,113 @@ func (a *App) collectCodexUsageTarget(target codexUsageTarget) usageAccountRepor
 	closeErr := source.Close()
 	if closeErr != nil {
 		account.Failure = "usage cleanup failed"
-		return account
+		collected.Account = account
+		collected.Summary = summary
+		recoverCodexUsageCollectionIdentity(&collected)
+		return collected
 	}
 	if err != nil {
 		if errors.Is(err, monitorusage.ErrWeeklyUsageUnavailable) && summary != nil {
 			account = adaptCodexUsageAccount(displayName, summary)
 			account.Failure = "weekly usage unavailable"
-			return account
+			collected.Account = account
+			collected.Summary = summary
+			recoverCodexUsageCollectionIdentity(&collected)
+			return collected
 		}
 		account.Failure = safeCodexUsageFailure(ctx, err)
-		return account
+		collected.Account = account
+		recoverCodexUsageCollectionIdentity(&collected)
+		return collected
 	}
 	if summary == nil {
 		account.Failure = "usage response unavailable"
-		return account
+		collected.Account = account
+		recoverCodexUsageCollectionIdentity(&collected)
+		return collected
 	}
 	account = adaptCodexUsageAccount(displayName, summary)
 	if !codexSummaryHasWeeklyData(summary) {
 		account.Failure = "weekly usage unavailable"
 	}
-	return account
+	collected.Account = account
+	collected.Summary = summary
+	recoverCodexUsageCollectionIdentity(&collected)
+	return collected
+}
+
+func recoverCodexUsageCollectionIdentity(collected *codexUsageCollection) {
+	if collected == nil {
+		return
+	}
+	if collected.Summary != nil &&
+		monitorusage.NormalizeAccountEmail(collected.Summary.AccountEmail) != "" {
+		return
+	}
+	email, err := monitorusage.AccountEmailFromAuthFileForHome(collected.Target.Account.CodexHome)
+	if err != nil || email == "" {
+		return
+	}
+	if collected.Summary == nil {
+		collected.Summary = &monitorusage.Summary{}
+	}
+	collected.Summary.AccountEmail = email
+}
+
+func collapseCodexUsageCollections(collected []codexUsageCollection) []usageAccountReport {
+	records := make([]monitorusage.CodexIdentityRecord, len(collected))
+	for index, result := range collected {
+		if result.Summary == nil {
+			continue
+		}
+		records[index] = monitorusage.CodexIdentityRecord{
+			AccountID:    result.Summary.AccountID,
+			AccountEmail: result.Summary.AccountEmail,
+		}
+	}
+
+	groups := monitorusage.ReconcileCodexIdentities(records)
+	rows := make([]groupedUsageRow, 0, len(groups))
+	for _, group := range groups {
+		representative := deterministicCodexUsageRepresentative(collected, group.MemberIndexes)
+		account := collected[representative].Account
+		if failure := firstCodexUsageGroupFailure(collected, group.MemberIndexes); failure != "" {
+			account.Failure = failure
+		}
+		aliases := make([]usageGroupAlias, 0, len(group.MemberIndexes))
+		for _, memberIndex := range group.MemberIndexes {
+			target := collected[memberIndex].Target
+			aliases = append(aliases, usageGroupAlias{
+				Name:      target.DisplayName,
+				IsDefault: target.Kind == codexRoutingTargetDefault,
+			})
+		}
+		rows = appendGroupedUsageRow(rows, account, group.AccountEmail, aliases)
+	}
+	return finishGroupedUsageRows(rows)
+}
+
+func firstCodexUsageGroupFailure(collected []codexUsageCollection, indexes []int) string {
+	for _, index := range indexes {
+		if failure := collected[index].Account.Failure; failure != "" {
+			return failure
+		}
+	}
+	return ""
+}
+
+func deterministicCodexUsageRepresentative(collected []codexUsageCollection, indexes []int) int {
+	for _, index := range indexes {
+		if collected[index].Summary != nil && collected[index].Account.Failure == "" {
+			return index
+		}
+	}
+	for _, index := range indexes {
+		if collected[index].Summary != nil && len(collected[index].Account.Windows) > 0 {
+			return index
+		}
+	}
+	return indexes[0]
 }
 
 func codexSummaryHasWeeklyData(summary *monitorusage.Summary) bool {
@@ -281,20 +384,10 @@ func adaptCodexUsageAccount(name string, summary *monitorusage.Summary) usageAcc
 
 func safeCodexLimitLabel(label string) string {
 	label = strings.TrimSpace(label)
-	if label == "" || len(label) > 40 || emailRe.MatchString(label) {
-		return ""
+	if strings.EqualFold(label, "Spark") {
+		return "Spark"
 	}
-	for _, character := range label {
-		switch {
-		case character >= 'a' && character <= 'z':
-		case character >= 'A' && character <= 'Z':
-		case character >= '0' && character <= '9':
-		case character == ' ', character == '-', character == '.':
-		default:
-			return ""
-		}
-	}
-	return label
+	return ""
 }
 
 func adaptCodexUsageWindow(label string, window monitorusage.WindowSummary) usageWindowReport {
@@ -365,10 +458,18 @@ func (a *App) collectClaudeUsage() usageProviderReport {
 		cfg = defaultClaudeConfig()
 	}
 	targets := claudeUsageTargets(cfg)
-	provider.Accounts = collectConcurrent(targets, func(target claudeTarget) usageAccountReport {
-		return a.collectClaudeUsageTarget(store, target)
+	collected := collectConcurrent(targets, func(target claudeTarget) claudeUsageCollection {
+		return a.collectClaudeUsageCollection(store, target)
 	})
+	provider.Accounts = collapseClaudeUsageCollections(collected)
 	return provider
+}
+
+type claudeUsageCollection struct {
+	Target       claudeTarget
+	Account      usageAccountReport
+	Organization string
+	AccountEmail string
 }
 
 func claudeUsageTargets(cfg *claudeConfig) []claudeTarget {
@@ -394,24 +495,45 @@ func claudeUsageTargets(cfg *claudeConfig) []claudeTarget {
 }
 
 func (a *App) collectClaudeUsageTarget(store *claudeStore, target claudeTarget) usageAccountReport {
+	return a.collectClaudeUsageCollection(store, target).Account
+}
+
+func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarget) claudeUsageCollection {
 	displayName := target.DisplayName
 	if displayName == "" {
 		displayName = target.Name
 	}
 	account := usageAccountReport{Name: displayName}
+	collected := claudeUsageCollection{Target: target, Account: account}
 	if target.Profile != nil {
 		if err := store.EnsureProfileReady(*target.Profile); err != nil {
 			account.Failure = "profile state unavailable"
-			return account
+			collected.Account = account
+			return collected
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), usageAccountTimeout)
-	providerUsage, err := fetchClaudeUsage(ctx, a.claudeCommandRunner(), target.ConfigDir)
-	cancel()
+	probeContext, cancelProbes := context.WithTimeout(context.Background(), usageAccountTimeout)
+	defer cancelProbes()
+	authBefore, authBeforeErr := fetchClaudeAuthStatus(probeContext, a.claudeCommandRunner(), target.ConfigDir)
+	identityBefore, identityBeforeErr := validateClaudeUsageIdentity(authBefore)
+	providerUsage, err := fetchClaudeUsage(probeContext, a.claudeCommandRunner(), target.ConfigDir)
+	usageFailure := ""
 	if err != nil {
-		account.Failure = safeClaudeUsageFailure(ctx, err)
-		return account
+		usageFailure = safeClaudeUsageFailure(probeContext, err)
+	}
+	authAfter, authAfterErr := fetchClaudeAuthStatus(probeContext, a.claudeCommandRunner(), target.ConfigDir)
+	identityAfter, identityAfterErr := validateClaudeUsageIdentity(authAfter)
+	if authBeforeErr == nil && identityBeforeErr == nil &&
+		authAfterErr == nil && identityAfterErr == nil &&
+		identityBefore == identityAfter {
+		collected.Organization = identityBefore.Organization
+		collected.AccountEmail = identityBefore.AccountEmail
+	}
+	if err != nil {
+		account.Failure = usageFailure
+		collected.Account = account
+		return collected
 	}
 	account.Windows = []usageWindowReport{
 		adaptClaudeUsageWindow(claudeSessionLabel(providerUsage.Session), providerUsage.Session),
@@ -421,7 +543,163 @@ func (a *App) collectClaudeUsageTarget(store *claudeStore, target claudeTarget) 
 	if providerUsage.Fable != nil {
 		account.Windows[2] = adaptClaudeUsageWindow("Fable weekly", *providerUsage.Fable)
 	}
-	return account
+	collected.Account = account
+	return collected
+}
+
+func collapseClaudeUsageCollections(collected []claudeUsageCollection) []usageAccountReport {
+	groupIndexesByOrganization := make(map[string]int)
+	var memberGroups [][]int
+	var groupOrganizations []string
+	for index, result := range collected {
+		organization := strings.TrimSpace(result.Organization)
+		if organization == "" {
+			memberGroups = append(memberGroups, []int{index})
+			groupOrganizations = append(groupOrganizations, "")
+			continue
+		}
+		groupIndex, exists := groupIndexesByOrganization[organization]
+		if !exists {
+			groupIndex = len(memberGroups)
+			groupIndexesByOrganization[organization] = groupIndex
+			memberGroups = append(memberGroups, nil)
+			groupOrganizations = append(groupOrganizations, organization)
+		}
+		memberGroups[groupIndex] = append(memberGroups[groupIndex], index)
+	}
+
+	rows := make([]groupedUsageRow, 0, len(memberGroups))
+	for groupIndex, memberIndexes := range memberGroups {
+		representative := deterministicClaudeUsageRepresentative(collected, memberIndexes)
+		account := collected[representative].Account
+		if failure := firstClaudeUsageGroupFailure(collected, memberIndexes); failure != "" {
+			account.Failure = failure
+		}
+		emails := make(map[string]struct{})
+		aliases := make([]usageGroupAlias, 0, len(memberIndexes))
+		for _, memberIndex := range memberIndexes {
+			result := collected[memberIndex]
+			if result.AccountEmail != "" {
+				emails[result.AccountEmail] = struct{}{}
+			}
+			aliases = append(aliases, usageGroupAlias{
+				Name:      result.Target.DisplayName,
+				IsDefault: result.Target.Kind == "default",
+			})
+		}
+
+		accountEmail := ""
+		if groupOrganizations[groupIndex] != "" && len(emails) == 1 {
+			for email := range emails {
+				accountEmail = email
+			}
+		}
+		rows = appendGroupedUsageRow(rows, account, accountEmail, aliases)
+	}
+	return finishGroupedUsageRows(rows)
+}
+
+func firstClaudeUsageGroupFailure(collected []claudeUsageCollection, indexes []int) string {
+	for _, index := range indexes {
+		if failure := collected[index].Account.Failure; failure != "" {
+			return failure
+		}
+	}
+	return ""
+}
+
+func deterministicClaudeUsageRepresentative(collected []claudeUsageCollection, indexes []int) int {
+	for _, index := range indexes {
+		if collected[index].Account.Failure == "" && len(collected[index].Account.Windows) > 0 {
+			return index
+		}
+	}
+	return indexes[0]
+}
+
+type usageGroupAlias struct {
+	Name      string
+	IsDefault bool
+}
+
+type groupedUsageRow struct {
+	Account    usageAccountReport
+	HasDefault bool
+	SortName   string
+}
+
+func appendGroupedUsageRow(rows []groupedUsageRow, account usageAccountReport, accountEmail string, aliases []usageGroupAlias) []groupedUsageRow {
+	name, hasDefault, sortName := formatUsageGroupAliases(aliases)
+	account.Name = name
+	account.Identity = accountEmail
+	if accountEmail == "" && account.Failure == "" {
+		account.Failure = "identity unavailable"
+	}
+	return append(rows, groupedUsageRow{
+		Account:    account,
+		HasDefault: hasDefault,
+		SortName:   sortName,
+	})
+}
+
+func formatUsageGroupAliases(aliases []usageGroupAlias) (name string, hasDefault bool, sortName string) {
+	managed := make([]string, 0, len(aliases))
+	seenManaged := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		if alias.IsDefault {
+			hasDefault = true
+			continue
+		}
+		trimmed := strings.TrimSpace(alias.Name)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seenManaged[trimmed]; exists {
+			continue
+		}
+		seenManaged[trimmed] = struct{}{}
+		managed = append(managed, trimmed)
+	}
+	sort.Slice(managed, func(i, j int) bool {
+		left := strings.ToLower(managed[i])
+		right := strings.ToLower(managed[j])
+		if left != right {
+			return left < right
+		}
+		return managed[i] < managed[j]
+	})
+
+	if len(managed) == 0 {
+		return defaultExecAccountLabel, hasDefault, defaultExecAccountLabel
+	}
+	name = managed[0]
+	sortName = managed[0]
+	if len(managed) > 1 {
+		name += " (also " + strings.Join(managed[1:], ", ") + ")"
+	}
+	if hasDefault {
+		name += " (also default)"
+	}
+	return name, hasDefault, sortName
+}
+
+func finishGroupedUsageRows(rows []groupedUsageRow) []usageAccountReport {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].HasDefault != rows[j].HasDefault {
+			return !rows[i].HasDefault
+		}
+		left := strings.ToLower(rows[i].SortName)
+		right := strings.ToLower(rows[j].SortName)
+		if left != right {
+			return left < right
+		}
+		return rows[i].SortName < rows[j].SortName
+	})
+	accounts := make([]usageAccountReport, len(rows))
+	for index, row := range rows {
+		accounts[index] = row.Account
+	}
+	return accounts
 }
 
 func allocateUsageDisplayNames(count int, target func(int) (name string, isDefault bool)) []string {
@@ -614,8 +892,8 @@ func safeClaudeUsageFailure(ctx context.Context, err error) string {
 	}
 }
 
-func collectConcurrent[Target any](targets []Target, collect func(Target) usageAccountReport) []usageAccountReport {
-	results := make([]usageAccountReport, len(targets))
+func collectConcurrent[Target, Result any](targets []Target, collect func(Target) Result) []Result {
+	results := make([]Result, len(targets))
 	if len(targets) == 0 {
 		return results
 	}
@@ -654,7 +932,11 @@ func printUsageReport(writer io.Writer, report usageReport, now time.Time, locat
 			if accountIndex > 0 {
 				fmt.Fprintln(writer)
 			}
-			fmt.Fprintf(writer, "  %s\n", account.Name)
+			identity := monitorusage.NormalizeAccountEmail(account.Identity)
+			if identity == "" {
+				identity = "identity unavailable"
+			}
+			fmt.Fprintf(writer, "  %s · %s\n", account.Name, identity)
 			if account.Failure != "" && len(account.Windows) == 0 {
 				fmt.Fprintf(writer, "    unavailable · %s\n", account.Failure)
 				continue
