@@ -88,6 +88,7 @@ These paths must not create product state:
 - completion and dynamic profile completion;
 - unknown commands and rejected arguments;
 - `multisubs codex status`;
+- all combined and provider-only usage reports;
 - aggregate and focused doctors;
 - Codex dry run;
 - exact provider help passthrough, including target-scoped Codex CLI help and target-scoped login help for both providers without requiring a configured profile.
@@ -95,6 +96,12 @@ These paths must not create product state:
 ## Usage and routing
 
 Codex routing and monitoring use weekly usage only. The default account and managed profiles use the same weekly, model, and reset policy. Unavailable, exhausted, or model-ineligible accounts are skipped. The existing narrow fallback for older official responses remains limited to weekly-compatible data.
+
+The unified usage report is presentation only and does not change that policy. It reads exactly the managed profiles in the two provider registries plus both normal default accounts. Shared typed target enumeration keeps the Codex default present exactly once even when a stored managed home is unsafe; that unsafe managed entry fails only its own row. Claude usage derives its targets from the same target owner as the other Claude commands. It does not read monitor account files, active-home overrides, discovered accounts, or observed-token estimates. It does not create directories, sidecars, sessions, threads, or other persistent provider state.
+
+Codex normalization retains one declared short/session window for reporting while routing and the live monitor continue to consume weekly fields only. A declared 300-minute window is the five-hour session. Otherwise only one unambiguous declared non-weekly duration is accepted; response position is never used to guess session meaning. Session-only primary data never suppresses weekly fallback or enables routing, selection metadata, or monitor window cards. The report-only source may merge that session into a fallback weekly result. Without weekly data the account remains partial and exit code 1 applies.
+
+Usage output never includes email addresses, organization or account IDs, tokens, paths, raw provider bodies, raw subprocess failures, or raw cleanup errors. Presentation aliases are allocated across the whole provider target set, remain unique, and put email-shaped names outside the valid profile-name alphabet. Codex reset instants stay UTC in the internal report and are converted only for local display. Claude reset text must be printable ASCII and match a strict supported reset grammar; arbitrary prose, controls, escapes, paths, key-like text, and malformed timezones become `reset unknown`. Per-account failures are reduced to fixed categories.
 
 Claude routing scores the default account and managed profiles together using fresh official session and weekly all-model usage. It includes the Fable window only when that candidate's effective CLI and settings state says Fable is applicable or possible. The three-state policy fails closed per candidate: uncertainty requires Fable capacity but does not fail routing for other candidates.
 
