@@ -135,30 +135,11 @@ var claudeDeniedEnvKeys = map[string]struct{}{
 	"CLAUDE_SECURESTORAGE_CONFIG_DIR":            {},
 	"CLAUDE_SESSION_INGRESS_TOKEN_FILE":          {},
 	"CLAUDE_TRUSTED_DEVICE_TOKEN":                {},
-	"MULTISUBS_HOME":                             {},
-	"MULTISUBS_DEFAULT_CODEX_HOME":               {},
-	"MULTISUBS_ACTIVE_PROFILE":                   {},
-	"MULTISUBS_SELECTED_PROFILE_PATH":            {},
-	"MULTISUBS_HEARTBEAT_LOCK_PATH":              {},
-	"MULTISUBS_HEARTBEAT_PROMPT":                 {},
-	"MULTISUBS_HEARTBEAT_TIMEOUT_SECONDS":        {},
-	"MULTISUBS_HEARTBEAT_RETRIES":                {},
-	"MULTISUBS_HEARTBEAT_BACKOFF_SECONDS":        {},
-	"MULTISUBS_MONITOR_ACCOUNTS_FILE":            {},
 	"CODEX_USAGE_MONITOR_ACCOUNTS_FILE":          {},
-	"MULTISUBS_CLAUDE_PROFILE":                   {},
-	"MULTISUBS_CLAUDE_CONFIG_DIR":                {},
-	"MULTISUBS_CLAUDE_TARGET":                    {},
-	"MULTISUBS_CLAUDE_ACTIVE_PROFILE":            {},
-	"MULTISUBS_CLAUDE_SELECTED_PROFILE":          {},
-	"MULTISUBS_ACTIVE_CLAUDE_PROFILE":            {},
-	"MULTISUBS_SELECTED_CLAUDE_PROFILE":          {},
-	"MULTISUBS_ACTIVE_PROVIDER":                  {},
-	"MULTISUBS_SELECTED_PROVIDER":                {},
 }
 
 func claudeEnvVarShouldBeStripped(key string) bool {
-	if strings.HasPrefix(key, "MULTICODEX_") {
+	if strings.HasPrefix(key, "MULTISUBS_") || strings.HasPrefix(key, "MULTICODEX_") {
 		return true
 	}
 	if _, denied := claudeDeniedEnvKeys[key]; denied {

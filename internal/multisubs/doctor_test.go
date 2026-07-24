@@ -367,12 +367,12 @@ func TestRunDoctorScrubsCodexVersionEnvironment(t *testing.T) {
 		t.Fatalf("mkdir fake bin: %v", err)
 	}
 	logPath := filepath.Join(root, "codex-env.log")
-	script := "#!/bin/sh\nenv > \"$MULTISUBS_TEST_ENV_LOG\"\nprintf 'codex-test-version\\n'\n"
+	script := "#!/bin/sh\nenv > \"$TEST_CODEX_ENV_LOG\"\nprintf 'codex-test-version\\n'\n"
 	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("MULTISUBS_TEST_ENV_LOG", logPath)
+	t.Setenv("TEST_CODEX_ENV_LOG", logPath)
 	t.Setenv("CODEX_HOME", filepath.Join(root, "stale-codex"))
 	t.Setenv("MULTISUBS_ACTIVE_PROFILE", "stale")
 	t.Setenv("OPENAI_API_KEY", "stale")

@@ -113,7 +113,9 @@ _multisubs_complete() {
           fi
           ;;
         help)
-          COMPREPLY=( $(compgen -W "init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
+          if (( COMP_CWORD == 3 )); then
+            COMPREPLY=( $(compgen -W "init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
+          fi
           ;;
       esac
       ;;
@@ -134,7 +136,9 @@ _multisubs_complete() {
           fi
           ;;
         help)
-          COMPREPLY=( $(compgen -W "add login cli exec status usage doctor help" -- "$cur") )
+          if (( COMP_CWORD == 3 )); then
+            COMPREPLY=( $(compgen -W "add login cli exec status usage doctor help" -- "$cur") )
+          fi
           ;;
       esac
       ;;
@@ -228,7 +232,9 @@ _multisubs_complete() {
           fi
           ;;
         help)
-          compadd -- init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help
+          if (( CURRENT == 4 )); then
+            compadd -- init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help
+          fi
           ;;
       esac
       ;;
@@ -249,7 +255,9 @@ _multisubs_complete() {
           fi
           ;;
         help)
-          compadd -- add login cli exec status usage doctor help
+          if (( CURRENT == 4 )); then
+            compadd -- add login cli exec status usage doctor help
+          fi
           ;;
       esac
       ;;

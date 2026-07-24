@@ -392,7 +392,7 @@ func TestClaudeExecFailsBeforeProbesForLinkedCredential(t *testing.T) {
 }
 
 func TestClaudeReservationSurvivesWrapperDeath(t *testing.T) {
-	const helperEnv = "MULTISUBS_CLAUDE_LOCK_HELPER"
+	const helperEnv = "TEST_CLAUDE_LOCK_HELPER"
 	if os.Getenv(helperEnv) == "1" {
 		store := newClaudeStore(Paths{MultisubsHome: os.Getenv("MULTISUBS_HOME")})
 		reservation, acquired, err := store.acquireReservation("survival")

@@ -46,6 +46,7 @@ func TestRunCLICodexCLIProfileHelpUsesNeutralProviderPathWithoutState(t *testing
 			t.Setenv("MULTISUBS_ACTIVE_PROFILE", "stale")
 			t.Setenv("MULTISUBS_SELECTED_PROFILE_PATH", filepath.Join(root, "stale-selection"))
 			t.Setenv("MULTISUBS_HEARTBEAT_PROMPT", "stale-prompt")
+			t.Setenv("MULTISUBS_FUTURE_CONTROL", "stale")
 			t.Setenv("OPENAI_API_KEY", "stale-secret")
 			t.Setenv("CODEX_AUTH_TOKEN", "stale-secret")
 			t.Setenv("WORKER_TOOL_SETTING", "keep")

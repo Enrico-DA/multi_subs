@@ -59,7 +59,7 @@ var requiredLegacyLines = []legacyRule{
 	requiredLegacyLine("CONTRIBUTING.md", legacyUpstreamMap, "Pull-request CI runs a non-publishing identity check. When syncing from `olliecrow/{legacy}`, apply the translation map in `docs/upstream-sync.md` and preserve upstream attribution and license text."),
 
 	requiredLegacyLine("README.md", legacyRejection, "Any legacy `{LEGACY}_*` variable causes startup to fail before state access. Clear it before running `multisubs`. Runtime never reads the old product home or old environment namespace. All legacy `{LEGACY}_*` controls are still removed from provider child environments as a denylist."),
-	requiredLegacyLine("README.md", legacyDenylist, "- Provider child environments remove credential overrides, inherited active product controls, and all legacy `{LEGACY}_*` controls. Multisubs adds only `MULTISUBS_ACTIVE_PROFILE` to managed Codex children for the selected profile; default-account Codex, neutral Codex help, and Claude children do not receive it."),
+	requiredLegacyLine("README.md", legacyDenylist, "- Provider child environments remove credential overrides, every inherited `MULTISUBS_*` variable, and all legacy `{LEGACY}_*` controls. Multisubs adds only `MULTISUBS_ACTIVE_PROFILE` to managed Codex children for the selected profile; default-account Codex, neutral provider help, and Claude children receive no `MULTISUBS_*` variable."),
 	requiredLegacyLine("README.md", legacyLeakProtection, "Filesystem monitor discovery prunes both `~/{legacy}` and `~/.{legacy}`, including canonical targets reached through aliases."),
 	requiredLegacyLine("README.md", legacyAttribution, "This fork is based on [olliecrow/{legacy}](https://github.com/olliecrow/{legacy}) and preserves its attribution and license."),
 
@@ -90,17 +90,17 @@ var requiredLegacyLines = []legacyRule{
 	requiredLegacyLine("docs/upstream-sync.md", legacyUpstreamMap, "| `~/{legacy}` active state | `~/multisubs` |"),
 	requiredLegacyLine("docs/upstream-sync.md", legacyUpstreamMap, "| `{LEGACY}_*` active controls | `MULTISUBS_*` |"),
 
-	requiredLegacyLine("internal/codexstate/env.go", legacyDenylist, "\tif strings.HasPrefix(key, \"{LEGACY}_\") {"),
+	requiredLegacyLine("internal/codexstate/env.go", legacyDenylist, "\tif strings.HasPrefix(key, \"MULTISUBS_\") || strings.HasPrefix(key, \"{LEGACY}_\") {"),
 	requiredLegacyLine("internal/codexstate/env_test.go", legacyNegativeTest, "\t\t\"{LEGACY}_HOME=/legacy-product-state\","),
 	requiredLegacyLine("internal/codexstate/env_test.go", legacyNegativeTest, "\t\t\"{LEGACY}_ACTIVE_PROFILE=legacy\","),
-	requiredLegacyLine("internal/codexstate/env_test.go", legacyNegativeTest, "\tfor _, forbidden := range []string{\"CODEX_HOME=/stale\", \"MULTISUBS_HOME=\", \"MULTISUBS_ACTIVE_PROFILE=\", \"{LEGACY}_HOME=\", \"{LEGACY}_ACTIVE_PROFILE=\", \"CODEX_USAGE_MONITOR_ACCOUNTS_FILE=\", \"OPENAI_API_KEY=\", \"CODEX_AUTH_TOKEN=\", \"INVALID_ENTRY\"} {"),
+	requiredLegacyLine("internal/codexstate/env_test.go", legacyNegativeTest, "\tfor _, forbidden := range []string{\"CODEX_HOME=/stale\", \"MULTISUBS_HOME=\", \"MULTISUBS_ACTIVE_PROFILE=\", \"MULTISUBS_FUTURE_CONTROL=\", \"{LEGACY}_HOME=\", \"{LEGACY}_ACTIVE_PROFILE=\", \"CODEX_USAGE_MONITOR_ACCOUNTS_FILE=\", \"OPENAI_API_KEY=\", \"CODEX_AUTH_TOKEN=\", \"INVALID_ENTRY\"} {"),
 
 	requiredLegacyLine("internal/monitor/usage/accounts.go", legacyLeakProtection, "\tfor _, name := range []string{\"{legacy}\", \".{legacy}\"} {"),
 	requiredLegacyLine("internal/monitor/usage/accounts_test.go", legacyNegativeTest, "\tfor _, rootName := range []string{\"{legacy}\", \".{legacy}\"} {"),
 
 	requiredLegacyLine("internal/multisubs/app.go", legacyRejection, "\t\tif ok && strings.HasPrefix(name, \"{LEGACY}_\") {"),
 	requiredLegacyLine("internal/multisubs/app.go", legacyRejection, "\t\tMessage: fmt.Sprintf(\"legacy {LEGACY}_* environment variable(s) are set: %s; clear them before running multisubs\", strings.Join(names, \", \")),"),
-	requiredLegacyLine("internal/multisubs/claude_process.go", legacyDenylist, "\tif strings.HasPrefix(key, \"{LEGACY}_\") {"),
+	requiredLegacyLine("internal/multisubs/claude_process.go", legacyDenylist, "\tif strings.HasPrefix(key, \"MULTISUBS_\") || strings.HasPrefix(key, \"{LEGACY}_\") {"),
 	requiredLegacyLine("internal/multisubs/claude_process_test.go", legacyNegativeTest, "\t\t\"{LEGACY}_HOME=/tmp/legacy\","),
 	requiredLegacyLine("internal/multisubs/claude_process_test.go", legacyNegativeTest, "\t\t\"{LEGACY}_CLAUDE_PROFILE=legacy\","),
 	requiredLegacyLine("internal/multisubs/claude_process_test.go", legacyNegativeTest, "\t\t\"{LEGACY}_HOME\","),

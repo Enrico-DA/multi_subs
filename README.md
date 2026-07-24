@@ -109,7 +109,7 @@ Claude state:
 - Managed profile: `~/multisubs/providers/claude/profiles/<name>/config`
 - Official provider variable: `CLAUDE_CONFIG_DIR`
 
-Active product controls use the `MULTISUBS_*` namespace. This includes heartbeat settings, selected-profile metadata, and provider-routing markers. Provider children do not inherit those controls. A managed Codex child receives only the selected `MULTISUBS_ACTIVE_PROFILE` marker added by multisubs. Default-account Codex, neutral Codex help, and Claude children do not receive that managed Codex marker.
+Active product controls use the `MULTISUBS_*` namespace. This includes heartbeat settings, selected-profile metadata, and provider-routing markers. Provider children strip every inherited variable in that namespace, including unknown future controls. A managed Codex child then receives exactly one product variable: the selected `MULTISUBS_ACTIVE_PROFILE` marker added by multisubs. Default-account Codex, neutral provider help, and Claude children receive no `MULTISUBS_*` variable.
 
 An explicit Codex monitor account file may be selected with `MULTISUBS_MONITOR_ACCOUNTS_FILE`.
 
@@ -125,6 +125,7 @@ Codex:
 
 - Each managed profile receives its own `CODEX_HOME`, including auth, sessions, threads, `/goal`, and related Codex state.
 - Exact target-scoped CLI help runs official Codex help with a neutral environment, does not require the named profile to exist, and does not create or reconcile product state.
+- Exact target-scoped login help runs `codex login --help|-h` with the same state-free neutral boundary and without post-login checks.
 - Managed execution enforces file-backed Codex auth.
 - Automatic `exec` routing applies the same weekly, model, and reset policy to the default account and managed profiles.
 - `exec` resolves the effective model from `--model`/`-m`, exact root `model` config overrides, or one common root model across every candidate config. Conflicting candidate models fail with code 2. A Codex `--profile`/`-p` selector requires an explicit model.
@@ -136,6 +137,7 @@ Claude:
 
 - Each managed profile receives a derived `CLAUDE_CONFIG_DIR`.
 - Login, status, usage, and routing use the official Claude CLI.
+- Exact target-scoped login help runs `claude auth login --claudeai --help|-h` without profile state, `CLAUDE_CONFIG_DIR`, probes, or post-login checks.
 - Routing scores the default account and managed profiles together using fresh session, weekly all-model, and Fable usage.
 - An unusable or busy candidate is skipped. The default account runs without `CLAUDE_CONFIG_DIR`.
 - The product does not read, copy, or write Claude credential contents.
@@ -167,7 +169,7 @@ Completion covers both provider namespaces, Codex monitor topics, all help topic
 - Never copy, sync, transmit, or share provider auth files between machines.
 - Use the official provider login commands for every managed profile.
 - State directories must be private regular directories. Sensitive files, locks, and routing metadata reject unsafe links.
-- Provider child environments remove credential overrides, inherited active product controls, and all legacy `MULTICODEX_*` controls. Multisubs adds only `MULTISUBS_ACTIVE_PROFILE` to managed Codex children for the selected profile; default-account Codex, neutral Codex help, and Claude children do not receive it.
+- Provider child environments remove credential overrides, every inherited `MULTISUBS_*` variable, and all legacy `MULTICODEX_*` controls. Multisubs adds only `MULTISUBS_ACTIVE_PROFILE` to managed Codex children for the selected profile; default-account Codex, neutral provider help, and Claude children receive no `MULTISUBS_*` variable.
 - Output avoids raw credentials and raw provider failure text.
 - Current and legacy-sensitive state patterns remain ignored to prevent accidental credential commits.
 

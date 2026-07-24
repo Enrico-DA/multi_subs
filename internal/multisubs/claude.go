@@ -30,6 +30,11 @@ func runClaudeCLI(args []string) error {
 		printClaudeHelp()
 		return nil
 	}
+	if args[0] == "login" {
+		if handled, err := runClaudeLoginHelpFastPath(osClaudeCommandRunner{}, args[1:]); handled {
+			return err
+		}
+	}
 	if officialArgs, ok := claudeOfficialHelpFastPath(args); ok {
 		runner := osClaudeCommandRunner{}
 		err := runner.Run(context.Background(), officialArgs, claudeEnv(os.Environ(), ""))
@@ -53,6 +58,11 @@ func (a *App) cmdClaude(args []string) error {
 		}
 		printClaudeHelp()
 		return nil
+	}
+	if args[0] == "login" {
+		if handled, err := runClaudeLoginHelpFastPath(a.claudeCommandRunner(), args[1:]); handled {
+			return err
+		}
 	}
 	if officialArgs, ok := claudeOfficialHelpFastPath(args); ok {
 		err := a.claudeCommandRunner().Run(context.Background(), officialArgs, claudeEnv(os.Environ(), ""))
@@ -133,6 +143,12 @@ func (a *App) cmdClaudeAdd(args []string) error {
 }
 
 func (a *App) cmdClaudeLogin(args []string) error {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		return printClaudeCommandHelp("login")
+	}
+	if handled, err := runClaudeLoginHelpFastPath(a.claudeCommandRunner(), args); handled {
+		return err
+	}
 	if len(args) < 1 {
 		return &ExitError{Code: 2, Message: "usage: multisubs claude login <name> [claude auth login args]"}
 	}
@@ -164,6 +180,22 @@ func (a *App) cmdClaudeLogin(args []string) error {
 	}
 	fmt.Printf("Claude login complete: %s (%s)\n", valueOrDash(status.Identity), status.OrgID)
 	return nil
+}
+
+func runClaudeLoginHelpFastPath(runner claudeCommandRunner, args []string) (bool, error) {
+	helpFlag, hasTargetScopedHelp, exact := targetScopedLoginHelp(args)
+	if !hasTargetScopedHelp {
+		return false, nil
+	}
+	if !exact {
+		return true, &ExitError{Code: 2, Message: "usage: multisubs claude login <name> [claude auth login args]"}
+	}
+	err := runner.Run(
+		context.Background(),
+		[]string{"auth", "login", "--claudeai", helpFlag},
+		claudeEnv(os.Environ(), ""),
+	)
+	return true, claudeChildError(err, "Claude auth login help failed")
 }
 
 func (a *App) rejectDuplicateClaudeOrganization(profile claudeProfile, orgID string) error {

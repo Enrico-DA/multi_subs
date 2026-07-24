@@ -33,6 +33,8 @@ After valid argument parsing, all three sections are emitted even when the Codex
 
 Prints completion for both provider namespaces, all nested help and monitor topics, and dynamic Codex and Claude profile names. It is read-only and does not create config.
 
+`multisubs codex help <command>` and `multisubs claude help <command>` are completion leaves after the one accepted command topic.
+
 ### `multisubs version`
 
 Prints `multisubs <version>`. `--version` and `-v` are accepted aliases. Extra arguments are rejected.
@@ -64,6 +66,8 @@ The name `default` is reserved for the built-in default Codex account. Add rejec
 ### `multisubs codex login <name> [codex login args...]`
 
 Runs official `codex login` with the profile-local `CODEX_HOME`. User arguments keep their order. The managed file-backed-auth override is appended.
+
+Exact `multisubs codex login <name> --help` and `multisubs codex login <name> -h` requests instead run neutral official `codex login` help as `codex login <flag>`. The named profile need not exist. These forms do not load config, create or reconcile product state, add managed auth or profile markers, inspect auth, or run post-login verification. Any help flag mixed with extra login arguments exits with code 2 before state access.
 
 ### `multisubs codex login-all`
 
@@ -156,6 +160,8 @@ The name `default` is reserved for the built-in default Claude account and canno
 ### `multisubs claude login <name> [claude auth login args...]`
 
 Runs official `claude auth login --claudeai` with the managed profile's derived `CLAUDE_CONFIG_DIR`. It verifies subscription auth and rejects duplicate organizations.
+
+Exact `multisubs claude login <name> --help` and `multisubs claude login <name> -h` requests instead run neutral official help as `claude auth login --claudeai <flag>`. The named profile need not exist. These forms do not load provider config, create product state, set `CLAUDE_CONFIG_DIR`, inspect auth or usage, or run post-login verification. Any help flag mixed with extra login arguments exits with code 2 before state access.
 
 ### `multisubs claude cli <name|default> [claude args...]`
 

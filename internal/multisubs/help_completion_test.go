@@ -280,6 +280,77 @@ func TestCompletionStopsAtCodexMonitorHelp(t *testing.T) {
 	}
 }
 
+func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
+	tests := []struct {
+		shell     string
+		namespace string
+		output    string
+		guarded   string
+		fishPath  []string
+	}{
+		{
+			shell:     "bash",
+			namespace: "codex",
+			output:    renderBashCompletion(),
+			guarded: "        help)\n" +
+				"          if (( COMP_CWORD == 3 )); then\n" +
+				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help\" -- \"$cur\") )\n" +
+				"          fi",
+		},
+		{
+			shell:     "bash",
+			namespace: "claude",
+			output:    renderBashCompletion(),
+			guarded: "        help)\n" +
+				"          if (( COMP_CWORD == 3 )); then\n" +
+				"            COMPREPLY=( $(compgen -W \"add login cli exec status usage doctor help\" -- \"$cur\") )\n" +
+				"          fi",
+		},
+		{
+			shell:     "zsh",
+			namespace: "codex",
+			output:    renderZshCompletion(),
+			guarded: "        help)\n" +
+				"          if (( CURRENT == 4 )); then\n" +
+				"            compadd -- init add login login-all cli exec status reconcile heartbeat monitor doctor dry-run help\n" +
+				"          fi",
+		},
+		{
+			shell:     "zsh",
+			namespace: "claude",
+			output:    renderZshCompletion(),
+			guarded: "        help)\n" +
+				"          if (( CURRENT == 4 )); then\n" +
+				"            compadd -- add login cli exec status usage doctor help\n" +
+				"          fi",
+		},
+		{
+			shell:     "fish",
+			namespace: "codex",
+			fishPath:  []string{"codex", "help", "login"},
+		},
+		{
+			shell:     "fish",
+			namespace: "claude",
+			fishPath:  []string{"claude", "help", "login"},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.shell+"_"+test.namespace, func(t *testing.T) {
+			if test.shell == "fish" {
+				if got := fishCompletionTokens(test.fishPath); len(got) != 0 {
+					t.Fatalf("Fish completion continues after %s help topic: %q", test.namespace, got)
+				}
+				return
+			}
+			if !strings.Contains(test.output, test.guarded) {
+				t.Fatalf("%s completion lacks a one-topic %s help guard:\n%s", test.shell, test.namespace, test.output)
+			}
+		})
+	}
+}
+
 func TestCompletionCommandRejectsUnsupportedShell(t *testing.T) {
 	app := newTestAppForCLI(t)
 	_, err := captureStdout(t, func() error {

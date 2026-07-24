@@ -124,6 +124,11 @@ func runCodexCLI(args []string) error {
 			return err
 		}
 	}
+	if args[0] == "login" {
+		if handled, err := runCodexLoginHelpFastPath(args[1:]); handled {
+			return err
+		}
+	}
 	if args[0] == "help" {
 		if len(args) == 1 {
 			printCodexHelp()
@@ -220,6 +225,11 @@ func (a *App) cmdCodex(args []string) error {
 	}
 	if args[0] == "cli" {
 		if handled, err := runCodexCLIHelpFastPath(args[1:]); handled {
+			return err
+		}
+	}
+	if args[0] == "login" {
+		if handled, err := runCodexLoginHelpFastPath(args[1:]); handled {
 			return err
 		}
 	}
@@ -441,6 +451,12 @@ func (a *App) cmdAdd(args []string) error {
 }
 
 func (a *App) cmdLogin(args []string) error {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		return a.cmdHelp([]string{"codex", "login"})
+	}
+	if handled, err := runCodexLoginHelpFastPath(args); handled {
+		return err
+	}
 	if len(args) < 1 {
 		return &ExitError{Code: 2, Message: "usage: multisubs codex login <name> [codex login args]"}
 	}
@@ -483,6 +499,46 @@ func (a *App) cmdLogin(args []string) error {
 		fmt.Println("login command completed. auth file not detected. this may indicate keychain mode or an incomplete login")
 	}
 	return nil
+}
+
+func runCodexLoginHelpFastPath(args []string) (bool, error) {
+	helpFlag, hasTargetScopedHelp, exact := targetScopedLoginHelp(args)
+	if !hasTargetScopedHelp {
+		return false, nil
+	}
+	if !exact {
+		return true, &ExitError{Code: 2, Message: "usage: multisubs codex login <name> [codex login args]"}
+	}
+	return true, runCommandWithEnv(
+		"codex",
+		[]string{"login", helpFlag},
+		neutralCodexEnv(os.Environ()),
+		"Codex login help command failed",
+	)
+}
+
+func targetScopedLoginHelp(args []string) (string, bool, bool) {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		return "", false, false
+	}
+	hasHelp := false
+	for _, arg := range args {
+		if isHelpFlag(arg) {
+			hasHelp = true
+			break
+		}
+	}
+	if !hasHelp {
+		return "", false, false
+	}
+	if len(args) == 2 && !isHelpFlag(args[0]) && isHelpFlag(args[1]) {
+		return args[1], true, true
+	}
+	return "", true, false
+}
+
+func isHelpFlag(arg string) bool {
+	return arg == "-h" || arg == "--help"
 }
 
 func ensureLoginConfigReady(paths Paths, profile Profile) error {

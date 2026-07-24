@@ -102,6 +102,7 @@ func TestCodexCLIProfileHelpUsesNeutralProviderPathThroughAppDispatch(t *testing
 				t.Setenv("MULTISUBS_ACTIVE_PROFILE", "stale")
 				t.Setenv("MULTISUBS_SELECTED_PROFILE_PATH", filepath.Join(root, "stale-selection"))
 				t.Setenv("MULTISUBS_HEARTBEAT_PROMPT", "stale-prompt")
+				t.Setenv("MULTISUBS_FUTURE_CONTROL", "stale")
 				t.Setenv("OPENAI_API_KEY", "stale-secret")
 				t.Setenv("CODEX_AUTH_TOKEN", "stale-secret")
 				t.Setenv("MULTICODEX_HOME", filepath.Join(root, "legacy-product-state"))
@@ -130,7 +131,7 @@ func TestCmdCLIKeepsGoalStateProfileLocalAcrossConcurrentTerminals(t *testing.T)
 	root := t.TempDir()
 	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multi"))
 	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "default-codex"))
-	t.Setenv("MULTISUBS_FAKE_CODEX_LOG_DIR", root)
+	t.Setenv("TEST_FAKE_CODEX_LOG_DIR", root)
 
 	fakeBin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
@@ -140,7 +141,7 @@ func TestCmdCLIKeepsGoalStateProfileLocalAcrossConcurrentTerminals(t *testing.T)
 set -euo pipefail
 : "${CODEX_HOME:?CODEX_HOME must be set}"
 : "${MULTISUBS_ACTIVE_PROFILE:?MULTISUBS_ACTIVE_PROFILE must be set}"
-: "${MULTISUBS_FAKE_CODEX_LOG_DIR:?MULTISUBS_FAKE_CODEX_LOG_DIR must be set}"
+: "${TEST_FAKE_CODEX_LOG_DIR:?TEST_FAKE_CODEX_LOG_DIR must be set}"
 mkdir -p "$CODEX_HOME"
 goal_enabled=false
 if [[ -f "$CODEX_HOME/config.toml" ]] && grep -Eq '^[[:space:]]*goals[[:space:]]*=[[:space:]]*true[[:space:]]*$' "$CODEX_HOME/config.toml"; then
@@ -152,7 +153,7 @@ printf 'goal-state-for=%s\n' "$MULTISUBS_ACTIVE_PROFILE" > "$CODEX_HOME/state_5.
   printf 'codex_home=%s\n' "$CODEX_HOME"
   printf 'goal_enabled=%s\n' "$goal_enabled"
   printf 'args=%s\n' "$*"
-} > "$MULTISUBS_FAKE_CODEX_LOG_DIR/$MULTISUBS_ACTIVE_PROFILE.log"
+} > "$TEST_FAKE_CODEX_LOG_DIR/$MULTISUBS_ACTIVE_PROFILE.log"
 sleep 0.1
 `
 	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
@@ -279,6 +280,11 @@ func assertNeutralCodexHelpInvocation(t *testing.T, logPath, helpFlag string, in
 	for _, key := range forbidden {
 		if strings.Contains(log, "\n"+key+"=") {
 			t.Fatalf("neutral Codex help retained %s: %q", key, log)
+		}
+	}
+	for _, line := range strings.Split(log, "\n") {
+		if strings.HasPrefix(line, "MULTISUBS_") {
+			t.Fatalf("neutral Codex help retained product variable %s: %q", line, log)
 		}
 	}
 }

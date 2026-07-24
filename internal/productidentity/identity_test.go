@@ -40,6 +40,8 @@ var identityFixturePaths = []string{
 	"internal/multisubs/process_test.go",
 	"internal/multisubs/run_cli_test.go",
 	"internal/multisubs/version.go",
+	"internal/productidentity/identity.go",
+	"internal/productidentity/legacy.go",
 }
 
 func TestRepositoryIdentity(t *testing.T) {
@@ -285,6 +287,67 @@ func TestProductIdentityMutations(t *testing.T) {
 		comment := "\n// retained expected text: os.LookupEnv(\"MULTI\" + \"CODEX_HOME\")\n"
 		fixture.appendText(t, "internal/multisubs/app.go", active+comment)
 		requireErrorContaining(t, fixture.errors(), "active os.LookupEnv read")
+	})
+
+	t.Run("folded legacy runtime strings fail", func(t *testing.T) {
+		mutations := []struct {
+			name   string
+			active string
+			kept   string
+		}{
+			{
+				name: "split executable invocation",
+				active: "\nfunc prohibitedLegacyExecutableForMutationTest() {\n" +
+					"\t_ = exec.Command(\"multi\" + \"codex\")\n" +
+					"}\n",
+				kept: "\n// retained mutation shape: exec.Command(\"multi\" + \"codex\")\n",
+			},
+			{
+				name:   "split state path",
+				active: "\nconst prohibitedLegacyStatePathForMutationTest = \"~/\" + (\"multi\" + \"codex\")\n",
+				kept:   "\n// retained mutation shape: \"~/\" + (\"multi\" + \"codex\")\n",
+			},
+			{
+				name:   "escaped literal",
+				active: "\nconst prohibitedEscapedLegacyForMutationTest = \"\\x6d\\x75\\x6c\\x74\\x69\\x63\\x6f\\x64\\x65\\x78\"\n",
+				kept:   "\n// retained mutation shape: an escaped legacy executable literal\n",
+			},
+			{
+				name: "indirect constant use",
+				active: "\nconst prohibitedLegacyStartForMutationTest = \"MULTI\"\n" +
+					"const prohibitedLegacyEndForMutationTest = \"CODEX_HOME\"\n" +
+					"const prohibitedLegacyEnvironmentForMutationTest = prohibitedLegacyStartForMutationTest + prohibitedLegacyEndForMutationTest\n",
+				kept: "\n// retained mutation shape: prohibitedLegacyStartForMutationTest + prohibitedLegacyEndForMutationTest\n",
+			},
+		}
+		for _, mutation := range mutations {
+			mutation := mutation
+			t.Run(mutation.name, func(t *testing.T) {
+				fixture := newIdentityFixture(t)
+				fixture.appendText(t, "internal/multisubs/app.go", mutation.active+mutation.kept)
+				requireErrorContaining(t, fixture.errors(), "constant string evaluates to prohibited legacy product identity")
+			})
+		}
+	})
+
+	t.Run("split legacy text in a Go comment does not create an active constant", func(t *testing.T) {
+		fixture := newIdentityFixture(t)
+		fixture.appendText(t, "internal/multisubs/app.go", "\n// inactive example: exec.Command(\"multi\" + \"codex\")\n")
+		fixture.requireValid(t)
+	})
+
+	t.Run("legacy constant in a tracked Go test does not count as runtime", func(t *testing.T) {
+		fixture := newIdentityFixture(t)
+		fixture.writeTracked(t, "internal/multisubs/inactive_legacy_fixture_test.go",
+			"package multisubs\n\nconst inactiveLegacyExecutable = \"multi\" + \"codex\"\n")
+		fixture.requireValid(t)
+	})
+
+	t.Run("only the narrowly named checker sentinels are permitted", func(t *testing.T) {
+		fixture := newIdentityFixture(t)
+		fixture.appendText(t, "internal/productidentity/legacy.go",
+			"\nconst prohibitedLegacySentinelAlias = legacyProduct\n")
+		requireErrorContaining(t, fixture.errors(), "constant string evaluates to prohibited legacy product identity")
 	})
 
 	t.Run("every mandatory legacy occurrence fails when deleted", func(t *testing.T) {

@@ -71,6 +71,7 @@ func validateRepository(root string, trackedPaths []string) []string {
 	repo.checkOAuthUserAgent()
 	repo.checkTUIIdentity()
 	repo.checkReleaseWorkflow()
+	repo.checkLegacyConstantStrings()
 	repo.checkForbiddenLegacyEnvironmentReads()
 	repo.checkLegacyOccurrences()
 	return repo.errors
@@ -391,6 +392,271 @@ func (repo *repository) checkForbiddenLegacyEnvironmentReads() {
 			return true
 		})
 	}
+}
+
+type parsedGoIdentityFile struct {
+	relativePath string
+	source       []byte
+	fileSet      *token.FileSet
+	file         *ast.File
+	packageKey   string
+}
+
+type constantStringResolver struct {
+	expressions         map[*ast.Object]ast.Expr
+	packageExpressions  map[string]ast.Expr
+	sentinelObjects     map[*ast.Object]bool
+	sentinelNames       map[string]bool
+	sentinelExpressions map[ast.Expr]bool
+	memo                map[*ast.Object]constantStringResult
+	visiting            map[*ast.Object]bool
+	visitingNames       map[string]bool
+}
+
+type constantStringResult struct {
+	value    string
+	constant bool
+	sentinel bool
+}
+
+func (repo *repository) checkLegacyConstantStrings() {
+	var files []parsedGoIdentityFile
+	resolvers := make(map[string]*constantStringResolver)
+	for _, relativePath := range repo.trackedPaths {
+		if !strings.HasSuffix(relativePath, ".go") || strings.HasSuffix(relativePath, "_test.go") {
+			continue
+		}
+		source, ok := repo.readFile(relativePath)
+		if !ok {
+			continue
+		}
+		fileSet := token.NewFileSet()
+		file, err := parser.ParseFile(fileSet, relativePath, source, 0)
+		if err != nil {
+			repo.errors = append(repo.errors, fmt.Sprintf("%s: cannot parse active Go source: %v", relativePath, err))
+			continue
+		}
+		packageKey := path.Dir(relativePath) + "\x00" + file.Name.Name
+		resolver := resolvers[packageKey]
+		if resolver == nil {
+			resolver = &constantStringResolver{
+				expressions:         make(map[*ast.Object]ast.Expr),
+				packageExpressions:  make(map[string]ast.Expr),
+				sentinelObjects:     make(map[*ast.Object]bool),
+				sentinelNames:       make(map[string]bool),
+				sentinelExpressions: make(map[ast.Expr]bool),
+				memo:                make(map[*ast.Object]constantStringResult),
+				visiting:            make(map[*ast.Object]bool),
+				visitingNames:       make(map[string]bool),
+			}
+			resolvers[packageKey] = resolver
+		}
+		resolver.collectConstants(file)
+		resolver.collectPackageConstants(relativePath, file)
+		files = append(files, parsedGoIdentityFile{
+			relativePath: relativePath,
+			source:       source,
+			fileSet:      fileSet,
+			file:         file,
+			packageKey:   packageKey,
+		})
+	}
+
+	for _, parsed := range files {
+		resolver := resolvers[parsed.packageKey]
+		sourceLines := strings.Split(string(parsed.source), "\n")
+		reportedLines := make(map[int]bool)
+		report := func(position token.Pos, value string) {
+			lineNumber := parsed.fileSet.Position(position).Line
+			if lineNumber < 1 || lineNumber > len(sourceLines) || reportedLines[lineNumber] {
+				return
+			}
+			if repo.approvedLegacySourceLine(parsed.relativePath, sourceLines[lineNumber-1]) {
+				return
+			}
+			reportedLines[lineNumber] = true
+			repo.errors = append(repo.errors, fmt.Sprintf(
+				"%s:%d: active Go constant string evaluates to prohibited legacy product identity %q",
+				parsed.relativePath,
+				lineNumber,
+				value,
+			))
+		}
+
+		ast.Inspect(parsed.file, func(node ast.Node) bool {
+			spec, ok := node.(*ast.ValueSpec)
+			if !ok {
+				return true
+			}
+			for _, name := range spec.Names {
+				if name.Obj == nil {
+					continue
+				}
+				result := resolver.resolveObject(name.Obj)
+				if !result.constant || !prohibitedLegacyConstantValue(result.value) {
+					continue
+				}
+				if parsed.relativePath == "internal/productidentity/legacy.go" &&
+					(name.Name == "legacyProduct" || name.Name == "legacyEnvironmentPrefix") {
+					continue
+				}
+				report(name.Pos(), result.value)
+			}
+			return true
+		})
+
+		ast.Inspect(parsed.file, func(node ast.Node) bool {
+			expression, ok := node.(ast.Expr)
+			if !ok {
+				return true
+			}
+			result := resolver.resolveExpression(expression)
+			if !result.constant || !prohibitedLegacyConstantValue(result.value) ||
+				result.sentinel || resolver.sentinelExpressions[expression] {
+				return true
+			}
+			report(expression.Pos(), result.value)
+			return true
+		})
+	}
+}
+
+func (repo *repository) approvedLegacySourceLine(relativePath, line string) bool {
+	for _, rule := range requiredLegacyLines {
+		if rule.path == relativePath && rule.line == line {
+			return true
+		}
+	}
+	return false
+}
+
+func prohibitedLegacyConstantValue(value string) bool {
+	lowerValue := strings.ToLower(value)
+	return strings.Contains(lowerValue, strings.ToLower(legacyProduct)) ||
+		strings.HasPrefix(value, legacyEnvironmentPrefix+"_")
+}
+
+func (resolver *constantStringResolver) collectConstants(file *ast.File) {
+	ast.Inspect(file, func(node ast.Node) bool {
+		declaration, ok := node.(*ast.GenDecl)
+		if !ok || declaration.Tok != token.CONST {
+			return true
+		}
+		resolver.collectConstantDeclaration(declaration, false, "")
+		return true
+	})
+}
+
+func (resolver *constantStringResolver) collectPackageConstants(relativePath string, file *ast.File) {
+	for _, rawDeclaration := range file.Decls {
+		declaration, ok := rawDeclaration.(*ast.GenDecl)
+		if !ok || declaration.Tok != token.CONST {
+			continue
+		}
+		resolver.collectConstantDeclaration(declaration, true, relativePath)
+	}
+}
+
+func (resolver *constantStringResolver) collectConstantDeclaration(declaration *ast.GenDecl, packageLevel bool, relativePath string) {
+	var previousValues []ast.Expr
+	for _, rawSpec := range declaration.Specs {
+		spec, ok := rawSpec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		if len(spec.Values) != 0 {
+			previousValues = spec.Values
+		}
+		for index, name := range spec.Names {
+			if name.Obj == nil || index >= len(previousValues) {
+				continue
+			}
+			expression := previousValues[index]
+			resolver.expressions[name.Obj] = expression
+			if packageLevel {
+				resolver.packageExpressions[name.Name] = expression
+			}
+			if packageLevel &&
+				relativePath == "internal/productidentity/legacy.go" &&
+				(name.Name == "legacyProduct" || name.Name == "legacyEnvironmentPrefix") {
+				resolver.sentinelObjects[name.Obj] = true
+				resolver.sentinelNames[name.Name] = true
+				resolver.sentinelExpressions[expression] = true
+			}
+		}
+	}
+}
+
+func (resolver *constantStringResolver) resolveExpression(expression ast.Expr) constantStringResult {
+	switch value := expression.(type) {
+	case *ast.BasicLit:
+		if value.Kind != token.STRING {
+			return constantStringResult{}
+		}
+		unquoted, err := strconv.Unquote(value.Value)
+		return constantStringResult{value: unquoted, constant: err == nil}
+	case *ast.BinaryExpr:
+		if value.Op != token.ADD {
+			return constantStringResult{}
+		}
+		left := resolver.resolveExpression(value.X)
+		right := resolver.resolveExpression(value.Y)
+		if !left.constant || !right.constant {
+			return constantStringResult{}
+		}
+		return constantStringResult{
+			value:    left.value + right.value,
+			constant: true,
+			sentinel: left.sentinel || right.sentinel,
+		}
+	case *ast.ParenExpr:
+		return resolver.resolveExpression(value.X)
+	case *ast.Ident:
+		if value.Obj != nil {
+			return resolver.resolveObject(value.Obj)
+		}
+		return resolver.resolvePackageName(value.Name)
+	default:
+		return constantStringResult{}
+	}
+}
+
+func (resolver *constantStringResolver) resolveObject(object *ast.Object) constantStringResult {
+	if result, ok := resolver.memo[object]; ok {
+		return result
+	}
+	if resolver.visiting[object] {
+		return constantStringResult{}
+	}
+	expression, ok := resolver.expressions[object]
+	if !ok {
+		return constantStringResult{}
+	}
+	resolver.visiting[object] = true
+	result := resolver.resolveExpression(expression)
+	delete(resolver.visiting, object)
+	if resolver.sentinelObjects[object] {
+		result.sentinel = true
+	}
+	resolver.memo[object] = result
+	return result
+}
+
+func (resolver *constantStringResolver) resolvePackageName(name string) constantStringResult {
+	if resolver.visitingNames[name] {
+		return constantStringResult{}
+	}
+	expression, ok := resolver.packageExpressions[name]
+	if !ok {
+		return constantStringResult{}
+	}
+	resolver.visitingNames[name] = true
+	result := resolver.resolveExpression(expression)
+	delete(resolver.visitingNames, name)
+	if resolver.sentinelNames[name] {
+		result.sentinel = true
+	}
+	return result
 }
 
 func importedPackageName(file *ast.File, importPath string) (string, bool) {

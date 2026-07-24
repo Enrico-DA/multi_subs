@@ -15,6 +15,7 @@ func TestProfileCodexEnvSetsProfileAndStripsAccountOverrides(t *testing.T) {
 		"MULTISUBS_HOME=/tmp/product",
 		"MULTISUBS_ACTIVE_PROFILE=stale",
 		"MULTISUBS_SELECTED_PROFILE_PATH=/tmp/out",
+		"MULTISUBS_FUTURE_CONTROL=stale",
 		"MULTICODEX_HOME=/tmp/legacy",
 		"MULTICODEX_ACTIVE_PROFILE=legacy",
 		"OPENAI_API_KEY=secret",
@@ -28,6 +29,7 @@ func TestProfileCodexEnvSetsProfileAndStripsAccountOverrides(t *testing.T) {
 		"MULTISUBS_ACTIVE_PROFILE=stale",
 		"MULTISUBS_SELECTED_PROFILE_PATH=",
 		"MULTISUBS_HOME=",
+		"MULTISUBS_FUTURE_CONTROL=",
 		"MULTICODEX_HOME=",
 		"MULTICODEX_ACTIVE_PROFILE=",
 		"OPENAI_API_KEY=",
@@ -47,6 +49,18 @@ func TestProfileCodexEnvSetsProfileAndStripsAccountOverrides(t *testing.T) {
 	if !strings.Contains(joined, "MULTISUBS_ACTIVE_PROFILE=work") {
 		t.Fatalf("expected profile env to be set, got %q", joined)
 	}
+	productVariables := 0
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "MULTISUBS_") {
+			productVariables++
+			if entry != "MULTISUBS_ACTIVE_PROFILE=work" {
+				t.Fatalf("managed Codex env retained unexpected product variable %q", entry)
+			}
+		}
+	}
+	if productVariables != 1 {
+		t.Fatalf("managed Codex env product variable count: got %d want 1; env=%q", productVariables, env)
+	}
 }
 
 func TestNeutralCodexEnvStripsProfileState(t *testing.T) {
@@ -54,14 +68,30 @@ func TestNeutralCodexEnvStripsProfileState(t *testing.T) {
 		"PATH=/bin",
 		"CODEX_HOME=/tmp/stale",
 		"MULTISUBS_ACTIVE_PROFILE=stale",
+		"MULTISUBS_FUTURE_CONTROL=stale",
 		"OPENAI_API_KEY=secret",
 	})
 	joined := strings.Join(env, "\n")
-	if strings.Contains(joined, "CODEX_HOME=") || strings.Contains(joined, "MULTISUBS_ACTIVE_PROFILE=") || strings.Contains(joined, "OPENAI_API_KEY=") {
+	if strings.Contains(joined, "CODEX_HOME=") || strings.Contains(joined, "MULTISUBS_") || strings.Contains(joined, "MULTI"+"CODEX_") || strings.Contains(joined, "OPENAI_API_KEY=") {
 		t.Fatalf("expected neutral env to strip Codex profile and account overrides, got %q", joined)
 	}
 	if !strings.Contains(joined, "PATH=/bin") {
 		t.Fatalf("expected PATH to remain, got %q", joined)
+	}
+}
+
+func TestDefaultCodexEnvReceivesNoProductVariables(t *testing.T) {
+	env := profileCodexEnv([]string{
+		"PATH=/bin",
+		"MULTISUBS_ACTIVE_PROFILE=stale",
+		"MULTISUBS_FUTURE_CONTROL=stale",
+	}, "/tmp/default-codex-home", "")
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "MULTISUBS_") || strings.Contains(joined, "MULTI"+"CODEX_") {
+		t.Fatalf("default Codex env retained product variables: %q", joined)
+	}
+	if !strings.Contains(joined, "CODEX_HOME=/tmp/default-codex-home") {
+		t.Fatalf("default Codex env dropped selected CODEX_HOME: %q", joined)
 	}
 }
 

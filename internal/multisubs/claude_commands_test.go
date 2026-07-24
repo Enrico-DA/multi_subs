@@ -367,12 +367,18 @@ func TestClaudeReadOnlyCommandsAndNamespaceHelpDoNotCreateState(t *testing.T) {
 
 func TestClaudeCLIHelpFastPathRunsOfficialHelpWithoutLoadingSidecar(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
+	t.Setenv("MULTISUBS_FUTURE_CONTROL", "stale")
 	runner.run = func(_ context.Context, args, env []string) error {
 		if !reflect.DeepEqual(args, []string{"--help"}) {
 			t.Fatalf("CLI help args: %#v", args)
 		}
 		if envContainsKey(env, "CLAUDE_CONFIG_DIR") {
 			t.Fatalf("CLI help should use neutral Claude env: %q", env)
+		}
+		for _, entry := range env {
+			if strings.HasPrefix(entry, "MULTISUBS_") {
+				t.Fatalf("CLI help retained product variable %q: %q", entry, env)
+			}
 		}
 		return nil
 	}

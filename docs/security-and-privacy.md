@@ -57,10 +57,10 @@ Before a provider child starts, the environment removes:
 
 - stale provider home overrides;
 - API keys, tokens, base URL overrides, and provider selectors;
-- inherited active `MULTISUBS_*` routing and metadata controls;
+- every inherited `MULTISUBS_*` variable, including unknown future controls;
 - all legacy `MULTICODEX_*` controls.
 
-The child then receives exactly the provider home required for its selected context. A managed Codex child also receives only the selected `MULTISUBS_ACTIVE_PROFILE` marker added by multisubs; it does not inherit a caller-supplied marker. Default-account Codex, neutral Codex help, and Claude children do not receive this managed Codex marker. Default Codex execution receives no managed auth override, and default Claude execution receives no `CLAUDE_CONFIG_DIR`.
+The child then receives exactly the provider home required for its selected context. A managed Codex child also receives exactly one product variable: the selected `MULTISUBS_ACTIVE_PROFILE` marker added by multisubs. It does not inherit a caller-supplied marker. Default-account Codex, neutral provider help, and every Claude child receive no `MULTISUBS_*` variable. Default Codex execution receives no managed auth override, and neutral or default Claude execution receives no `CLAUDE_CONFIG_DIR`.
 
 ## Legacy-sensitive rejection
 
@@ -86,7 +86,7 @@ These paths must not create product state:
 - `multisubs codex status`;
 - aggregate and focused doctors;
 - Codex dry run;
-- exact provider help passthrough, including target-scoped Codex CLI help without requiring a configured profile.
+- exact provider help passthrough, including target-scoped Codex CLI help and target-scoped login help for both providers without requiring a configured profile.
 
 ## Usage and routing
 

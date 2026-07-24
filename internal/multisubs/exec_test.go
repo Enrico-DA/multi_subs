@@ -1322,11 +1322,11 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}" == "untrusted" && "${5:-}" == "-c" && "${6:-}" == 'cli_auth_credentials_store="file"' && "${7:-}" == "app-server" ]]; then
-  : "${MULTISUBS_EXEC_SELECTION_TEST_BINARY:?MULTISUBS_EXEC_SELECTION_TEST_BINARY must be set}"
-  MULTISUBS_EXEC_SELECTION_APP_SERVER_HELPER=1 exec "${MULTISUBS_EXEC_SELECTION_TEST_BINARY}" -test.run '^TestExecSelectionAppServerHelper$'
+  : "${TEST_EXEC_SELECTION_BINARY:?TEST_EXEC_SELECTION_BINARY must be set}"
+  TEST_EXEC_SELECTION_APP_SERVER_HELPER=1 exec "${TEST_EXEC_SELECTION_BINARY}" -test.run '^TestExecSelectionAppServerHelper$'
 fi
 if [[ "${1:-}" == "exec" ]]; then
-  : "${MULTISUBS_FAKE_CODEX_LOG:?MULTISUBS_FAKE_CODEX_LOG must be set}"
+  : "${TEST_FAKE_CODEX_LOG:?TEST_FAKE_CODEX_LOG must be set}"
   {
     printf 'profile=%s\n' "${MULTISUBS_ACTIVE_PROFILE:-}"
     printf 'codex_home=%s\n' "${CODEX_HOME:-}"
@@ -1335,7 +1335,7 @@ if [[ "${1:-}" == "exec" ]]; then
       printf 'arg[%d]=%s\n' "$i" "$arg"
       i=$((i+1))
     done
-  } >> "${MULTISUBS_FAKE_CODEX_LOG}"
+  } >> "${TEST_FAKE_CODEX_LOG}"
   exit 0
 fi
 echo "unexpected fake codex invocation: $*" >&2
@@ -1345,12 +1345,12 @@ exit 1
 		t.Fatalf("write fake codex: %v", err)
 	}
 	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
-	t.Setenv("MULTISUBS_FAKE_CODEX_LOG", logPath)
+	t.Setenv("TEST_FAKE_CODEX_LOG", logPath)
 	testBinary, err := os.Executable()
 	if err != nil {
 		t.Fatalf("locate Go test binary: %v", err)
 	}
-	t.Setenv("MULTISUBS_EXEC_SELECTION_TEST_BINARY", testBinary)
+	t.Setenv("TEST_EXEC_SELECTION_BINARY", testBinary)
 	originalTransport := http.DefaultTransport
 	http.DefaultTransport = execSelectionOAuthTransport{root: root}
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
@@ -1364,7 +1364,7 @@ exit 1
 }
 
 func TestExecSelectionAppServerHelper(t *testing.T) {
-	if os.Getenv("MULTISUBS_EXEC_SELECTION_APP_SERVER_HELPER") != "1" {
+	if os.Getenv("TEST_EXEC_SELECTION_APP_SERVER_HELPER") != "1" {
 		return
 	}
 	if err := runExecSelectionAppServerHelper(); err != nil {

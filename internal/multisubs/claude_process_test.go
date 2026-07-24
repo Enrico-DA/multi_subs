@@ -40,6 +40,7 @@ func TestClaudeDefaultEnvRemovesConfigAndCredentialOverrides(t *testing.T) {
 		"MULTISUBS_SELECTED_CLAUDE_PROFILE=stale",
 		"MULTISUBS_ACTIVE_PROVIDER=claude",
 		"MULTISUBS_SELECTED_PROVIDER=claude",
+		"MULTISUBS_FUTURE_CONTROL=stale",
 		"MULTICODEX_HOME=/tmp/legacy",
 		"MULTICODEX_CLAUDE_PROFILE=legacy",
 		"CODEX_USAGE_MONITOR_ACCOUNTS_FILE=/tmp/legacy-accounts.json",
@@ -74,6 +75,7 @@ func TestClaudeDefaultEnvRemovesConfigAndCredentialOverrides(t *testing.T) {
 		"MULTISUBS_SELECTED_CLAUDE_PROFILE",
 		"MULTISUBS_ACTIVE_PROVIDER",
 		"MULTISUBS_SELECTED_PROVIDER",
+		"MULTISUBS_FUTURE_CONTROL",
 		"MULTICODEX_HOME",
 		"MULTICODEX_CLAUDE_PROFILE",
 		"CODEX_USAGE_MONITOR_ACCOUNTS_FILE",
@@ -95,6 +97,7 @@ func TestClaudeManagedEnvSetsExactlyOneDerivedConfigDir(t *testing.T) {
 		"CLAUDE_CONFIG_DIR=/tmp/stale-one",
 		"CLAUDE_CONFIG_DIR=/tmp/stale-two",
 		"ANTHROPIC_API_KEY=secret",
+		"MULTISUBS_FUTURE_CONTROL=stale",
 	}, "/private/multisubs/providers/claude/profiles/work/config")
 	count := 0
 	for _, item := range env {
@@ -110,6 +113,12 @@ func TestClaudeManagedEnvSetsExactlyOneDerivedConfigDir(t *testing.T) {
 	}
 	if envContainsKey(env, "ANTHROPIC_API_KEY") {
 		t.Fatalf("managed Claude env retained API key: %q", env)
+	}
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && (strings.HasPrefix(key, "MULTISUBS_") || strings.HasPrefix(key, "MULTI"+"CODEX_")) {
+			t.Fatalf("managed Claude env retained product variable %s: %q", key, env)
+		}
 	}
 }
 
