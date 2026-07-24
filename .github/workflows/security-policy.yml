@@ -10,6 +10,17 @@ permissions:
   contents: read
 
 jobs:
+  identity:
+    name: Product identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Check non-publishing product identity
+        run: bash scripts/ci/check-identity.sh
+
   quality:
     name: Quality (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -39,8 +50,8 @@ jobs:
       - name: Run Go vet
         run: go vet ./...
 
-      - name: Build multicodex
-        run: go build -trimpath -o "$RUNNER_TEMP/multicodex" ./cmd/multicodex
+      - name: Build multisubs
+        run: go build -trimpath -o "$RUNNER_TEMP/multisubs" ./cmd/multisubs
 
   security-policy:
     runs-on: ubuntu-latest

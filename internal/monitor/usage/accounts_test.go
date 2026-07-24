@@ -11,7 +11,7 @@ func TestLoadMonitorAccountsEmptyWhenFileMissingAndNoProfiles(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	accounts, warning, err := loadMonitorAccounts()
@@ -42,7 +42,7 @@ func TestLoadMonitorAccountsIncludesOnlyGlobalHomeByDefault(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", activeHome)
 	t.Setenv(defaultCodexHomeEnvVar, defaultHome)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	accounts, warning, err := loadMonitorAccounts()
@@ -72,7 +72,7 @@ func TestLoadMonitorAccountsUsesConfiguredDefaultCodexHome(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv(defaultCodexHomeEnvVar, configuredHome)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	accounts, warning, err := loadMonitorAccounts()
@@ -105,7 +105,7 @@ func TestLoadMonitorAccountsCanExcludeGlobalHome(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv(defaultCodexHomeEnvVar, defaultHome)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	accounts, warning, err := loadMonitorAccountsWithOptions(MonitorAccountOptions{})
@@ -132,7 +132,7 @@ func TestLoadMonitorAccountsIncludesActiveCodexHomeWhenRequested(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", activeHome)
 	t.Setenv(defaultCodexHomeEnvVar, "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	accounts, warning, err := loadMonitorAccountsWithOptions(MonitorAccountOptions{IncludeActive: true})
@@ -166,7 +166,7 @@ func TestLoadMonitorAccountsPrefersConfiguredDefaultOverActiveCodexHome(t *testi
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", activeHome)
 	t.Setenv(defaultCodexHomeEnvVar, configuredHome)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	accounts, _, err := loadMonitorAccountsWithOptions(MonitorAccountOptions{
@@ -194,7 +194,7 @@ func TestLoadMonitorAccountsFromFileWithDedup(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	accountsPath := filepath.Join(tmp, "accounts.json")
 	t.Setenv(accountsFileEnvVar, accountsPath)
 
@@ -240,7 +240,7 @@ func TestLoadMonitorAccountsWarnsOnEmptyAccounts(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	accountsPath := filepath.Join(tmp, "accounts.json")
 	t.Setenv(accountsFileEnvVar, accountsPath)
 	if err := os.WriteFile(accountsPath, []byte(`{"version":1,"accounts":[]}`), 0o600); err != nil {
@@ -263,7 +263,7 @@ func TestLoadMonitorAccountsRejectsUnsupportedAccountsVersion(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	accountsPath := filepath.Join(tmp, "accounts.json")
 	t.Setenv(accountsFileEnvVar, accountsPath)
 	if err := os.WriteFile(accountsPath, []byte(`{"version":2,"accounts":[]}`), 0o600); err != nil {
@@ -283,7 +283,7 @@ func TestLoadMonitorAccountsAutoDiscoversSystemCodexHomes(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	discoveredHome := filepath.Join(tmp, "profiles", "work", "codex-home")
@@ -318,7 +318,7 @@ func TestLoadMonitorAccountsSkipsTransientAutoDiscoveredHomes(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	stableHome := filepath.Join(tmp, "profiles", "work", "codex-home")
@@ -364,7 +364,7 @@ func TestLoadMonitorAccountsDiscoveryDoesNotDescendIntoSymlinkedDirs(t *testing.
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	outsideHome := filepath.Join(t.TempDir(), "outside", "codex-home")
@@ -393,7 +393,7 @@ func TestLoadMonitorAccountsDiscoveryPrunesLargeCommonDirs(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
 	prunedHome := filepath.Join(tmp, "node_modules", "nested", "codex-home")
@@ -463,10 +463,10 @@ func TestAccountCollectorDeduplicatesSymlinkAndRealHomes(t *testing.T) {
 func TestResolveAccountsFilePathPrefersDefaultDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, "")
 
-	defaultDir := filepath.Join(tmp, defaultMulticodexHomeDirName, defaultMonitorSubdirName)
+	defaultDir := filepath.Join(tmp, defaultMultisubsHomeDirName, defaultMonitorSubdirName)
 	if err := os.MkdirAll(defaultDir, 0o755); err != nil {
 		t.Fatalf("mkdir default dir: %v", err)
 	}
@@ -484,16 +484,34 @@ func TestResolveAccountsFilePathPrefersDefaultDir(t *testing.T) {
 	}
 }
 
-func TestLoadMonitorAccountsPrefersMulticodexProfiles(t *testing.T) {
+func TestResolveAccountsFilePathDoesNotReadLegacyMonitorEnvironment(t *testing.T) {
+	tmp := t.TempDir()
+	legacyPath := filepath.Join(tmp, "legacy-accounts.json")
+	t.Setenv("HOME", tmp)
+	t.Setenv(multisubsHomeEnvVar, "")
+	t.Setenv(accountsFileEnvVar, "")
+	t.Setenv("CODEX_USAGE_MONITOR_ACCOUNTS_FILE", legacyPath)
+
+	path, err := resolveAccountsFilePath()
+	if err != nil {
+		t.Fatalf("resolve accounts file path: %v", err)
+	}
+	want := filepath.Join(tmp, defaultMultisubsHomeDirName, defaultMonitorSubdirName, defaultAccountsFileName)
+	if path != want {
+		t.Fatalf("legacy monitor environment affected path: got=%q want=%q", path, want)
+	}
+}
+
+func TestLoadMonitorAccountsPrefersMultisubsProfiles(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatalf("mkdir multicodex dir: %v", err)
+		t.Fatalf("mkdir multisubs dir: %v", err)
 	}
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o700); err != nil {
@@ -523,24 +541,24 @@ func TestLoadMonitorAccountsPrefersMulticodexProfiles(t *testing.T) {
 		if account.Label == "personal" && account.CodexHome == normalizeHome(profileHome) {
 			found = true
 			if !account.UseAppServer {
-				t.Fatalf("expected validated multicodex profile to use app-server")
+				t.Fatalf("expected validated multisubs profile to use app-server")
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("expected multicodex profile account to be included, got %#v", accounts)
+		t.Fatalf("expected multisubs profile account to be included, got %#v", accounts)
 	}
 }
 
-func TestLoadMonitorAccountsRejectsUnsupportedMulticodexVersion(t *testing.T) {
+func TestLoadMonitorAccountsRejectsUnsupportedMultisubsVersion(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
-	t.Setenv(multicodexHomeEnvVar, configDir)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
+	t.Setenv(multisubsHomeEnvVar, configDir)
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatalf("mkdir multicodex dir: %v", err)
+		t.Fatalf("mkdir multisubs dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"version":2,"profiles":{}}`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -550,7 +568,7 @@ func TestLoadMonitorAccountsRejectsUnsupportedMulticodexVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected aggregate load error: %v", err)
 	}
-	if !strings.Contains(warning, "unsupported multicodex config version 2") {
+	if !strings.Contains(warning, "unsupported multisubs config version 2") {
 		t.Fatalf("expected unsupported-version warning, got %q", warning)
 	}
 }
@@ -577,16 +595,16 @@ func TestAccountCollectorPreservesVerifiedAppServerUseAcrossHigherPriorityAlias(
 	}
 }
 
-func TestLoadMonitorAccountsRejectsSymlinkedMulticodexConfig(t *testing.T) {
+func TestLoadMonitorAccountsRejectsSymlinkedMultisubsConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatalf("mkdir multicodex dir: %v", err)
+		t.Fatalf("mkdir multisubs dir: %v", err)
 	}
 	outsideConfig := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(outsideConfig, []byte(`{"version":1,"profiles":{}}`), 0o600); err != nil {
@@ -601,19 +619,19 @@ func TestLoadMonitorAccountsRejectsSymlinkedMulticodexConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(accounts) != 0 {
-		t.Fatalf("expected symlinked multicodex config to be skipped, got %#v", accounts)
+		t.Fatalf("expected symlinked multisubs config to be skipped, got %#v", accounts)
 	}
-	if !strings.Contains(warning, "multicodex profile discovery error") || !strings.Contains(warning, "symlink") {
+	if !strings.Contains(warning, "multisubs profile discovery error") || !strings.Contains(warning, "symlink") {
 		t.Fatalf("expected symlink warning, got %q", warning)
 	}
 }
 
-func TestLoadAccountsFromMulticodexConfigRejectsGroupReadableProfileDir(t *testing.T) {
+func TestLoadAccountsFromMultisubsConfigRejectsGroupReadableProfileDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o750); err != nil {
 		t.Fatalf("mkdir profile home: %v", err)
@@ -630,7 +648,7 @@ func TestLoadAccountsFromMulticodexConfigRejectsGroupReadableProfileDir(t *testi
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -642,18 +660,18 @@ func TestLoadAccountsFromMulticodexConfigRejectsGroupReadableProfileDir(t *testi
 	}
 }
 
-func TestLoadAccountsFromMulticodexConfigRejectsGroupReadableMulticodexHome(t *testing.T) {
+func TestLoadAccountsFromMultisubsConfigRejectsGroupReadableMultisubsHome(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o700); err != nil {
 		t.Fatalf("mkdir profile home: %v", err)
 	}
 	if err := os.Chmod(configDir, 0o750); err != nil {
-		t.Fatalf("chmod multicodex home: %v", err)
+		t.Fatalf("chmod multisubs home: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(profileHome, "auth.json"), []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
 		t.Fatalf("write auth file: %v", err)
@@ -667,24 +685,24 @@ func TestLoadAccountsFromMulticodexConfigRejectsGroupReadableMulticodexHome(t *t
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(accounts) != 0 {
-		t.Fatalf("expected group-readable multicodex home to be skipped, got %#v", accounts)
+		t.Fatalf("expected group-readable multisubs home to be skipped, got %#v", accounts)
 	}
 	if !strings.Contains(warning, "expected no group/world permissions") {
 		t.Fatalf("expected private-permissions warning, got %q", warning)
 	}
 }
 
-func TestLoadAccountsFromMulticodexConfigRejectsProfileConfigSymlinkOutsideDefault(t *testing.T) {
+func TestLoadAccountsFromMultisubsConfigRejectsProfileConfigSymlinkOutsideDefault(t *testing.T) {
 	tmp := t.TempDir()
 	defaultHome := filepath.Join(tmp, "default-codex")
 	t.Setenv("HOME", tmp)
 	t.Setenv(defaultCodexHomeEnvVar, defaultHome)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
 	if err := os.MkdirAll(defaultHome, 0o700); err != nil {
 		t.Fatalf("mkdir default home: %v", err)
@@ -693,7 +711,7 @@ func TestLoadAccountsFromMulticodexConfigRejectsProfileConfigSymlinkOutsideDefau
 		t.Fatalf("write default config: %v", err)
 	}
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o700); err != nil {
 		t.Fatalf("mkdir profile home: %v", err)
@@ -714,7 +732,7 @@ func TestLoadAccountsFromMulticodexConfigRejectsProfileConfigSymlinkOutsideDefau
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -726,12 +744,12 @@ func TestLoadAccountsFromMulticodexConfigRejectsProfileConfigSymlinkOutsideDefau
 	}
 }
 
-func TestLoadAccountsFromMulticodexConfigRejectsProfileConfigSymlinkTraversalThroughSymlink(t *testing.T) {
+func TestLoadAccountsFromMultisubsConfigRejectsProfileConfigSymlinkTraversalThroughSymlink(t *testing.T) {
 	tmp := t.TempDir()
 	defaultHome := filepath.Join(tmp, "default-codex")
 	t.Setenv("HOME", tmp)
 	t.Setenv(defaultCodexHomeEnvVar, defaultHome)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
 	if err := os.MkdirAll(defaultHome, 0o700); err != nil {
 		t.Fatalf("mkdir default home: %v", err)
@@ -751,7 +769,7 @@ func TestLoadAccountsFromMulticodexConfigRejectsProfileConfigSymlinkTraversalThr
 		t.Fatalf("symlink default pivot: %v", err)
 	}
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o700); err != nil {
 		t.Fatalf("mkdir profile home: %v", err)
@@ -769,7 +787,7 @@ func TestLoadAccountsFromMulticodexConfigRejectsProfileConfigSymlinkTraversalThr
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -781,12 +799,12 @@ func TestLoadAccountsFromMulticodexConfigRejectsProfileConfigSymlinkTraversalThr
 	}
 }
 
-func TestLoadAccountsFromMulticodexConfigAllowsProfileConfigSymlinkToDefault(t *testing.T) {
+func TestLoadAccountsFromMultisubsConfigAllowsProfileConfigSymlinkToDefault(t *testing.T) {
 	tmp := t.TempDir()
 	defaultHome := filepath.Join(tmp, "default-codex")
 	t.Setenv("HOME", tmp)
 	t.Setenv(defaultCodexHomeEnvVar, defaultHome)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
 	if err := os.MkdirAll(defaultHome, 0o700); err != nil {
 		t.Fatalf("mkdir default home: %v", err)
@@ -796,7 +814,7 @@ func TestLoadAccountsFromMulticodexConfigAllowsProfileConfigSymlinkToDefault(t *
 		t.Fatalf("write default config: %v", err)
 	}
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o700); err != nil {
 		t.Fatalf("mkdir profile home: %v", err)
@@ -813,7 +831,7 @@ func TestLoadAccountsFromMulticodexConfigAllowsProfileConfigSymlinkToDefault(t *
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -825,14 +843,14 @@ func TestLoadAccountsFromMulticodexConfigAllowsProfileConfigSymlinkToDefault(t *
 	}
 }
 
-func TestLoadMonitorAccountsSkipsUnsafeMulticodexProfile(t *testing.T) {
+func TestLoadMonitorAccountsSkipsUnsafeMultisubsProfile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o700); err != nil {
 		t.Fatalf("mkdir profile home: %v", err)
@@ -853,24 +871,24 @@ func TestLoadMonitorAccountsSkipsUnsafeMulticodexProfile(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(accounts) != 0 {
-		t.Fatalf("expected unsafe multicodex profile to be skipped, got %#v", accounts)
+		t.Fatalf("expected unsafe multisubs profile to be skipped, got %#v", accounts)
 	}
-	if !strings.Contains(warning, "skipping multicodex profile") {
+	if !strings.Contains(warning, "skipping multisubs profile") {
 		t.Fatalf("expected skip warning, got %q", warning)
 	}
 }
 
-func TestLoadAccountsFromMulticodexConfigRejectsInvalidProfileName(t *testing.T) {
+func TestLoadAccountsFromMultisubsConfigRejectsInvalidProfileName(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
@@ -880,7 +898,7 @@ func TestLoadAccountsFromMulticodexConfigRejectsInvalidProfileName(t *testing.T)
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -892,12 +910,12 @@ func TestLoadAccountsFromMulticodexConfigRejectsInvalidProfileName(t *testing.T)
 	}
 }
 
-func TestLoadAccountsFromMulticodexConfigRejectsHardLinkedAuth(t *testing.T) {
+func TestLoadAccountsFromMultisubsConfigRejectsHardLinkedAuth(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o700); err != nil {
 		t.Fatalf("mkdir profile home: %v", err)
@@ -918,7 +936,7 @@ func TestLoadAccountsFromMulticodexConfigRejectsHardLinkedAuth(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -930,12 +948,12 @@ func TestLoadAccountsFromMulticodexConfigRejectsHardLinkedAuth(t *testing.T) {
 	}
 }
 
-func TestLoadAccountsFromMulticodexConfigRejectsLooseAuthPermissions(t *testing.T) {
+func TestLoadAccountsFromMultisubsConfigRejectsLooseAuthPermissions(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv(multicodexHomeEnvVar, filepath.Join(tmp, defaultMulticodexHomeDirName))
+	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
-	configDir := filepath.Join(tmp, defaultMulticodexHomeDirName)
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
 	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
 	if err := os.MkdirAll(profileHome, 0o700); err != nil {
 		t.Fatalf("mkdir profile home: %v", err)
@@ -952,7 +970,7 @@ func TestLoadAccountsFromMulticodexConfigRejectsLooseAuthPermissions(t *testing.
 		t.Fatalf("write config: %v", err)
 	}
 
-	accounts, warning, err := loadAccountsFromMulticodexConfig()
+	accounts, warning, err := loadAccountsFromMultisubsConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

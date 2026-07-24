@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Enrico-DA/multicodex/internal/buildinfo"
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
 )
 
 const (

@@ -11,16 +11,16 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Enrico-DA/multicodex/internal/codexstate"
+	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 )
 
 const (
-	defaultMulticodexHomeDirName = "multicodex"
-	defaultMonitorSubdirName     = "monitor"
-	defaultAccountsFileName      = "accounts.json"
-	accountsFileEnvVar           = "CODEX_USAGE_MONITOR_ACCOUNTS_FILE"
-	multicodexHomeEnvVar         = "MULTICODEX_HOME"
-	defaultCodexHomeEnvVar       = "MULTICODEX_DEFAULT_CODEX_HOME"
+	defaultMultisubsHomeDirName = "multisubs"
+	defaultMonitorSubdirName    = "monitor"
+	defaultAccountsFileName     = "accounts.json"
+	accountsFileEnvVar          = "MULTISUBS_MONITOR_ACCOUNTS_FILE"
+	multisubsHomeEnvVar         = "MULTISUBS_HOME"
+	defaultCodexHomeEnvVar      = "MULTISUBS_DEFAULT_CODEX_HOME"
 )
 
 type accountFile struct {
@@ -46,7 +46,7 @@ type MonitorAccountOptions struct {
 	Discover       bool
 }
 
-type multicodexConfigFile struct {
+type multisubsConfigFile struct {
 	Version  int `json:"version"`
 	Profiles map[string]struct {
 		Name      string `json:"name"`
@@ -83,9 +83,9 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 		}
 	}
 
-	profileAccounts, profileWarning, profileErr := loadAccountsFromMulticodexConfig()
+	profileAccounts, profileWarning, profileErr := loadAccountsFromMultisubsConfig()
 	if profileErr != nil {
-		collector.warnf("multicodex profile discovery error: %v", profileErr)
+		collector.warnf("multisubs profile discovery error: %v", profileErr)
 	} else {
 		if profileWarning != "" {
 			collector.warnf("%s", profileWarning)
@@ -116,7 +116,7 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 				collector.warnf("%s", autoWarning)
 			}
 			for _, account := range autoAccounts {
-				if isMulticodexProfileHome(account.CodexHome) {
+				if isMultisubsProfileHome(account.CodexHome) {
 					continue
 				}
 				collector.add(account.Label, account.CodexHome, 30, false, false)
@@ -128,43 +128,43 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 	return out, collector.warningString(), nil
 }
 
-func loadAccountsFromMulticodexConfig() ([]MonitorAccount, string, error) {
-	configPath, err := multicodexConfigPath()
+func loadAccountsFromMultisubsConfig() ([]MonitorAccount, string, error) {
+	configPath, err := multisubsConfigPath()
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve multicodex config: %w", err)
+		return nil, "", fmt.Errorf("resolve multisubs config: %w", err)
 	}
-	multicodexHome := filepath.Dir(configPath)
-	if info, err := os.Lstat(multicodexHome); err == nil {
+	multisubsHome := filepath.Dir(configPath)
+	if info, err := os.Lstat(multisubsHome); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, "skipping multicodex profiles: multicodex home is a symlink", nil
+			return nil, "skipping multisubs profiles: multisubs home is a symlink", nil
 		}
 		if info.IsDir() && info.Mode().Perm()&0o077 != 0 {
-			return nil, fmt.Sprintf("skipping multicodex profiles: multicodex home permissions are %o, expected no group/world permissions", info.Mode().Perm()), nil
+			return nil, fmt.Sprintf("skipping multisubs profiles: multisubs home permissions are %o, expected no group/world permissions", info.Mode().Perm()), nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, "", fmt.Errorf("inspect multicodex home %s: %w", multicodexHome, err)
+		return nil, "", fmt.Errorf("inspect multisubs home %s: %w", multisubsHome, err)
 	}
 
 	if err := monitorRegularSingleFile(configPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, "", nil
 		}
-		return nil, "", fmt.Errorf("read multicodex config %s: %w", configPath, err)
+		return nil, "", fmt.Errorf("read multisubs config %s: %w", configPath, err)
 	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, "", nil
 		}
-		return nil, "", fmt.Errorf("read multicodex config %s: %w", configPath, err)
+		return nil, "", fmt.Errorf("read multisubs config %s: %w", configPath, err)
 	}
 
-	var raw multicodexConfigFile
+	var raw multisubsConfigFile
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, "", fmt.Errorf("decode multicodex config %s: %w", configPath, err)
+		return nil, "", fmt.Errorf("decode multisubs config %s: %w", configPath, err)
 	}
 	if raw.Version != 0 && raw.Version != 1 {
-		return nil, "", fmt.Errorf("unsupported multicodex config version %d; expected 1", raw.Version)
+		return nil, "", fmt.Errorf("unsupported multisubs config version %d; expected 1", raw.Version)
 	}
 	if len(raw.Profiles) == 0 {
 		return nil, "", nil
@@ -178,15 +178,15 @@ func loadAccountsFromMulticodexConfig() ([]MonitorAccount, string, error) {
 
 	out := make([]MonitorAccount, 0, len(names))
 	warnings := make([]string, 0)
-	profilesDir := filepath.Join(multicodexHome, "profiles")
+	profilesDir := filepath.Join(multisubsHome, "profiles")
 	for _, name := range names {
 		profile := raw.Profiles[name]
 		if !monitorProfileNameValid(name) {
-			warnings = append(warnings, fmt.Sprintf("skipping multicodex profile %q: invalid profile name", name))
+			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: invalid profile name", name))
 			continue
 		}
 		if strings.TrimSpace(profile.Name) != name {
-			warnings = append(warnings, fmt.Sprintf("skipping multicodex profile %q: stored name mismatch", name))
+			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: stored name mismatch", name))
 			continue
 		}
 		label := strings.TrimSpace(profile.Name)
@@ -195,14 +195,14 @@ func loadAccountsFromMulticodexConfig() ([]MonitorAccount, string, error) {
 		}
 		home, err := expandPath(strings.TrimSpace(profile.CodexHome))
 		if err != nil {
-			return nil, "", fmt.Errorf("resolve codex_home for multicodex profile %q: %w", label, err)
+			return nil, "", fmt.Errorf("resolve codex_home for multisubs profile %q: %w", label, err)
 		}
 		if strings.TrimSpace(home) == "" {
 			continue
 		}
 		home = filepath.Clean(home)
 		if err := monitorProfileHomeSafe(profilesDir, name, home); err != nil {
-			warnings = append(warnings, fmt.Sprintf("skipping multicodex profile %q: %v", label, err))
+			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: %v", label, err))
 			continue
 		}
 		out = append(out, MonitorAccount{
@@ -342,8 +342,8 @@ func monitorResolveExistingPath(path string) (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
-func isMulticodexProfileHome(home string) bool {
-	configPath, err := multicodexConfigPath()
+func isMultisubsProfileHome(home string) bool {
+	configPath, err := multisubsConfigPath()
 	if err != nil {
 		return false
 	}
@@ -670,11 +670,11 @@ func resolveAccountsFilePath() (string, error) {
 }
 
 func monitorDataDir() (string, error) {
-	multicodexHome, err := multicodexHomeDir()
+	multisubsHome, err := multisubsHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(multicodexHome, defaultMonitorSubdirName), nil
+	return filepath.Join(multisubsHome, defaultMonitorSubdirName), nil
 }
 
 func defaultCodexHome() (string, error) {
@@ -688,23 +688,23 @@ func defaultCodexHome() (string, error) {
 	return filepath.Join(home, ".codex"), nil
 }
 
-func multicodexConfigPath() (string, error) {
-	home, err := multicodexHomeDir()
+func multisubsConfigPath() (string, error) {
+	home, err := multisubsHomeDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(home, "config.json"), nil
 }
 
-func multicodexHomeDir() (string, error) {
-	if path := strings.TrimSpace(os.Getenv(multicodexHomeEnvVar)); path != "" {
+func multisubsHomeDir() (string, error) {
+	if path := strings.TrimSpace(os.Getenv(multisubsHomeEnvVar)); path != "" {
 		return expandPath(path)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return filepath.Join(home, defaultMulticodexHomeDirName), nil
+	return filepath.Join(home, defaultMultisubsHomeDirName), nil
 }
 
 func expandPath(path string) (string, error) {

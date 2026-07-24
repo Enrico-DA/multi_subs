@@ -1,355 +1,172 @@
-# multicodex
+# multisubs
 
-`multicodex` helps you use multiple Codex and Claude subscription accounts on one machine without changing either normal default account.
+`multisubs` is a local-first Go command-line tool for isolated Codex and Claude subscription profiles. It keeps each managed account in its own provider directory, routes work by current provider usage, and leaves both normal default accounts outside product ownership.
 
-Bare commands continue to manage Codex. The `multicodex claude` namespace manages Claude profiles and routes headless Claude workers. Each provider keeps its own profile registry and isolated runtime directories. The regular system accounts remain managed by the official CLIs outside multicodex.
-
-By default, each profile reuses your global Codex `config.toml` through a symlink, so model defaults, reasoning settings, permission settings, and other normal Codex config changes apply everywhere. Profile homes also inherit missing top-level skill entries from the global Codex skills directory through symlinks.
-
-Profile login requires file-backed auth. If the effective Codex config does not set `cli_auth_credentials_store = "file"`, profile login and profile-scoped Codex execution fail with a setup error instead of sharing global auth state. Every managed-profile Codex child also receives a final `-c 'cli_auth_credentials_store="file"'` override before any standalone `--`, so user config or profile flags cannot change the effective credential store. Default-account exec, exact exec-help delegation, and explicit raw app-server diagnostics do not receive this override.
-
-## Status
-
-- Usable for local multi-account Codex CLI, `codex exec`, heartbeat, and usage-monitor workflows.
-- Usable for local multi-account Claude CLI, quota-aware `claude -p`, and Fable routing.
-- The command surface is intentionally narrow. Multicodex does not implement global account switching.
-
-## Prerequisites
-
-- Go 1.25 or newer for building from source.
-- Development and CI checks use the patched Go toolchain listed in `go.mod`.
-- Official `codex` CLI installed and available in `PATH`.
-- Official `claude` CLI installed and available in `PATH` for Claude commands.
-- macOS or Linux.
+This is a deliberate breaking rename for one local user. There is no old executable alias, state fallback, environment fallback, or compatibility command.
 
 ## Install
 
-Build from source.
+```bash
+go install github.com/Enrico-DA/multi_subs/cmd/multisubs@latest
+```
+
+For a source checkout:
 
 ```bash
-go build -o multicodex ./cmd/multicodex
+go build -o multisubs ./cmd/multisubs
 ```
 
-This fork does not publish version tags or release archives before the planned product and module rename. Install-from-module and release-download instructions are therefore not valid for `Enrico-DA/multi_subs`; build a checked-out source tree for now. The imported release workflow remains in the repository, but its guard allows publication only from `olliecrow/multicodex`.
+Development builds report `multisubs 0.1.0-dev`. Release builds report the release tag through the same `multisubs version` command.
 
-Optional local install path.
+## Start
+
+Initialize shared product and Codex profile state:
 
 ```bash
-mv ./multicodex ~/.local/bin/multicodex
+multisubs init
 ```
 
-Contributor setup, required checks, and the release process are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Quick Start
+Add and log in to Codex profiles:
 
 ```bash
-multicodex init
-multicodex add personal
-multicodex add work
-multicodex login personal
-multicodex login work
-multicodex status
-multicodex reconcile
+multisubs codex add personal
+multisubs codex add work
+multisubs codex login personal
+multisubs codex login work
+multisubs codex status
 ```
 
-Run interactive Codex with one profile.
+Run Codex with one named profile or automatic weekly routing:
 
 ```bash
-multicodex cli personal
-multicodex cli work "check this repo"
+multisubs codex cli personal
+multisubs codex exec -s read-only "Summarize this repository."
 ```
 
-Run `codex exec` on the best available account.
+Add and use a Claude profile:
 
 ```bash
-multicodex exec -s read-only "Summarize the README in 3 bullets."
+multisubs claude add personal
+multisubs claude login personal
+multisubs claude status
+multisubs claude usage
+multisubs claude exec "Review this change."
 ```
 
-Add a Claude Max account and run Fable on the best available Claude profile.
-
-```bash
-multicodex claude add personal
-multicodex claude login personal
-multicodex claude status
-multicodex claude usage
-multicodex claude exec --model claude-fable-5 "Review this change."
-```
-
-Claude login uses the official browser flow. Multicodex never reads, copies, or writes Claude credentials.
-
-Open the monitor and run checks.
-
-```bash
-multicodex monitor
-multicodex doctor
-multicodex monitor doctor
-multicodex dry-run
-```
-
-## Local State
-
-- Default multicodex state home is `~/multicodex`.
-- Override the state location with `MULTICODEX_HOME`.
-- Profile auth stays under `~/multicodex/profiles/<name>/codex-home/auth.json`.
-- Profile sessions, threads, and `/goal` state stay under that profile's `codex-home`.
-- Multicodex state directories, profile directories, profile `codex-home`, profile skills directories, `auth.json`, selected-profile metadata under `MULTICODEX_HOME/run`, heartbeat lock files, and config lock files must be profile-local regular filesystem entries with local-user-only directory permissions. Symlinks and hard links are rejected where they could cross account boundaries.
-- Profile `config.toml` defaults to a symlink from `~/multicodex/profiles/<name>/codex-home/config.toml` to the default Codex config at `~/.codex/config.toml`.
-- Unless configured otherwise, profile skills fill in missing portable top-level entries from `~/.codex/skills` using symlinks pinned to each entry's fully resolved directory. A symlink at a name currently supplied by the default source is a managed inherited position and is canonicalized; regular top-level profile skill overrides are left in place. Retargeting a source or entry alias does not redirect an existing profile link until a later reconciliation validates and adopts the new target. Runtime-managed `.system` content is never inherited. A regular profile-local `.system` directory is preserved. A stale `.system` symlink that resolves safely under the default skills tree is removed; broken, external, cross-profile, or malformed `.system` symlinks are rejected unchanged.
-- To use a per-profile Codex config, replace the profile `config.toml` symlink with a regular profile-local `config.toml` file that still enables file-backed auth.
-- Claude metadata is separate at `~/multicodex/providers/claude/config.json`.
-- Managed Claude state lives under `~/multicodex/providers/claude/profiles/<name>/config`.
-- The default Claude account is a protected reserve. It is launched with `CLAUDE_CONFIG_DIR` absent; managed accounts receive exactly one profile-local `CLAUDE_CONFIG_DIR`.
-
-## Configurable Profile Resources
-
-The optional `profile_resources` block in `~/multicodex/config.json` controls shared guidance and skill links for every profile. If the block is omitted, multicodex still leaves `AGENTS.md` and `AGENTS.override.md` untouched, while skills inherit from the default Codex home using the same canonical pinning as configured sources.
-
-```json
-{
-  "version": 1,
-  "profile_resources": {
-    "guidance": {
-      "inherit": true,
-      "source": "~/.codex"
-    },
-    "skills": {
-      "inherit": true,
-      "sources": ["~/.codex/skills", "shared-skills"]
-    }
-  },
-  "profiles": {}
-}
-```
-
-- `guidance.inherit: true` links the source directory's `AGENTS.md` and `AGENTS.override.md`. An omitted or empty `source` uses the default Codex home.
-- `skills.inherit: true` fully resolves each source and selected top-level entry, then merges the canonical entry directories in source order; the first source wins name conflicts. Profile links use those canonical directories rather than source or entry aliases. Runtime-managed `.system` content is excluded from every source and follows the profile-local rules above. An omitted `sources` key uses the default Codex skills directory with the same canonical pinning. An explicit empty list is invalid.
-- `inherit: false` removes symlinks managed at that resource's profile locations. It never removes regular files or directories.
-- Either regular profile guidance file makes both guidance names a local override. Regular top-level profile skill entries override inherited entries with the same name.
-- `~` expands to the user home. Relative paths resolve from the directory containing `config.json`, normally `~/multicodex`, not from the current working directory.
-- Custom skill sources must resolve outside multicodex-owned state and the default Codex home; the canonical default Codex skills directory is the only default-home exception. Each inherited top-level skill entry must resolve to an allowed directory. The full desired set is validated before profile links change, so a newly forbidden alias target leaves the old pinned link unchanged. Resource blocks require a correctly spelled boolean `inherit` and reject unknown nested keys.
-- When explicit management is enabled, symlinks at the two guidance names and directly under the profile `skills/` directory are multicodex-owned. `.system` is narrower: only a stale symlink that resolves safely under the default skills tree is removed, while a regular local directory is preserved and every unsafe link fails closed. Retargeting or removal reports the old target.
-- Codex's existing user-wide `$HOME/.agents/skills` and repository `.agents/skills` discovery stays separate and continues to work normally.
-
-Use `multicodex doctor` to validate configured sources and `multicodex dry-run` to see the effective policy and planned reconciliation without changing files. To recover from a bad link policy, set the affected `inherit` value to `false` and remove its `source` or `sources` field, run `multicodex reconcile`, then remove the optional block to return to the original unmanaged-guidance and default-skill behavior.
-
-Run `multicodex reconcile` to apply the configured guidance and skill policy to every registered profile without inspecting auth or launching Codex. It uses the same no-clobber rules as `add`, `login`, `cli`, `exec`, and `heartbeat`: regular profile guidance and skill entries remain local overrides, while multicodex-owned links are created, retargeted, or removed as needed.
-
-## Commands
+## Command tree
 
 ```text
-multicodex init
-multicodex add <name>
-multicodex login <name> [codex login args]
-multicodex login-all
-multicodex cli <name> [codex args...]
-multicodex exec [codex exec args]
-multicodex status
-multicodex reconcile
-multicodex heartbeat
-multicodex monitor [flags]
-multicodex monitor tui [flags]
-multicodex monitor doctor [flags]
-multicodex monitor completion [shell]
-multicodex doctor [--json] [--timeout 8s]
-multicodex dry-run [operation]
-multicodex completion <bash|zsh|fish>
-multicodex version
-multicodex help [command [subcommand]]
-multicodex --version
-multicodex claude add <name>
-multicodex claude login <name> [claude auth login args]
-multicodex claude cli <name|default> [claude args...]
-multicodex claude exec [claude -p args...]
-multicodex claude status
-multicodex claude usage
-multicodex claude doctor
-multicodex claude help [command]
+multisubs init
+multisubs doctor
+multisubs completion <shell>
+multisubs version
+multisubs help [topic]
+
+multisubs codex init
+multisubs codex add <name>
+multisubs codex login <name> [...]
+multisubs codex login-all
+multisubs codex cli <name> [...]
+multisubs codex exec [...]
+multisubs codex status
+multisubs codex reconcile
+multisubs codex heartbeat
+multisubs codex monitor [...]
+multisubs codex doctor [...]
+multisubs codex dry-run [...]
+
+multisubs claude add <name>
+multisubs claude login <name> [...]
+multisubs claude cli <name|default> [...]
+multisubs claude exec [...]
+multisubs claude status
+multisubs claude usage
+multisubs claude doctor
 ```
 
-Commands reject undocumented positional arguments instead of silently ignoring them.
+`multisubs init` and `multisubs codex init` call the same shared initialization path. `multisubs doctor` is the aggregate read-only check. It prints shared/base, Codex, and Claude sections. The two provider doctors stay focused on their own provider.
 
-## Interactive CLI
+The Codex monitor also accepts the nested topics `tui`, `doctor`, `completion`, and `help`. Use `multisubs help codex monitor doctor` for details.
 
-`multicodex cli <name> [codex args...]` launches the official `codex` CLI with that profile's `CODEX_HOME`.
+Bare Codex routes were removed. For example, `multisubs status` exits with code 2 and points to `multisubs codex status`.
 
-Codex defaults such as model, reasoning level, approvals, sandbox, and search come from the shared Codex config unless you pass explicit Codex args. Multicodex does not inject its own model or permission defaults. It preserves all user arguments in order and adds only the final managed auth-isolation override described above.
+## State and environment
 
-Two terminals can run `multicodex cli` with different profiles at the same time. Each terminal uses its own account, auth, threads, and `/goal` state because each one has a different `CODEX_HOME`.
+The product state root is `~/multisubs`. Set `MULTISUBS_HOME` to use another location. Set `MULTISUBS_DEFAULT_CODEX_HOME` only when the default Codex home is not `~/.codex`.
 
-## Exec Routing
+Codex state:
 
-`multicodex exec [codex exec args]` runs `codex exec` after selecting among configured multicodex profiles, with the default Codex home as a built-in reserve account.
+- Shared registry: `~/multisubs/config.json`
+- Managed profile: `~/multisubs/profiles/<name>/codex-home`
+- Official provider variable: `CODEX_HOME`
+- Selected-profile metadata: `~/multisubs/run`
 
-- Help requests such as `multicodex exec --help` delegate directly to `codex exec` and do not require profiles.
-- User arguments remain in their original order. A configured-profile child receives the final auth-isolation override before standalone `--`; a default-reserve child and exact help delegation receive the original arguments without it.
-- Exec can run with no configured profiles by using the default Codex home as the only available account.
-- Configured profiles at 100% weekly usage are not selected.
-- Exec uses configured selection priority first, then prefers the profile whose known weekly reset is soonest.
-- Profiles with an unknown weekly reset follow profiles with a known reset. Exact ties are randomized.
-- The default Codex home is a protected reserve. It is used only when no configured profile has usable weekly usage.
-- If the default Codex home is the only remaining destination, exec uses it as the final fallback even when its usage data is unavailable or exhausted.
-- For explicit Spark model names, configured profiles need Spark usage windows to win normal routing; the default Codex home still remains the final fallback.
+Claude state:
 
-## Claude Routing
+- Provider registry: `~/multisubs/providers/claude/config.json`
+- Managed profile: `~/multisubs/providers/claude/profiles/<name>/config`
+- Official provider variable: `CLAUDE_CONFIG_DIR`
 
-`multicodex claude exec [claude -p args...]` asks each managed Claude profile for fresh plan usage through the official, free `/usage` command.
+Active product controls use the `MULTISUBS_*` namespace. This includes heartbeat settings, selected-profile metadata, and provider-routing markers.
 
-- Session and all-model weekly usage must both be below 100%.
-- Explicit Fable requests also require an available Fable weekly window.
-- When the effective model is omitted or unknown, routing conservatively requires Fable capacity. A Fable or unknown fallback also requires Fable capacity.
-- Eligible managed profiles are ordered by their highest applicable usage percentage, then name.
-- Only first-party Claude Max logins with a stable organization ID are routable. Profiles that resolve to the same organization are deduplicated, including duplicates of the default reserve.
-- A non-blocking organization lock reserves the chosen account until the child exits. The child inherits the lock descriptor, so the reservation survives wrapper death.
-- If eligible managed profiles are only busy, the command returns a busy error instead of spending the default reserve.
-- The default Claude account is used only when no managed profile has usable quota.
-- Arguments are passed to official `claude -p` unchanged. Multicodex does not inject a model.
-- A managed auth or usage failure excludes that profile. Unsafe local state is a fatal error.
-- Usage probes disable session persistence, user/project settings, and MCP servers and run from a neutral directory.
+An explicit Codex monitor account file may be selected with `MULTISUBS_MONITOR_ACCOUNTS_FILE`.
 
-## Heartbeat
+Any legacy `MULTICODEX_*` variable causes startup to fail before state access. Clear it before running `multisubs`. Runtime never reads the old product home or old environment namespace. Old variables are still removed from provider child environments as a denylist.
 
-`multicodex heartbeat` sends a minimal ephemeral, read-only keepalive hello to every logged-in profile. Heartbeat requests do not persist Codex session files.
+This phase does not move any live state or installed binary. Move or replace local state only in a separate, explicit migration step.
+
+## Provider behavior
+
+Codex:
+
+- Each managed profile receives its own `CODEX_HOME`, including auth, sessions, threads, `/goal`, and related Codex state.
+- Managed execution enforces file-backed Codex auth.
+- Automatic `exec` routing applies the same weekly, model, and reset policy to the default account and managed profiles.
+- The default account is skipped when its usage is unavailable, exhausted, or missing a required model bucket. Its execution remains unmanaged and receives no managed auth override.
+- `heartbeat` uses an ephemeral, read-only Codex request and a private lock under `MULTISUBS_HOME`.
+- Resource reconciliation does not overwrite regular user files. It changes only documented product-owned links.
+
+Claude:
+
+- Each managed profile receives a derived `CLAUDE_CONFIG_DIR`.
+- Login, status, usage, and routing use the official Claude CLI.
+- Routing scores the default account and managed profiles together using fresh session, weekly all-model, and Fable usage.
+- An unusable or busy candidate is skipped. The default account runs without `CLAUDE_CONFIG_DIR`.
+- The product does not read, copy, or write Claude credential contents.
+
+## Doctor and dry run
 
 ```bash
-multicodex heartbeat
+multisubs doctor
+multisubs codex doctor
+multisubs claude doctor
+multisubs codex dry-run
+multisubs codex dry-run login personal
 ```
 
-Heartbeat:
+All doctor commands and dry-run startup are non-mutating. Help, version, completion, invalid commands, and dynamic profile completion also avoid state creation.
 
-- skips logged-out profiles
-- uses a non-blocking lock under `MULTICODEX_HOME`
-- retries failed profile heartbeats once by default
-- runs the fixed profile-scoped keepalive with the same final file-backed-auth override used by other managed children
-- redacts raw failure output
-
-Optional environment overrides:
-
-- `MULTICODEX_HEARTBEAT_TIMEOUT_SECONDS`
-- `MULTICODEX_HEARTBEAT_RETRIES`
-- `MULTICODEX_HEARTBEAT_BACKOFF_SECONDS`
-- `MULTICODEX_HEARTBEAT_LOCK_PATH`
-
-`MULTICODEX_HEARTBEAT_LOCK_PATH` must resolve under `MULTICODEX_HOME`.
-
-## Monitor
-
-`multicodex monitor` shows live subscription usage across configured profile homes.
+## Completion
 
 ```bash
-multicodex monitor
-multicodex monitor tui
-multicodex monitor --interval 30s
-multicodex monitor doctor
-multicodex monitor completion
+eval "$(multisubs completion zsh)"
+eval "$(multisubs completion bash)"
+multisubs completion fish > ~/.config/fish/completions/multisubs.fish
 ```
 
-By default, monitor account candidates come from:
+Completion covers both provider namespaces, Codex monitor topics, all help topics, and dynamic Codex and Claude profile names.
 
-- the global Codex home (normally `~/.codex`), labeled `global`
-- explicit account file under `~/multicodex/monitor/accounts.json`
-- configured multicodex profiles from `~/multicodex/config.json`
+## Security
 
-Additional sources are opt-in:
+- Never copy, sync, transmit, or share provider auth files between machines.
+- Use the official provider login commands for every managed profile.
+- State directories must be private regular directories. Sensitive files, locks, and routing metadata reject unsafe links.
+- Provider child environments remove credential overrides, active product controls, and legacy product controls.
+- Output avoids raw credentials and raw provider failure text.
+- Current and legacy-sensitive state patterns remain ignored to prevent accidental credential commits.
 
-- `--include-active` includes the active `CODEX_HOME`
-- `--discover` scans compatible Codex homes from the local filesystem
-- `multicodex monitor doctor --app-server` also checks the raw Codex app-server source separately without forcing managed-profile auth settings
+See [the command contract](docs/command-spec.md), [the security contract](docs/security-and-privacy.md), and [the upstream translation map](docs/upstream-sync.md).
 
-Pass `--include-default=false` to omit the global Codex home for one run. Explicit account-file labels and configured profile labels take priority when they point to the same home, so duplicate cards are not shown.
-
-For validated multicodex profile homes, the monitor asks the Codex app-server for usage first, forces the final file-backed-auth override on that managed child, and falls back to direct OAuth from the profile home. This matches Codex CLI auth handling for logged-in profiles whose access token can still be refreshed. Other monitor account homes use direct OAuth unless they dedupe with a validated profile home.
-
-Successful `multicodex monitor doctor` source checks report `plan=<plan> weekly=<used>% source=<source>`. When the provider supplies no weekly window, doctor reports `weekly=unavailable` instead of exposing an internal numeric marker.
-
-The TUI:
-
-- orders account rows by weekly reset time
-- shows configured account labels before raw identity fields
-- keeps timestamps in UTC internally and renders local time in the UI
-- shows one full-width weekly card per account, with default and Spark usage on separate lines when available
-- shows a compact progress bar where space permits, plus the reset countdown and exact local reset time
-- shows one local seven-day observed-token estimate from session logs
-- uses each official window's declared duration, with a narrow positional fallback for older provider responses
-- keeps last good official window cards visible and marked stale during a full refresh outage
-- prefers short re-login warnings when a profile token has expired
-
-Example manual monitor account file:
-
-```json
-{
-  "version": 1,
-  "accounts": [
-    {"label": "personal", "codex_home": "/path/to/personal/codex-home"},
-    {"label": "work", "codex_home": "/path/to/work/codex-home"}
-  ]
-}
-```
-
-## Checks And Completion
-
-Run non-mutating checks and previews.
-
-```bash
-multicodex doctor
-multicodex dry-run
-multicodex dry-run login personal
-```
-
-Enable tab completion.
-
-```bash
-eval "$(multicodex completion zsh)"
-eval "$(multicodex completion bash)"
-multicodex completion fish > ~/.config/fish/completions/multicodex.fish
-```
-
-Get detailed help.
-
-```bash
-multicodex help
-multicodex help cli
-multicodex help exec
-multicodex help heartbeat
-multicodex help claude exec
-multicodex help monitor
-multicodex help monitor doctor
-multicodex claude help exec
-```
-
-## Development Checks
-
-```bash
-go test ./...
-go test -race ./...
-go vet ./...
-go run golang.org/x/vuln/cmd/govulncheck@v1.4.0 ./...
-go build -o multicodex ./cmd/multicodex
-```
-
-## Safety Model
-
-- Uses official `codex login` flows.
-- Uses official `claude auth login --claudeai`, `claude auth status --json`, and `claude -p "/usage"` flows.
-- Keeps profile auth and Codex state local to each profile `CODEX_HOME`.
-- Keeps Claude state isolated through `CLAUDE_CONFIG_DIR` and never reads Claude credential contents.
-- Does not store raw secrets in multicodex config.
-- Does not change, restore, back up, symlink, or otherwise manage either shared default auth account.
-- Scrubs inherited account-routing and account-token environment variables before launching profile-scoped Codex commands.
-- Scrubs inherited Anthropic/Claude account overrides before launching Claude commands.
-- Reports external failures with safe status codes and recovery guidance without echoing raw provider bodies, app-server messages, or subprocess failure output.
-- `monitor` is read-only and does not mutate Codex account data.
-- `doctor` and `dry-run` are non-mutating helpers.
-- `doctor` includes repo leak guards for tracked sensitive files and ignore-pattern coverage.
-- Configured profile resources are local paths chosen by the user. Multicodex links them but does not execute or copy their contents.
-- After successful login, regular auth file permissions are normalized to `0600`.
-
-## Notes
-
-- If your default Codex setup uses keychain auth only, configure file-backed auth for the profiles you want to use with multicodex.
-- Do not copy, sync, transmit, transfer, or share Codex auth files between machines. Sign in locally with the official Codex login flow.
-
-## License
-
-Apache License 2.0. See `LICENSE`.
+## Upstream
 
 This fork is based on [olliecrow/multicodex](https://github.com/olliecrow/multicodex) and preserves its attribution and license.
