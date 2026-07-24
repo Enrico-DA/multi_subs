@@ -19,6 +19,9 @@ type App struct {
 	store               *Store
 	claudeRunner        claudeCommandRunner
 	claudeFableResolver claudeFableApplicabilityResolver
+	codexUsageSource    codexUsageSourceFactory
+	usageClock          func() time.Time
+	usageLocation       *time.Location
 }
 
 func NewApp() (*App, error) {
@@ -88,6 +91,12 @@ func RunCLI(args []string) error {
 			return err
 		}
 		return app.cmdAggregateDoctor(args[1:])
+	case "usage":
+		app, err := newApp(true)
+		if err != nil {
+			return err
+		}
+		return app.cmdUsage(args[1:], usageProviderAll)
 	case "codex":
 		return runCodexCLI(args[1:])
 	case "claude":
@@ -153,7 +162,7 @@ func runCodexCLI(args []string) error {
 		}
 		return app.cmdExec(args[1:])
 	}
-	if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+	if args[0] != "usage" && len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
 		return printCommandHelp([]string{"codex", args[0]})
 	}
 	if err := rejectCodexArguments(args); err != nil {
@@ -172,7 +181,7 @@ func runCodexCLI(args []string) error {
 
 func codexCommandReadOnlyStartup(command string) (bool, bool) {
 	switch command {
-	case "status", "doctor", "dry-run", "monitor":
+	case "status", "usage", "doctor", "dry-run", "monitor":
 		return true, true
 	case "init", "add", "login", "login-all", "cli", "exec", "heartbeat", "reconcile":
 		return false, true
@@ -202,6 +211,8 @@ func (a *App) Run(args []string) error {
 		return a.cmdCompletion(args[1:])
 	case "doctor":
 		return a.cmdAggregateDoctor(args[1:])
+	case "usage":
+		return a.cmdUsage(args[1:], usageProviderAll)
 	case "__complete-codex-profiles":
 		return a.cmdCompleteCodexProfiles()
 	case "__complete-claude-profiles":
@@ -253,7 +264,7 @@ func (a *App) cmdCodex(args []string) error {
 	if args[0] == "exec" && execArgsAreHelpRequest(args[1:]) {
 		return a.cmdExec(args[1:])
 	}
-	if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+	if args[0] != "usage" && len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
 		return printCommandHelp([]string{"codex", args[0]})
 	}
 	if err := rejectCodexArguments(args); err != nil {
@@ -274,6 +285,8 @@ func (a *App) cmdCodex(args []string) error {
 		return a.cmdExec(args[1:])
 	case "status":
 		return a.cmdStatus()
+	case "usage":
+		return a.cmdUsage(args[1:], usageProviderCodex)
 	case "reconcile":
 		return a.cmdReconcile(args[1:])
 	case "heartbeat":
@@ -317,7 +330,7 @@ func rejectCodexArguments(args []string) error {
 		return nil
 	}
 	switch args[0] {
-	case "init", "login-all", "status":
+	case "init", "login-all", "status", "usage":
 		return rejectArguments(args[1:], "usage: multisubs codex "+args[0])
 	default:
 		return nil

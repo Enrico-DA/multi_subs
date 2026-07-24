@@ -12,8 +12,9 @@ import (
 )
 
 type claudeUsageWindow struct {
-	UsedPercent float64
-	ResetText   string
+	UsedPercent  float64
+	ResetText    string
+	DurationMins *int
 }
 
 type claudeUsage struct {
@@ -26,6 +27,8 @@ var (
 	claudeANSIControlRE = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
 	claudePercentRE     = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*%`)
 	claudeResetRE       = regexp.MustCompile(`(?i)\breset(?:s|ting)?\b.*`)
+	claudeResetWordRE   = regexp.MustCompile(`(?i)\breset(?:s|ting)?\b`)
+	claudeDurationRE    = regexp.MustCompile(`(?i)\((?:([0-9]{1,4})\s*(?:h|hr|hrs|hour|hours)(?:\s+([0-9]{1,3})\s*(?:m|min|mins|minute|minutes))?|([0-9]{1,5})\s*(?:m|min|mins|minute|minutes))\)`)
 )
 
 func fetchClaudeUsage(ctx context.Context, runner claudeCommandRunner, configDir string) (claudeUsage, error) {
@@ -77,6 +80,12 @@ func parseClaudeUsageEnvelope(raw []byte) (claudeUsage, error) {
 		return claudeUsage{}, errors.New("parse Claude usage JSON: is_error must be a boolean")
 	}
 	if isError {
+		if resultRaw, ok := envelope["result"]; ok {
+			var result string
+			if json.Unmarshal(resultRaw, &result) == nil && claudeUsageResultIndicatesLoggedOut(result) {
+				return claudeUsage{}, errors.New("Claude account is not logged in")
+			}
+		}
 		return claudeUsage{}, errors.New("Claude usage response reported an error")
 	}
 
@@ -94,6 +103,22 @@ func parseClaudeUsageEnvelope(raw []byte) (claudeUsage, error) {
 	return parseClaudeUsageResult(result)
 }
 
+func claudeUsageResultIndicatesLoggedOut(result string) bool {
+	lower := strings.ToLower(result)
+	for _, phrase := range []string{
+		"not logged in",
+		"not authenticated",
+		"please log in",
+		"please sign in",
+		"authentication required",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 type claudeUsageSection int
 
 const (
@@ -104,9 +129,10 @@ const (
 )
 
 type claudeUsageWindowBuilder struct {
-	seenHeading bool
-	percent     *float64
-	reset       string
+	seenHeading  bool
+	percent      *float64
+	reset        string
+	durationMins *int
 }
 
 func parseClaudeUsageResult(result string) (claudeUsage, error) {
@@ -129,6 +155,19 @@ func parseClaudeUsageResult(result string) (claudeUsage, error) {
 		if detected := detectClaudeUsageSection(line); detected != claudeUsageSectionNone {
 			section = detected
 			builders[section].seenHeading = true
+			if section == claudeUsageSectionSession {
+				duration, durationErr := parseClaudeSessionDuration(line)
+				if durationErr != nil {
+					return claudeUsage{}, durationErr
+				}
+				if duration != nil {
+					if builders[section].durationMins != nil &&
+						*builders[section].durationMins != *duration {
+						return claudeUsage{}, errors.New("parse Claude usage result: conflicting session durations")
+					}
+					builders[section].durationMins = duration
+				}
+			}
 		}
 		if section == claudeUsageSectionNone {
 			continue
@@ -177,6 +216,45 @@ func parseClaudeUsageResult(result string) (claudeUsage, error) {
 	return parsed, nil
 }
 
+func parseClaudeSessionDuration(heading string) (*int, error) {
+	if resetIndex := claudeResetWordRE.FindStringIndex(heading); resetIndex != nil {
+		heading = heading[:resetIndex[0]]
+	}
+	matches := claudeDurationRE.FindAllStringSubmatch(heading, -1)
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	if len(matches) != 1 {
+		return nil, errors.New("parse Claude usage result: invalid session duration")
+	}
+
+	duration := 0
+	if matches[0][1] != "" {
+		hours, err := strconv.Atoi(matches[0][1])
+		if err != nil || hours <= 0 || hours > 24*7 {
+			return nil, errors.New("parse Claude usage result: invalid session duration")
+		}
+		duration = hours * 60
+		if matches[0][2] != "" {
+			minutes, minuteErr := strconv.Atoi(matches[0][2])
+			if minuteErr != nil || minutes <= 0 || minutes >= 60 {
+				return nil, errors.New("parse Claude usage result: invalid session duration")
+			}
+			duration += minutes
+		}
+	} else {
+		minutes, err := strconv.Atoi(matches[0][3])
+		if err != nil || minutes <= 0 {
+			return nil, errors.New("parse Claude usage result: invalid session duration")
+		}
+		duration = minutes
+	}
+	if duration > 24*7*60 {
+		return nil, errors.New("parse Claude usage result: invalid session duration")
+	}
+	return &duration, nil
+}
+
 func detectClaudeUsageSection(line string) claudeUsageSection {
 	lower := strings.ToLower(strings.TrimSpace(line))
 	lower = strings.Trim(lower, "#*_-=:|[]() ")
@@ -203,12 +281,9 @@ func completeClaudeUsageWindowAllowMissingReset(name string, builder *claudeUsag
 	if builder.percent == nil {
 		return claudeUsageWindow{}, fmt.Errorf("parse Claude usage result: missing %s percentage", name)
 	}
-	return claudeUsageWindow{UsedPercent: *builder.percent, ResetText: builder.reset}, nil
-}
-
-func formatClaudePercent(value float64) string {
-	if value == float64(int(value)) {
-		return fmt.Sprintf("%d%%", int(value))
-	}
-	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", value), "0"), ".") + "%"
+	return claudeUsageWindow{
+		UsedPercent:  *builder.percent,
+		ResetText:    builder.reset,
+		DurationMins: builder.durationMins,
+	}, nil
 }

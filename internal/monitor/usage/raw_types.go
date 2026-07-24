@@ -43,9 +43,10 @@ type identityInfo struct {
 }
 
 func normalizeSummary(source string, snapshot rateLimitSnapshotRaw, rateLimitsByLimitID map[string]rateLimitSnapshotRaw, additionalLimitCount int, identity *identityInfo, warnings []string) (*Summary, error) {
+	sessionWindow := normalizeSessionWindow(snapshot.Primary, snapshot.Secondary)
 	weeklyWindow := normalizeWeeklyWindow(snapshot.Primary, snapshot.Secondary)
 	rateLimitWindows := normalizeRateLimitWindows(snapshot, rateLimitsByLimitID)
-	if snapshot.Primary == nil && snapshot.Secondary == nil && !rateLimitWindowsHaveWeeklyData(rateLimitWindows) {
+	if snapshot.Primary == nil && snapshot.Secondary == nil && !rateLimitWindowsHaveUsageData(rateLimitWindows) {
 		return nil, errors.New("missing usage windows")
 	}
 
@@ -53,6 +54,7 @@ func normalizeSummary(source string, snapshot rateLimitSnapshotRaw, rateLimitsBy
 	out := &Summary{
 		Source:               source,
 		PlanType:             snapshot.PlanType,
+		SessionWindow:        sessionWindow,
 		WeeklyWindow:         weeklyWindow,
 		RateLimitWindows:     rateLimitWindows,
 		AdditionalLimitCount: additionalLimitCount,
@@ -78,6 +80,15 @@ func summaryHasWeeklyData(summary *Summary) bool {
 func rateLimitWindowsHaveWeeklyData(windows map[string]RateLimitWindow) bool {
 	for _, window := range windows {
 		if window.WeeklyWindow.UsedPercent >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func rateLimitWindowsHaveUsageData(windows map[string]RateLimitWindow) bool {
+	for _, window := range windows {
+		if window.SessionWindow.UsedPercent >= 0 || window.WeeklyWindow.UsedPercent >= 0 {
 			return true
 		}
 	}
@@ -122,6 +133,10 @@ func mergeRateLimitSnapshots(id string, preferred, fallback rateLimitSnapshotRaw
 		fallback.Primary, fallback.Secondary,
 		preferred.Primary, preferred.Secondary,
 	)
+	window.SessionWindow = normalizeSessionWindows(
+		fallback.Primary, fallback.Secondary,
+		preferred.Primary, preferred.Secondary,
+	)
 	return window
 }
 
@@ -130,8 +145,48 @@ func toRateLimitWindow(id string, raw rateLimitSnapshotRaw) RateLimitWindow {
 		LimitID:   id,
 		LimitName: pointerValue(raw.LimitName),
 	}
+	window.SessionWindow = normalizeSessionWindow(raw.Primary, raw.Secondary)
 	window.WeeklyWindow = normalizeWeeklyWindow(raw.Primary, raw.Secondary)
 	return window
+}
+
+func normalizeSessionWindow(primary, secondary *rateLimitWindowRaw) WindowSummary {
+	return normalizeSessionWindows(primary, secondary)
+}
+
+func normalizeSessionWindows(rawWindows ...*rateLimitWindowRaw) WindowSummary {
+	session := unavailableWindowSummary()
+	var selectedDuration int
+	ambiguous := false
+
+	for _, raw := range rawWindows {
+		if raw == nil {
+			continue
+		}
+		duration := pointerIntValue(raw.WindowDurationMins)
+		if duration <= 0 || duration == weeklyWindowMinutes {
+			continue
+		}
+		if duration == 300 {
+			session = toWindowSummary(raw)
+			selectedDuration = duration
+			ambiguous = false
+			continue
+		}
+		if selectedDuration == 300 {
+			continue
+		}
+		if selectedDuration == 0 || selectedDuration == duration {
+			session = toWindowSummary(raw)
+			selectedDuration = duration
+			continue
+		}
+		ambiguous = true
+	}
+	if ambiguous {
+		return unavailableWindowSummary()
+	}
+	return session
 }
 
 func normalizeWeeklyWindow(primary, secondary *rateLimitWindowRaw) WindowSummary {
@@ -214,12 +269,17 @@ func cloneRateLimitWindows(in map[string]RateLimitWindow) map[string]RateLimitWi
 
 func cloneRateLimitWindow(window RateLimitWindow) RateLimitWindow {
 	out := window
+	out.SessionWindow = cloneWindowSummary(window.SessionWindow)
 	out.WeeklyWindow = cloneWindowSummary(window.WeeklyWindow)
 	return out
 }
 
 func cloneWindowSummary(win WindowSummary) WindowSummary {
 	out := win
+	if win.WindowDurationMins != nil {
+		windowDurationMins := *win.WindowDurationMins
+		out.WindowDurationMins = &windowDurationMins
+	}
 	if win.ResetsAt != nil {
 		resetsAt := *win.ResetsAt
 		out.ResetsAt = &resetsAt
