@@ -84,12 +84,15 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 		}
 	}
 
-	profileAccounts, profileWarning, profileErr := loadAccountsFromMultisubsConfig()
+	profileAccounts, rejectedProfileHomes, profileWarning, profileErr := loadAccountsFromMultisubsConfigWithRejected()
 	if profileErr != nil {
 		collector.warnf("multisubs profile discovery error: %v", profileErr)
 	} else {
 		if profileWarning != "" {
 			collector.warnf("%s", profileWarning)
+		}
+		for _, home := range rejectedProfileHomes {
+			collector.reject(home)
 		}
 		for _, account := range profileAccounts {
 			collector.add(account.Label, account.CodexHome, 90, false, true)
@@ -130,45 +133,50 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 }
 
 func loadAccountsFromMultisubsConfig() ([]MonitorAccount, string, error) {
+	accounts, _, warning, err := loadAccountsFromMultisubsConfigWithRejected()
+	return accounts, warning, err
+}
+
+func loadAccountsFromMultisubsConfigWithRejected() ([]MonitorAccount, []string, string, error) {
 	configPath, err := multisubsConfigPath()
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve multisubs config: %w", err)
+		return nil, nil, "", fmt.Errorf("resolve multisubs config: %w", err)
 	}
 	multisubsHome := filepath.Dir(configPath)
 	if info, err := os.Lstat(multisubsHome); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, "skipping multisubs profiles: multisubs home is a symlink", nil
+			return nil, nil, "skipping multisubs profiles: multisubs home is a symlink", nil
 		}
 		if info.IsDir() && info.Mode().Perm()&0o077 != 0 {
-			return nil, fmt.Sprintf("skipping multisubs profiles: multisubs home permissions are %o, expected no group/world permissions", info.Mode().Perm()), nil
+			return nil, nil, fmt.Sprintf("skipping multisubs profiles: multisubs home permissions are %o, expected no group/world permissions", info.Mode().Perm()), nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, "", fmt.Errorf("inspect multisubs home %s: %w", multisubsHome, err)
+		return nil, nil, "", fmt.Errorf("inspect multisubs home %s: %w", multisubsHome, err)
 	}
 
 	if err := monitorRegularSingleFile(configPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, "", nil
+			return nil, nil, "", nil
 		}
-		return nil, "", fmt.Errorf("read multisubs config %s: %w", configPath, err)
+		return nil, nil, "", fmt.Errorf("read multisubs config %s: %w", configPath, err)
 	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, "", nil
+			return nil, nil, "", nil
 		}
-		return nil, "", fmt.Errorf("read multisubs config %s: %w", configPath, err)
+		return nil, nil, "", fmt.Errorf("read multisubs config %s: %w", configPath, err)
 	}
 
 	var raw multisubsConfigFile
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, "", fmt.Errorf("decode multisubs config %s: %w", configPath, err)
+		return nil, nil, "", fmt.Errorf("decode multisubs config %s: %w", configPath, err)
 	}
 	if raw.Version != 0 && raw.Version != 1 {
-		return nil, "", fmt.Errorf("unsupported multisubs config version %d; expected 1", raw.Version)
+		return nil, nil, "", fmt.Errorf("unsupported multisubs config version %d; expected 1", raw.Version)
 	}
 	if len(raw.Profiles) == 0 {
-		return nil, "", nil
+		return nil, nil, "", nil
 	}
 
 	names := make([]string, 0, len(raw.Profiles))
@@ -178,32 +186,45 @@ func loadAccountsFromMultisubsConfig() ([]MonitorAccount, string, error) {
 	sort.Strings(names)
 
 	out := make([]MonitorAccount, 0, len(names))
+	rejectedHomes := make([]string, 0)
 	warnings := make([]string, 0)
 	profilesDir := filepath.Join(multisubsHome, "profiles")
 	for _, name := range names {
 		profile := raw.Profiles[name]
-		if !monitorProfileNameValid(name) {
-			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: invalid profile name", name))
-			continue
-		}
-		if strings.TrimSpace(profile.Name) != name {
-			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: stored name mismatch", name))
-			continue
-		}
 		label := strings.TrimSpace(profile.Name)
 		if label == "" {
 			label = name
 		}
 		home, err := expandPath(strings.TrimSpace(profile.CodexHome))
 		if err != nil {
-			return nil, "", fmt.Errorf("resolve codex_home for multisubs profile %q: %w", label, err)
+			return nil, nil, "", fmt.Errorf("resolve codex_home for multisubs profile %q: %w", label, err)
 		}
-		if strings.TrimSpace(home) == "" {
+		hasHome := strings.TrimSpace(home) != ""
+		if hasHome {
+			home = filepath.Clean(home)
+		}
+		structurallyManaged := hasHome && home == filepath.Clean(filepath.Join(profilesDir, name, "codex-home"))
+		reject := func() {
+			if structurallyManaged {
+				rejectedHomes = append(rejectedHomes, home)
+			}
+		}
+		if !monitorProfileNameValid(name) {
+			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: invalid profile name", name))
+			reject()
 			continue
 		}
-		home = filepath.Clean(home)
+		if strings.TrimSpace(profile.Name) != name {
+			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: stored name mismatch", name))
+			reject()
+			continue
+		}
+		if !hasHome {
+			continue
+		}
 		if err := monitorProfileHomeSafe(profilesDir, name, home); err != nil {
 			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: %v", label, err))
+			reject()
 			continue
 		}
 		out = append(out, MonitorAccount{
@@ -212,7 +233,7 @@ func loadAccountsFromMultisubsConfig() ([]MonitorAccount, string, error) {
 		})
 	}
 
-	return out, strings.Join(warnings, "; "), nil
+	return out, dedupeStrings(rejectedHomes), strings.Join(warnings, "; "), nil
 }
 
 func monitorProfileHomeSafe(profilesDir, name, home string) error {
@@ -284,43 +305,10 @@ func monitorProfileConfigUsesFileStore(path string) (bool, error) {
 		return false, err
 	}
 	defaultConfigPath := filepath.Join(defaultHome, "config.toml")
-	if err := monitorProfileConfigPathSafe(path, defaultConfigPath); err != nil {
-		return false, err
+	if _, err := codexstate.ValidateManagedConfigPath(path, defaultConfigPath); err != nil {
+		return false, fmt.Errorf("validate managed profile config: %w", err)
 	}
 	return monitorConfigFileUsesFileStore(path)
-}
-
-func monitorProfileConfigPathSafe(path, defaultConfigPath string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("%s is not a regular file", path)
-		}
-		return nil
-	}
-
-	targetPath, err := monitorResolveExistingPath(path)
-	if err != nil {
-		return fmt.Errorf("resolve profile config symlink: %w", err)
-	}
-	defaultTargetPath, err := monitorResolveExistingPath(defaultConfigPath)
-	if err != nil {
-		return fmt.Errorf("resolve default Codex config: %w", err)
-	}
-	if targetPath != defaultTargetPath {
-		return fmt.Errorf("profile config symlink must point to default Codex config %s", defaultConfigPath)
-	}
-	targetInfo, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("profile config symlink target is not readable: %w", err)
-	}
-	if !targetInfo.Mode().IsRegular() {
-		return fmt.Errorf("profile config symlink target is not a regular file: %s", path)
-	}
-	return nil
 }
 
 func monitorConfigFileUsesFileStore(path string) (bool, error) {
@@ -333,14 +321,6 @@ func monitorConfigFileUsesFileStore(path string) (bool, error) {
 		return false, fmt.Errorf("parse profile config: %w", err)
 	}
 	return found && store == "file", nil
-}
-
-func monitorResolveExistingPath(path string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(resolved), nil
 }
 
 func isMultisubsProfileHome(home string) bool {
@@ -638,8 +618,9 @@ func shouldIgnoreDiscoveredHome(codexHome string) bool {
 }
 
 type accountCollector struct {
-	byHome   map[string]accountCandidate
-	warnings []string
+	byHome        map[string]accountCandidate
+	rejectedHomes map[string]struct{}
+	warnings      []string
 }
 
 type accountCandidate struct {
@@ -649,13 +630,17 @@ type accountCandidate struct {
 
 func newAccountCollector() *accountCollector {
 	return &accountCollector{
-		byHome: map[string]accountCandidate{},
+		byHome:        map[string]accountCandidate{},
+		rejectedHomes: map[string]struct{}{},
 	}
 }
 
 func (c *accountCollector) add(label, codexHome string, priority int, allowWithoutSignals bool, useAppServer bool) {
 	normalized := normalizeHome(codexHome)
 	if normalized == "" {
+		return
+	}
+	if _, rejected := c.rejectedHomes[normalized]; rejected {
 		return
 	}
 	if !allowWithoutSignals && !hasUsageSignals(normalized) {
@@ -679,6 +664,15 @@ func (c *accountCollector) add(label, codexHome string, priority int, allowWitho
 		},
 		priority: priority,
 	}
+}
+
+func (c *accountCollector) reject(codexHome string) {
+	normalized := normalizeHome(codexHome)
+	if normalized == "" {
+		return
+	}
+	c.rejectedHomes[normalized] = struct{}{}
+	delete(c.byHome, normalized)
 }
 
 func (c *accountCollector) warnf(format string, args ...any) {

@@ -410,26 +410,20 @@ func HasAuthFile(codexHome string) (bool, error) {
 	return false, fmt.Errorf("check auth file: %w", err)
 }
 
-func profileConfigUsesFileStore(configPath string) (bool, error) {
-	store, found, err := profileConfigCredentialStore(configPath)
+func profileConfigUsesFileStore(configPath, defaultConfigPath string) (bool, error) {
+	store, found, err := profileConfigCredentialStore(configPath, defaultConfigPath)
 	if err != nil {
 		return false, err
 	}
 	return found && store == "file", nil
 }
 
-func profileConfigCredentialStore(configPath string) (string, bool, error) {
-	if err := ensureRegularFileOrSymlinkTarget(configPath, "profile config"); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", false, nil
-		}
-		return "", false, err
+func profileConfigCredentialStore(configPath, defaultConfigPath string) (string, bool, error) {
+	if _, err := codexstate.ValidateManagedConfigPath(configPath, defaultConfigPath); err != nil {
+		return "", false, fmt.Errorf("validate managed profile config: %w", err)
 	}
 	b, err := os.ReadFile(configPath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", false, nil
-		}
 		return "", false, fmt.Errorf("read profile config: %w", err)
 	}
 	store, found, err := codexstate.CredentialStoreFromTOML(string(b))
@@ -491,34 +485,14 @@ func (s *Store) ensureProfileConfig(codexHome string) error {
 	configPath := filepath.Join(codexHome, "config.toml")
 	defaultConfigPath := filepath.Join(s.paths.DefaultCodexHome, "config.toml")
 
-	info, err := os.Lstat(configPath)
+	_, err := os.Lstat(configPath)
 	if err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("profile config path is a directory: %s", configPath)
+		details, err := codexstate.ValidateManagedConfigPath(configPath, defaultConfigPath)
+		if err != nil {
+			return fmt.Errorf("validate existing profile config: %w", err)
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			targetPath, err := resolveExistingSymlinkTarget(configPath)
-			if err != nil {
-				return fmt.Errorf("resolve profile config symlink: %w", err)
-			}
-			defaultTargetPath, err := resolveExistingPath(defaultConfigPath)
-			if err != nil {
-				return fmt.Errorf("resolve default Codex config: %w", err)
-			}
-			if targetPath != defaultTargetPath {
-				return fmt.Errorf("profile config symlink must point to default Codex config %s: %s", defaultConfigPath, configPath)
-			}
-			targetInfo, err := os.Stat(configPath)
-			if err != nil {
-				return fmt.Errorf("profile config symlink target is not readable: %w", err)
-			}
-			if !targetInfo.Mode().IsRegular() {
-				return fmt.Errorf("profile config symlink target is not a regular file: %s", configPath)
-			}
+		if details.IsSymlink {
 			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("profile config path is not a regular file: %s", configPath)
 		}
 		content, err := os.ReadFile(configPath)
 		if err != nil {
@@ -536,6 +510,46 @@ func (s *Store) ensureProfileConfig(codexHome string) error {
 
 	if err := os.Symlink(defaultConfigPath, configPath); err != nil {
 		return fmt.Errorf("link profile config to default codex config: %w", err)
+	}
+	createdLinkInfo, err := os.Lstat(configPath)
+	if err != nil {
+		return fmt.Errorf("inspect newly linked profile config: %w", err)
+	}
+	if _, err := codexstate.ValidateManagedConfigPath(configPath, defaultConfigPath); err != nil {
+		removeErr := removeCreatedProfileConfigLink(configPath, defaultConfigPath, createdLinkInfo)
+		if removeErr != nil {
+			return fmt.Errorf("validate newly linked profile config: %w (cleanup failed: %v)", err, removeErr)
+		}
+		return fmt.Errorf("validate newly linked profile config: %w", err)
+	}
+	return nil
+}
+
+func removeCreatedProfileConfigLink(configPath, rawTarget string, createdLinkInfo os.FileInfo) error {
+	info, err := os.Lstat(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect newly linked profile config: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	createdStat, createdOK := createdLinkInfo.Sys().(*syscall.Stat_t)
+	currentStat, currentOK := info.Sys().(*syscall.Stat_t)
+	if !createdOK || !currentOK || createdStat.Dev != currentStat.Dev || createdStat.Ino != currentStat.Ino {
+		return nil
+	}
+	currentTarget, err := os.Readlink(configPath)
+	if err != nil {
+		return fmt.Errorf("read newly linked profile config: %w", err)
+	}
+	if currentTarget != rawTarget {
+		return nil
+	}
+	if err := os.Remove(configPath); err != nil {
+		return fmt.Errorf("remove invalid newly linked profile config: %w", err)
 	}
 	return nil
 }

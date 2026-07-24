@@ -96,8 +96,12 @@ func TestCmdStatusRejectsAuthSymlinkBeforeCodexStatus(t *testing.T) {
 
 func TestCmdStatusRequiresFileStoreBeforeCodexStatus(t *testing.T) {
 	app, logPath := newStatusTestApp(t)
-	writeDefaultConfig(t, app, "model = \"global\"\n")
+	defaultConfigPath := writeDefaultConfig(t, app, "model = \"global\"\n")
 	createTestProfiles(t, app, "work")
+	profileConfigPath := filepath.Join(app.store.paths.ProfilesDir, "work", "codex-home", "config.toml")
+	if err := os.Symlink(defaultConfigPath, profileConfigPath); err != nil {
+		t.Fatalf("symlink profile config: %v", err)
+	}
 
 	out, err := captureStdout(t, app.cmdStatus)
 	if err != nil {
@@ -105,6 +109,28 @@ func TestCmdStatusRequiresFileStoreBeforeCodexStatus(t *testing.T) {
 	}
 	if !strings.Contains(out, "requires file-backed auth") {
 		t.Fatalf("expected file-store error in status output, got %q", out)
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected codex status not to be invoked, stat err=%v", statErr)
+	}
+}
+
+func TestCmdStatusRejectsHardLinkedConfigBeforeCodexStatus(t *testing.T) {
+	app, logPath := newStatusTestApp(t)
+	writeDefaultFileStoreConfig(t, app)
+	createTestProfiles(t, app, "work")
+	configPath := filepath.Join(app.store.paths.ProfilesDir, "work", "codex-home", "config.toml")
+	if err := os.WriteFile(configPath, []byte("cli_auth_credentials_store = \"file\"\n"), 0o600); err != nil {
+		t.Fatalf("write profile config: %v", err)
+	}
+	linkFileOrSkipUnsupported(t, configPath, filepath.Join(t.TempDir(), "config-alias.toml"))
+
+	out, err := captureStdout(t, app.cmdStatus)
+	if err != nil {
+		t.Fatalf("cmdStatus: %v", err)
+	}
+	if !strings.Contains(out, "multiple hard links") {
+		t.Fatalf("expected managed config error in status output, got %q", out)
 	}
 	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected codex status not to be invoked, stat err=%v", statErr)

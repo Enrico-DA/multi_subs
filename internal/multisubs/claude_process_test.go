@@ -183,39 +183,6 @@ func TestClaudeProbeFailureUsesDeterministicCategories(t *testing.T) {
 	}
 }
 
-func TestClaudeArgsRequestFableParsesModelWithoutChangingArgs(t *testing.T) {
-	t.Setenv("ANTHROPIC_MODEL", "")
-	if !claudeArgsRequestFable([]string{"--model", "claude-fable-latest", "prompt"}) {
-		t.Fatal("expected --model Fable to be detected")
-	}
-	if !claudeArgsRequestFable([]string{"--model=FABLE", "prompt"}) {
-		t.Fatal("expected --model=FABLE to be detected")
-	}
-	if claudeArgsRequestFable([]string{"--model", "sonnet", "--", "--model=fable"}) {
-		t.Fatal("model-looking prompt text after -- must not affect routing")
-	}
-	if !claudeArgsRequestFable([]string{"prompt"}) {
-		t.Fatal("omitted model must conservatively require Fable quota")
-	}
-	if !claudeArgsRequestFable([]string{"--model", "sonnet", "--fallback-model", "fable", "prompt"}) {
-		t.Fatal("Fable fallback must require Fable quota")
-	}
-	t.Setenv("ANTHROPIC_MODEL", "claude-fable-5")
-	if !claudeArgsRequestFable([]string{"prompt"}) {
-		t.Fatal("Fable environment model must require Fable quota")
-	}
-	if claudeArgsRequestFable([]string{"--model", "sonnet", "prompt"}) {
-		t.Fatal("explicit non-Fable model must override the environment model")
-	}
-	if !claudeArgsRequestFable([]string{"--model", "future-model", "prompt"}) {
-		t.Fatal("unknown explicit model must conservatively require Fable quota")
-	}
-	t.Setenv("ANTHROPIC_MODEL", "future-model")
-	if !claudeArgsRequestFable([]string{"prompt"}) {
-		t.Fatal("unknown environment model must conservatively require Fable quota")
-	}
-}
-
 func TestClaudeRunWithReservationPassesLockDescriptorToChild(t *testing.T) {
 	root := t.TempDir()
 	binDir := filepath.Join(root, "bin")

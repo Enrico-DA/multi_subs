@@ -399,16 +399,35 @@ func parseExecRoutingArgs(args []string) (execRoutingArgs, error) {
 }
 
 func commonConfiguredExecModel(paths Paths, cfg *Config) (string, error) {
-	configPaths := []string{filepath.Join(paths.DefaultCodexHome, "config.toml")}
+	type modelConfigCandidate struct {
+		path              string
+		defaultConfigPath string
+		managed           bool
+	}
+	defaultConfigPath := filepath.Join(paths.DefaultCodexHome, "config.toml")
+	candidates := []modelConfigCandidate{{path: defaultConfigPath}}
 	for _, name := range sortedProfileNames(cfg) {
-		configPaths = append(configPaths, filepath.Join(cfg.Profiles[name].CodexHome, "config.toml"))
+		candidates = append(candidates, modelConfigCandidate{
+			path:              filepath.Join(cfg.Profiles[name].CodexHome, "config.toml"),
+			defaultConfigPath: defaultConfigPath,
+			managed:           true,
+		})
 	}
 
 	commonModel := ""
 	commonFound := false
 	haveCandidate := false
-	for _, configPath := range configPaths {
-		model, found, err := configuredExecModel(configPath)
+	for _, candidate := range candidates {
+		var (
+			model string
+			found bool
+			err   error
+		)
+		if candidate.managed {
+			model, found, err = configuredManagedExecModel(candidate.path, candidate.defaultConfigPath)
+		} else {
+			model, found, err = configuredExecModel(candidate.path)
+		}
 		if err != nil {
 			return "", &ExitError{
 				Code:    2,
@@ -434,6 +453,13 @@ func commonConfiguredExecModel(paths Paths, cfg *Config) (string, error) {
 	return commonModel, nil
 }
 
+func configuredManagedExecModel(configPath, defaultConfigPath string) (string, bool, error) {
+	if _, err := codexstate.ValidateManagedConfigPath(configPath, defaultConfigPath); err != nil {
+		return "", false, errors.New("managed Codex config path is invalid")
+	}
+	return readConfiguredExecModel(configPath)
+}
+
 func configuredExecModel(configPath string) (string, bool, error) {
 	if err := ensureRegularFileOrSymlinkTarget(configPath, "Codex config"); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -441,6 +467,10 @@ func configuredExecModel(configPath string) (string, bool, error) {
 		}
 		return "", false, errors.New("Codex config is not a readable regular file")
 	}
+	return readConfiguredExecModel(configPath)
+}
+
+func readConfiguredExecModel(configPath string) (string, bool, error) {
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

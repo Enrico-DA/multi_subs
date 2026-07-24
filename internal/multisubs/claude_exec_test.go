@@ -39,6 +39,11 @@ func TestClaudeExecManagedAccountCanBeatDefaultByLowerWorstUsage(t *testing.T) {
 func TestClaudeExecFableRoutingRequiresAllThreeWindows(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "alpha", "beta", "missing")
+	app.claudeFableResolver = &fakeClaudeFableResolver{byTarget: map[string]fableApplicability{
+		"alpha":   fableApplicable,
+		"beta":    fableApplicable,
+		"missing": fableApplicable,
+	}}
 	alphaFable := 90.0
 	betaFable := 55.0
 	usageByDir := map[string][]byte{
@@ -58,6 +63,32 @@ func TestClaudeExecFableRoutingRequiresAllThreeWindows(t *testing.T) {
 	}
 	if err := app.cmdClaudeExec([]string{"--model=fable", "hello"}); err != nil {
 		t.Fatalf("Fable exec: %v", err)
+	}
+}
+
+func TestClaudeExecUsesCandidateSpecificFableEligibilityAndScore(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profiles := createClaudeProfiles(t, app, "alpha", "beta")
+	app.claudeFableResolver = &fakeClaudeFableResolver{byTarget: map[string]fableApplicability{
+		"default": fableApplicable,
+		"alpha":   fablePossible,
+		"beta":    fableNotApplicable,
+	}}
+	alphaFable := 80.0
+	betaFable := 99.0
+	setFakeUsageCapture(t, runner, map[string][]byte{
+		"":                          fakeClaudeUsageEnvelope(1, 2, nil),
+		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(1, 2, &alphaFable),
+		profiles["beta"].ConfigDir:  fakeClaudeUsageEnvelope(50, 60, &betaFable),
+	})
+	runner.run = func(_ context.Context, _ []string, environment []string) error {
+		if got := claudeConfigDirFromEnv(environment); got != profiles["beta"].ConfigDir {
+			t.Fatalf("selected config dir: got %q want %q", got, profiles["beta"].ConfigDir)
+		}
+		return nil
+	}
+	if err := app.cmdClaudeExec([]string{"prompt"}); err != nil {
+		t.Fatalf("Claude exec: %v", err)
 	}
 }
 

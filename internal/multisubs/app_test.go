@@ -226,6 +226,28 @@ func TestCmdCLIFailsWhenSharedConfigDoesNotUseFileStoreFromApp(t *testing.T) {
 	}
 }
 
+func TestExecutionReadinessRejectsManagedConfigShapeBeforeSemanticParsing(t *testing.T) {
+	app, _ := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	profileHome := filepath.Join(app.store.paths.ProfilesDir, "alpha", "codex-home")
+	configPath := filepath.Join(profileHome, "config.toml")
+	if err := os.WriteFile(configPath, []byte("this is not valid TOML = ["), 0o600); err != nil {
+		t.Fatalf("write invalid profile config: %v", err)
+	}
+	linkFileOrSkipUnsupported(t, configPath, filepath.Join(t.TempDir(), "config-alias.toml"))
+
+	err := ensureProfileCodexExecutionReady(app.store.paths, Profile{Name: "alpha", CodexHome: profileHome})
+	if err == nil {
+		t.Fatal("expected invalid managed config shape to fail")
+	}
+	if !strings.Contains(err.Error(), "multiple hard links") {
+		t.Fatalf("expected structural error before TOML parsing, got %v", err)
+	}
+	if strings.Contains(err.Error(), "parse profile config") {
+		t.Fatalf("managed config was parsed before structural validation: %v", err)
+	}
+}
+
 func TestProfileCommandsApplyCustomResourcePolicy(t *testing.T) {
 	for _, command := range []string{"add", "login", "login-all", "cli"} {
 		t.Run(command, func(t *testing.T) {

@@ -44,6 +44,10 @@ Product state directories, profile directories, provider config directories, loc
 - Only documented product-owned links may be created, changed, or removed.
 - Runtime-managed `.system` skills remain profile-local.
 
+A managed Codex `config.toml` is allowed only as a regular non-symlink with a verifiable hard-link count of one, or as a symlink whose resolved path exactly matches the resolved default Codex config and whose target is regular. One shared filesystem-only validator enforces this before any managed caller reads TOML. Hard-linked configs are rejected without automatic repair. Raw symlink targets may be shown in safe doctor diagnostics, but config contents are not exposed.
+
+The default Codex account and its config remain unmanaged. This managed-config boundary does not copy, rewrite, or take ownership of default-account state.
+
 ## Environment rules
 
 Official provider variables remain:
@@ -92,7 +96,13 @@ These paths must not create product state:
 
 Codex routing and monitoring use weekly usage only. The default account and managed profiles use the same weekly, model, and reset policy. Unavailable, exhausted, or model-ineligible accounts are skipped. The existing narrow fallback for older official responses remains limited to weekly-compatible data.
 
-Claude routing scores the default account and managed profiles together using fresh official session, weekly all-model, and Fable usage. Probe failure excludes only the affected candidate. Organization deduplication and reservation locking apply to every candidate. The tool does not infer usage from credential contents.
+Claude routing scores the default account and managed profiles together using fresh official session and weekly all-model usage. It includes the Fable window only when that candidate's effective CLI and settings state says Fable is applicable or possible. The three-state policy fails closed per candidate: uncertainty requires Fable capacity but does not fail routing for other candidates.
+
+To classify a candidate, routing inspects only `model`, `fallbackModel`, `env.ANTHROPIC_MODEL`, and the default Opus, Sonnet, Haiku, and Fable model mappings. It streams those fields from regular settings files capped at 2 MiB and does not retain or report unrelated settings. Read and parse failures are reduced to safe source categories; output never includes a settings path, content, value, or underlying error.
+
+The default and managed user settings roots stay separate. Selected project and local settings, explicit `--settings`, and local macOS managed files are merged for the candidate without reading credentials or executing policy helpers. Server-managed, account, organization, or operating-system policy values that cannot be proved locally stay uncertain at field level. A conclusive higher-precedence CLI value can make an unknown lower value irrelevant.
+
+Usage probe failure excludes only the affected candidate. Organization deduplication and reservation locking apply to every candidate. The tool does not infer usage from credential contents.
 
 Both default accounts remain outside product ownership. Routing never changes their auth, config, or state.
 

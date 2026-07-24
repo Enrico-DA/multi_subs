@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -767,6 +768,76 @@ func TestEnsureProfileDirPreservesManualProfileConfig(t *testing.T) {
 	}
 }
 
+func TestEnsureProfileDirRejectsHardLinkedGeneratedConfigWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multisubs"))
+	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
+
+	paths, err := ResolvePaths()
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	store := NewStore(paths)
+	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
+	if err := os.MkdirAll(profile.CodexHome, 0o700); err != nil {
+		t.Fatalf("mkdir profile codex home: %v", err)
+	}
+	configPath := filepath.Join(profile.CodexHome, "config.toml")
+	aliasPath := filepath.Join(root, "config-alias.toml")
+	if err := os.WriteFile(configPath, []byte(generatedProfileConfigContent), 0o600); err != nil {
+		t.Fatalf("write generated profile config: %v", err)
+	}
+	linkFileOrSkipUnsupported(t, configPath, aliasPath)
+
+	if _, err := store.EnsureProfileDir(profile, nil); err == nil {
+		t.Fatal("expected hard-linked profile config to fail setup")
+	}
+	for _, path := range []string{configPath, aliasPath} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("lstat unchanged config link %s: %v", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			t.Fatalf("config link %s changed type: %v", path, info.Mode())
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read unchanged config link %s: %v", path, err)
+		}
+		if string(content) != generatedProfileConfigContent {
+			t.Fatalf("config link %s changed content: %q", path, content)
+		}
+	}
+}
+
+func TestEnsureProfileConfigRemovesNewLinkWhenValidationFails(t *testing.T) {
+	root := t.TempDir()
+	paths := Paths{DefaultCodexHome: filepath.Join(root, "missing-default")}
+	store := NewStore(paths)
+	codexHome := filepath.Join(root, "profile")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatalf("mkdir profile home: %v", err)
+	}
+	configPath := filepath.Join(codexHome, "config.toml")
+
+	if err := store.ensureProfileConfig(codexHome); err == nil {
+		t.Fatal("expected new profile config link validation to fail")
+	}
+	if _, err := os.Lstat(configPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid newly created link was not removed: %v", err)
+	}
+}
+
+func linkFileOrSkipUnsupported(t *testing.T, oldPath, newPath string) {
+	t.Helper()
+	if err := os.Link(oldPath, newPath); err != nil {
+		if errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.EOPNOTSUPP) {
+			t.Skipf("hard links unsupported: %v", err)
+		}
+		t.Fatalf("create hard link: %v", err)
+	}
+}
+
 func TestEnsureProfileDirRejectsProfileConfigSymlinkOutsideDefaultConfig(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multisubs"))
@@ -973,6 +1044,9 @@ func TestEnsureProfileDirPreservesManualProfileSkillOverride(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "shared-skill"), 0o700); err != nil {
 		t.Fatalf("mkdir default shared skill: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte{}, 0o600); err != nil {
+		t.Fatalf("write default config: %v", err)
+	}
 
 	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
 	manualSkillPath := filepath.Join(profile.CodexHome, "skills", "shared-skill")
@@ -1005,6 +1079,9 @@ func TestEnsureProfileDirRetargetsSameNamedSkillSymlinkToPinnedDefaultEntry(t *t
 	store := NewStore(paths)
 	if err := os.MkdirAll(filepath.Join(paths.DefaultCodexHome, "skills", "shared-skill"), 0o700); err != nil {
 		t.Fatalf("mkdir default shared skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte("model = \"gpt-5\"\n"), 0o600); err != nil {
+		t.Fatalf("write default config: %v", err)
 	}
 
 	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
@@ -1196,6 +1273,9 @@ func TestEnsureProfileDirRemovesStaleManagedProfileSkillSymlink(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(defaultSkillsPath, "kept"), 0o700); err != nil {
 		t.Fatalf("mkdir default kept skill: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte{}, 0o600); err != nil {
+		t.Fatalf("write default config: %v", err)
+	}
 
 	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
 	profileSkillDir := filepath.Join(profile.CodexHome, "skills")
@@ -1238,6 +1318,9 @@ func TestEnsureProfileDirRemovesStaleSkillLinkWhenDefaultSkillsDirIsSymlink(t *t
 	defaultSkillsPath := filepath.Join(paths.DefaultCodexHome, "skills")
 	if err := os.Symlink(actualDefaultSkills, defaultSkillsPath); err != nil {
 		t.Fatalf("symlink default skills: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte{}, 0o600); err != nil {
+		t.Fatalf("write default config: %v", err)
 	}
 
 	profile := Profile{Name: "work", CodexHome: filepath.Join(paths.ProfilesDir, "work", "codex-home")}
@@ -1325,7 +1408,7 @@ func TestProfileConfigUsesFileStoreMatchesExactKey(t *testing.T) {
 				t.Fatalf("write config: %v", err)
 			}
 
-			got, err := profileConfigUsesFileStore(path)
+			got, err := profileConfigUsesFileStore(path, filepath.Join(t.TempDir(), "default-config.toml"))
 			if err != nil {
 				t.Fatalf("profileConfigUsesFileStore: %v", err)
 			}

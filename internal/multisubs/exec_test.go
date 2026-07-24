@@ -1011,6 +1011,41 @@ func TestCmdExecRejectsAnyInvalidConfiguredProfileBeforeSelection(t *testing.T) 
 	}
 }
 
+func TestCmdExecRejectsHardLinkedManagedConfigBeforeModelParsingSelectionOrLaunch(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	configPath := filepath.Join(app.store.paths.ProfilesDir, "alpha", "codex-home", "config.toml")
+	if err := os.WriteFile(configPath, []byte("model = [not valid TOML"), 0o600); err != nil {
+		t.Fatalf("write invalid profile config: %v", err)
+	}
+	linkFileOrSkipUnsupported(t, configPath, filepath.Join(t.TempDir(), "config-alias.toml"))
+
+	selectorCalled := false
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error) {
+		selectorCalled = true
+		return usage.SelectedAccount{}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	if err == nil {
+		t.Fatal("expected hard-linked managed config to fail exec")
+	}
+	if selectorCalled {
+		t.Fatal("expected selector not to run for an invalid managed config")
+	}
+	if !strings.Contains(err.Error(), "multiple hard links") {
+		t.Fatalf("expected structural config error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "model could not be parsed") {
+		t.Fatalf("model parsing ran before managed config validation: %v", err)
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected codex not to be invoked, stat err=%v", statErr)
+	}
+}
+
 func TestCmdExecFailsBeforeSelectionWhenNoProfilesAreReady(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")

@@ -78,13 +78,27 @@ Why: The product should not erase local work while keeping shared resources conv
 
 Enforcement: Only documented product-owned links may change. Desired resource state is validated before links move. Runtime-managed `.system` skills remain profile-local.
 
+## Use one managed Codex config boundary
+
+Decision: A managed Codex config has only two valid filesystem forms: a regular non-symlink with a verifiable hard-link count of exactly one, or a symlink whose resolved path exactly equals the resolved default Codex config and whose target is regular.
+
+Why: Setup, execution, status, doctor, model inspection, and monitoring must agree on which config owns managed profile behavior. Path equality also prevents a hard-link alias of the default config from being treated as the default path.
+
+Enforcement: Every managed caller uses the shared filesystem-only validator before TOML parsing or provider launch. Hard-linked configs fail without automatic repair. Valid single-link manual overrides remain untouched, and only the exact old generated regular config may be replaced during setup. The default account and default config remain unmanaged.
+
+Migration impact: Existing valid default-config symlinks and single-link manual overrides continue to work. Arbitrary symlinks, broken links, hard-linked configs, and non-regular entries require a manual fix; no background migration changes them.
+
 ## Keep usage rules provider-specific
 
-Decision: Codex usage and routing stay weekly-only. Claude routing uses fresh session, weekly all-model, and Fable usage. Each provider's default account competes normally with its managed profiles.
+Decision: Codex usage and routing stay weekly-only. Claude routing uses fresh session and weekly all-model usage, plus Fable usage for each candidate whose effective model or fallback is applicable to Fable or cannot be classified conclusively. Each provider's default account competes normally with its managed profiles.
 
-Why: Those are the provider signals used by the current safe routing contracts.
+Why: Claude model settings can differ between the default account and each isolated managed profile. A single invocation-wide Fable decision can either exclude a valid account or spend against a window that the selected account does not need.
 
-Enforcement: Codex applies one weekly, model, reset, and eligibility policy to default and managed candidates, while keeping default execution unmanaged. Claude puts every valid default or managed target in one score-sorted, organization-deduplicated, reservation-locked candidate set. Claude reads usage through the official CLI without reading credential contents.
+Enforcement: Codex applies one weekly, model, reset, and eligibility policy to default and managed candidates, while keeping default execution unmanaged. Claude parses shared CLI intent once, resolves relevant settings per candidate, and classifies Fable as not applicable, applicable, or possible. Applicable and possible both require and score the Fable window. Unknown local, managed, server, account, and organization state fails closed only for the fields and candidate it can affect.
+
+Claude settings inspection is data-minimizing. It reads only routing fields from regular files capped at 2 MiB, does not execute policy helpers, and never reports paths, contents, values, or raw read and parse failures. Values that cannot be proved locally remain uncertain instead of being replaced with a guessed default.
+
+Claude then puts every valid default or managed target in one score-sorted, organization-deduplicated, reservation-locked candidate set. Claude reads usage through the official CLI without reading credential contents.
 
 ## Prefer plain English
 

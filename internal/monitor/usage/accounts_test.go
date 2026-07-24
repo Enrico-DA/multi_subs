@@ -1,9 +1,11 @@
 package usage
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -950,6 +952,67 @@ func TestLoadMonitorAccountsSkipsUnsafeMultisubsProfile(t *testing.T) {
 	}
 }
 
+func TestLoadMonitorAccountsRejectsInvalidManagedProfileAndAllAliases(t *testing.T) {
+	tmp := t.TempDir()
+	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
+	profileHome := filepath.Join(configDir, "profiles", "personal", "codex-home")
+	if err := os.MkdirAll(profileHome, 0o700); err != nil {
+		t.Fatalf("mkdir profile home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profileHome, "auth.json"), []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	configPath := filepath.Join(profileHome, "config.toml")
+	if err := os.WriteFile(configPath, []byte("cli_auth_credentials_store = \"file\"\n"), 0o600); err != nil {
+		t.Fatalf("write profile config: %v", err)
+	}
+	linkMonitorTestFileOrSkipUnsupported(t, configPath, filepath.Join(tmp, "config-alias.toml"))
+
+	registryBody := `{"version":1,"profiles":{"personal":{"name":"personal","codex_home":"` + profileHome + `"}}}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(registryBody), 0o600); err != nil {
+		t.Fatalf("write multisubs config: %v", err)
+	}
+	homeAlias := filepath.Join(tmp, "profile-home-alias")
+	if err := os.Symlink(profileHome, homeAlias); err != nil {
+		t.Fatalf("symlink profile home alias: %v", err)
+	}
+	accountsPath := filepath.Join(tmp, "accounts.json")
+	accountsBody := `{"version":1,"accounts":[{"label":"file-alias","codex_home":"` + homeAlias + `"}]}`
+	if err := os.WriteFile(accountsPath, []byte(accountsBody), 0o600); err != nil {
+		t.Fatalf("write accounts file: %v", err)
+	}
+
+	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", homeAlias)
+	t.Setenv(defaultCodexHomeEnvVar, profileHome)
+	t.Setenv(multisubsHomeEnvVar, configDir)
+	t.Setenv(accountsFileEnvVar, accountsPath)
+
+	accounts, warning, err := loadMonitorAccountsWithOptions(MonitorAccountOptions{
+		IncludeDefault: true,
+		IncludeActive:  true,
+	})
+	if err != nil {
+		t.Fatalf("load monitor accounts: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("invalid managed home was reintroduced through an alias: %#v", accounts)
+	}
+	if !strings.Contains(warning, "multiple hard links") {
+		t.Fatalf("expected managed config skip warning, got %q", warning)
+	}
+}
+
+func linkMonitorTestFileOrSkipUnsupported(t *testing.T, oldPath, newPath string) {
+	t.Helper()
+	if err := os.Link(oldPath, newPath); err != nil {
+		if errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.EOPNOTSUPP) {
+			t.Skipf("hard links unsupported: %v", err)
+		}
+		t.Fatalf("create hard link: %v", err)
+	}
+}
+
 func TestLoadAccountsFromMultisubsConfigRejectsInvalidProfileName(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -991,9 +1054,7 @@ func TestLoadAccountsFromMultisubsConfigRejectsHardLinkedAuth(t *testing.T) {
 	if err := os.WriteFile(target, []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
 		t.Fatalf("write auth target: %v", err)
 	}
-	if err := os.Link(target, filepath.Join(profileHome, "auth.json")); err != nil {
-		t.Skipf("hard links are not supported here: %v", err)
-	}
+	linkMonitorTestFileOrSkipUnsupported(t, target, filepath.Join(profileHome, "auth.json"))
 	if err := os.WriteFile(filepath.Join(profileHome, "config.toml"), []byte("cli_auth_credentials_store = \"file\"\n"), 0o600); err != nil {
 		t.Fatalf("write profile config: %v", err)
 	}

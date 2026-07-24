@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"sort"
-	"strings"
 )
 
 const claudeBusyExitCode = 75
@@ -33,21 +32,25 @@ func (a *App) cmdClaudeExec(args []string) error {
 			return fmt.Errorf("Claude profile %q is unsafe: %w", name, err)
 		}
 	}
-	fableRequested := claudeArgsRequestFable(args)
+	fableResolver := a.claudeFableApplicabilityResolver()
+	intent := fableResolver.ParseIntent(args, os.Environ())
 
 	eligible := make([]claudeExecCandidate, 0, len(cfg.Profiles)+1)
 	eligibleOrganizations := make(map[string]struct{}, len(cfg.Profiles)+1)
+	defaultTarget := claudeTarget{Name: claudeDefaultTarget, Kind: "default"}
 	defaultAuthCtx, defaultAuthCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
 	defaultAuth, defaultAuthProbeErr := fetchClaudeAuthStatus(defaultAuthCtx, a.claudeCommandRunner(), "")
 	defaultAuthCancel()
 	if defaultAuthProbeErr == nil && validateClaudeRoutingAuth(defaultAuth) == nil {
+		applicability := fableResolver.Resolve(intent, defaultTarget)
+		needsFable := applicability.needsFable()
 		defaultUsageCtx, defaultUsageCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
 		defaultUsage, defaultUsageErr := fetchClaudeUsage(defaultUsageCtx, a.claudeCommandRunner(), "")
 		defaultUsageCancel()
-		if defaultUsageErr == nil && claudeUsageIsEligible(defaultUsage, fableRequested) {
+		if defaultUsageErr == nil && claudeUsageIsEligible(defaultUsage, needsFable) {
 			eligible = append(eligible, claudeExecCandidate{
-				Target: claudeTarget{Name: claudeDefaultTarget, Kind: "default"},
-				Score:  claudeUsageWorstPercent(defaultUsage, fableRequested),
+				Target: defaultTarget,
+				Score:  claudeUsageWorstPercent(defaultUsage, needsFable),
 				OrgID:  defaultAuth.OrgID,
 			})
 			eligibleOrganizations[defaultAuth.OrgID] = struct{}{}
@@ -65,16 +68,19 @@ func (a *App) cmdClaudeExec(args []string) error {
 		if _, duplicate := eligibleOrganizations[auth.OrgID]; duplicate {
 			continue
 		}
+		profileCopy := profile
+		target := claudeTarget{Name: name, Kind: "managed", ConfigDir: profile.ConfigDir, Profile: &profileCopy}
+		applicability := fableResolver.Resolve(intent, target)
+		needsFable := applicability.needsFable()
 		ctx, cancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
 		usage, usageErr := fetchClaudeUsage(ctx, a.claudeCommandRunner(), profile.ConfigDir)
 		cancel()
-		if usageErr != nil || !claudeUsageIsEligible(usage, fableRequested) {
+		if usageErr != nil || !claudeUsageIsEligible(usage, needsFable) {
 			continue
 		}
-		profileCopy := profile
 		eligible = append(eligible, claudeExecCandidate{
-			Target: claudeTarget{Name: name, Kind: "managed", ConfigDir: profile.ConfigDir, Profile: &profileCopy},
-			Score:  claudeUsageWorstPercent(usage, fableRequested),
+			Target: target,
+			Score:  claudeUsageWorstPercent(usage, needsFable),
 			OrgID:  auth.OrgID,
 		})
 		eligibleOrganizations[auth.OrgID] = struct{}{}
@@ -111,81 +117,26 @@ func (a *App) cmdClaudeExec(args []string) error {
 	return &ExitError{Code: 1, Message: "no usable Claude account"}
 }
 
-func claudeArgsRequestFable(args []string) bool {
-	model := ""
-	fallbackModel := ""
-	modelWasExplicit := false
-	for index := 0; index < len(args); index++ {
-		arg := strings.TrimSpace(args[index])
-		if arg == "--" {
-			break
-		}
-		switch {
-		case arg == "--model" || arg == "-m":
-			if index+1 < len(args) {
-				model = strings.TrimSpace(args[index+1])
-				modelWasExplicit = true
-				index++
-			}
-		case strings.HasPrefix(arg, "--model="):
-			model = strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
-			modelWasExplicit = true
-		case strings.HasPrefix(arg, "-m="):
-			model = strings.TrimSpace(strings.TrimPrefix(arg, "-m="))
-			modelWasExplicit = true
-		case arg == "--fallback-model":
-			if index+1 < len(args) {
-				fallbackModel = strings.TrimSpace(args[index+1])
-				index++
-			}
-		case strings.HasPrefix(arg, "--fallback-model="):
-			fallbackModel = strings.TrimSpace(strings.TrimPrefix(arg, "--fallback-model="))
-		}
+func (a *App) claudeFableApplicabilityResolver() claudeFableApplicabilityResolver {
+	if a.claudeFableResolver == nil {
+		return newLocalClaudeFableApplicabilityResolver()
 	}
-	if fallbackModel != "" && claudeModelMayUseFable(fallbackModel) {
-		return true
-	}
-	if modelWasExplicit {
-		return claudeModelMayUseFable(model)
-	}
-	if envModel := strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")); envModel != "" {
-		return claudeModelMayUseFable(envModel)
-	}
-	// Without an explicit effective model, route conservatively because user or
-	// managed settings may select Fable.
-	return true
+	return a.claudeFableResolver
 }
 
-func claudeModelMayUseFable(models string) bool {
-	for _, model := range strings.Split(models, ",") {
-		lower := strings.ToLower(strings.TrimSpace(model))
-		if lower == "" {
-			return true
-		}
-		if strings.Contains(lower, "fable") {
-			return true
-		}
-		if strings.Contains(lower, "sonnet") || strings.Contains(lower, "haiku") || strings.Contains(lower, "opus") {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func claudeUsageIsEligible(usage claudeUsage, fableRequested bool) bool {
+func claudeUsageIsEligible(usage claudeUsage, needsFable bool) bool {
 	if usage.Session.UsedPercent >= 100 || usage.WeeklyAll.UsedPercent >= 100 {
 		return false
 	}
-	if !fableRequested {
+	if !needsFable {
 		return true
 	}
 	return usage.Fable != nil && usage.Fable.UsedPercent < 100
 }
 
-func claudeUsageWorstPercent(usage claudeUsage, fableRequested bool) float64 {
+func claudeUsageWorstPercent(usage claudeUsage, needsFable bool) float64 {
 	worst := math.Max(usage.Session.UsedPercent, usage.WeeklyAll.UsedPercent)
-	if fableRequested && usage.Fable != nil {
+	if needsFable && usage.Fable != nil {
 		worst = math.Max(worst, usage.Fable.UsedPercent)
 	}
 	return worst

@@ -24,6 +24,21 @@ type fakeClaudeRunner struct {
 	runInteractive func([]string, []string) error
 }
 
+type fakeClaudeFableResolver struct {
+	byTarget map[string]fableApplicability
+}
+
+func (resolver *fakeClaudeFableResolver) ParseIntent([]string, []string) claudeCLIIntent {
+	return claudeCLIIntent{}
+}
+
+func (resolver *fakeClaudeFableResolver) Resolve(_ claudeCLIIntent, target claudeTarget) fableApplicability {
+	if applicability, ok := resolver.byTarget[target.Name]; ok {
+		return applicability
+	}
+	return fableNotApplicable
+}
+
 func (f *fakeClaudeRunner) Capture(ctx context.Context, args, env []string) ([]byte, []byte, error) {
 	f.record("capture", args, env)
 	if f.capture == nil {
@@ -75,6 +90,7 @@ func newClaudeTestApp(t *testing.T) (*App, *fakeClaudeRunner, string) {
 	}
 	runner := &fakeClaudeRunner{}
 	app.claudeRunner = runner
+	app.claudeFableResolver = &fakeClaudeFableResolver{}
 	return app, runner, root
 }
 

@@ -25,29 +25,29 @@ func TestDoctorReportHasFailures(t *testing.T) {
 	}
 }
 
-func TestCheckFileStoreConfig(t *testing.T) {
+func TestCheckDefaultFileStoreConfig(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	cfg := filepath.Join(root, "config.toml")
 
-	missingReq := checkFileStoreConfig("req", cfg, true)
-	if missingReq.Status != "fail" {
-		t.Fatalf("expected fail for required missing config, got %s", missingReq.Status)
+	missing := checkDefaultFileStoreConfig("default", cfg)
+	if missing.Status != "warn" {
+		t.Fatalf("expected warning for missing default config, got %s", missing.Status)
 	}
 
 	if err := os.WriteFile(cfg, []byte("model = \"o4\"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	bad := checkFileStoreConfig("req", cfg, true)
-	if bad.Status != "fail" {
-		t.Fatalf("expected fail for missing file-store setting, got %s", bad.Status)
+	bad := checkDefaultFileStoreConfig("default", cfg)
+	if bad.Status != "warn" {
+		t.Fatalf("expected warning for missing default file-store setting, got %s", bad.Status)
 	}
 
 	if err := os.WriteFile(cfg, []byte("cli_auth_credentials_store = \"file\"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	ok := checkFileStoreConfig("req", cfg, true)
+	ok := checkDefaultFileStoreConfig("default", cfg)
 	if ok.Status != "ok" {
 		t.Fatalf("expected ok for file-store config, got %s", ok.Status)
 	}
@@ -56,7 +56,7 @@ func TestCheckFileStoreConfig(t *testing.T) {
 	if err := os.Symlink(cfg, link); err != nil {
 		t.Fatalf("symlink config: %v", err)
 	}
-	linked := checkFileStoreConfig("req", link, true)
+	linked := checkDefaultFileStoreConfig("default", link)
 	if linked.Status != "ok" {
 		t.Fatalf("expected ok for symlinked file-store config, got %s", linked.Status)
 	}
@@ -500,9 +500,7 @@ func TestCheckAuthFileRejectsHardLink(t *testing.T) {
 		t.Fatalf("write target auth file: %v", err)
 	}
 	path := filepath.Join(root, "auth.json")
-	if err := os.Link(target, path); err != nil {
-		t.Skipf("hard links are not supported here: %v", err)
-	}
+	linkFileOrSkipUnsupported(t, target, path)
 
 	check := checkAuthFile("profile test auth", path)
 	if check.Status != "fail" {
@@ -546,6 +544,59 @@ func TestProfileDoctorChecksSkipLoginStatusWhenConfigFails(t *testing.T) {
 		if strings.Contains(check.Name, "login status") {
 			t.Fatalf("expected login status check to be skipped after config failure, got %v", checks)
 		}
+	}
+}
+
+func TestProfileDoctorReportsRawManagedConfigTargetAndSkipsLoginStatus(t *testing.T) {
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	logPath := filepath.Join(root, "codex.log")
+	script := "#!/bin/sh\nprintf 'codex login status invoked\\n' > " + shellQuote(logPath) + "\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	paths := Paths{ProfilesDir: filepath.Join(root, "profiles"), DefaultCodexHome: filepath.Join(root, "default-codex")}
+	if err := os.MkdirAll(paths.DefaultCodexHome, 0o700); err != nil {
+		t.Fatalf("mkdir default codex home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.DefaultCodexHome, "config.toml"), []byte(generatedProfileConfigContent), 0o600); err != nil {
+		t.Fatalf("write default config: %v", err)
+	}
+	codexHome := filepath.Join(paths.ProfilesDir, "work", "codex-home")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatalf("mkdir codex home: %v", err)
+	}
+	rawTarget := filepath.Join(root, "other-config.toml")
+	if err := os.WriteFile(rawTarget, []byte(generatedProfileConfigContent), 0o600); err != nil {
+		t.Fatalf("write other config: %v", err)
+	}
+	if err := os.Symlink(rawTarget, filepath.Join(codexHome, "config.toml")); err != nil {
+		t.Fatalf("symlink profile config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(`{"tokens":{"access_token":"a"}}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+
+	checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: codexHome}, true, time.Second)
+	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected codex login status not to run, stat err=%v", err)
+	}
+	foundRawTarget := false
+	for _, check := range checks {
+		if strings.Contains(check.Name, "login status") {
+			t.Fatalf("expected login status check to be skipped after config failure, got %v", checks)
+		}
+		if check.Name == "profile work config" && check.Status == "fail" && strings.Contains(check.Details, rawTarget) {
+			foundRawTarget = true
+		}
+	}
+	if !foundRawTarget {
+		t.Fatalf("expected raw symlink target in failed config diagnostics, got %v", checks)
 	}
 }
 

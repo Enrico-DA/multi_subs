@@ -103,6 +103,13 @@ Codex state:
 - Official provider variable: `CODEX_HOME`
 - Selected-profile metadata: `~/multisubs/run`
 
+Each managed profile's `config.toml` has exactly two allowed forms:
+
+- a regular, non-symlink file whose hard-link count can be verified as exactly one; or
+- a symlink whose fully resolved path is exactly the fully resolved default Codex `config.toml`, with a regular file as its target.
+
+Managed setup, execution readiness, status, doctor, model inspection, and monitoring all use one filesystem validator before reading TOML. A hard-linked config is rejected and is never repaired automatically. The default Codex account and its config remain unmanaged.
+
 Claude state:
 
 - Provider registry: `~/multisubs/providers/claude/config.json`
@@ -118,6 +125,8 @@ Any legacy `MULTICODEX_*` variable causes startup to fail before state access. C
 Filesystem monitor discovery prunes both `~/multicodex` and `~/.multicodex`, including canonical targets reached through aliases.
 
 This phase does not move any live state or installed binary. Move or replace local state only in a separate, explicit migration step.
+
+For the current user, valid default-config symlinks and valid single-link manual overrides keep working. The old exact multisubs-generated regular config may be replaced with the default-config symlink during normal managed setup. Hard-linked configs, arbitrary config symlinks, broken links, and non-regular entries now require a manual fix before that profile can be used; multisubs does not repair them.
 
 ## Provider behavior
 
@@ -138,7 +147,10 @@ Claude:
 - Each managed profile receives a derived `CLAUDE_CONFIG_DIR`.
 - Login, status, usage, and routing use the official Claude CLI.
 - Exact target-scoped login help runs `claude auth login --claudeai --help|-h` without profile state, `CLAUDE_CONFIG_DIR`, probes, or post-login checks.
-- Routing scores the default account and managed profiles together using fresh session, weekly all-model, and Fable usage.
+- `exec` parses the original model, fallback, settings-source, explicit-settings, and session-restoration intent once without changing the arguments passed to Claude. It then resolves effective settings separately for each candidate. The default account uses `~/.claude/settings.json`; a managed account uses its profile-local `settings.json`.
+- Candidate settings also include selected project and local files, explicit inline or path-based `--settings`, and local macOS managed settings. Managed and server-side values that cannot be proved from local files remain unknown.
+- Fable applicability has three outcomes: not applicable, applicable, or possible. Applicable and possible candidates both require an available Fable window and include that window in their score. A settings read or classification failure affects only that candidate.
+- Settings inspection reads only model, fallback, and the five model environment fields used by routing. Each file must be regular and no larger than 2 MiB; paths, contents, values, and unrelated settings are not reported.
 - An unusable or busy candidate is skipped. The default account runs without `CLAUDE_CONFIG_DIR`.
 - The product does not read, copy, or write Claude credential contents.
 

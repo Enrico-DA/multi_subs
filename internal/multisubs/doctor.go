@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 )
 
 type DoctorReport struct {
@@ -117,7 +119,7 @@ func RunCodexDoctor(store *Store, cfg *Config, timeout time.Duration) DoctorRepo
 	}
 
 	checks = append(checks, checkDirExists("default codex home", store.paths.DefaultCodexHome, false))
-	checks = append(checks, checkFileStoreConfig("default codex config", filepath.Join(store.paths.DefaultCodexHome, "config.toml"), false))
+	checks = append(checks, checkDefaultFileStoreConfig("default codex config", filepath.Join(store.paths.DefaultCodexHome, "config.toml")))
 
 	names := make([]string, 0, len(cfg.Profiles))
 	for name := range cfg.Profiles {
@@ -189,7 +191,11 @@ func profileDoctorChecks(paths Paths, name string, profile Profile, codexFound b
 	if homeCheck.Status == "fail" {
 		return out
 	}
-	configCheck := checkFileStoreConfig(prefix+" config", filepath.Join(profile.CodexHome, "config.toml"), true)
+	configCheck := checkManagedFileStoreConfig(
+		prefix+" config",
+		filepath.Join(profile.CodexHome, "config.toml"),
+		filepath.Join(paths.DefaultCodexHome, "config.toml"),
+	)
 	out = append(out, configCheck)
 	authCheck := checkAuthFile(prefix+" auth", filepath.Join(profile.CodexHome, "auth.json"))
 	out = append(out, authCheck)
@@ -537,7 +543,7 @@ func checkDirExists(name, path string, strictPerms bool) DoctorCheck {
 	return DoctorCheck{Name: name, Status: "ok", Details: path}
 }
 
-func checkFileStoreConfig(name, path string, required bool) DoctorCheck {
+func checkDefaultFileStoreConfig(name, path string) DoctorCheck {
 	linkTarget := ""
 	info, err := os.Lstat(path)
 	if err == nil && info.Mode()&os.ModeSymlink != 0 {
@@ -550,43 +556,65 @@ func checkFileStoreConfig(name, path string, required bool) DoctorCheck {
 
 	if err := ensureRegularFileOrSymlinkTarget(path, "config.toml"); err != nil {
 		if os.IsNotExist(err) {
-			if required {
-				if linkTarget != "" {
-					return DoctorCheck{Name: name, Status: "fail", Details: "config.toml symlink target not found: " + linkTarget}
-				}
-				return DoctorCheck{Name: name, Status: "fail", Details: "missing config.toml. expected a default-config symlink or manual override with cli_auth_credentials_store = \"file\""}
+			if linkTarget != "" {
+				return DoctorCheck{Name: name, Status: "warn", Details: "config.toml symlink target not found: " + linkTarget}
 			}
 			return DoctorCheck{Name: name, Status: "warn", Details: "config.toml not found"}
 		}
 		return DoctorCheck{Name: name, Status: "fail", Details: err.Error()}
 	}
-	if _, err := os.ReadFile(path); err != nil {
-		if os.IsNotExist(err) {
-			if required {
-				if linkTarget != "" {
-					return DoctorCheck{Name: name, Status: "fail", Details: "config.toml symlink target not found: " + linkTarget}
-				}
-				return DoctorCheck{Name: name, Status: "fail", Details: "missing config.toml. expected a default-config symlink or manual override with cli_auth_credentials_store = \"file\""}
-			}
-			return DoctorCheck{Name: name, Status: "warn", Details: "config.toml not found"}
-		}
-		return DoctorCheck{Name: name, Status: "fail", Details: err.Error()}
-	}
-	ok, err := profileConfigUsesFileStore(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			if linkTarget != "" {
+				return DoctorCheck{Name: name, Status: "warn", Details: "config.toml symlink target not found: " + linkTarget}
+			}
+			return DoctorCheck{Name: name, Status: "warn", Details: "config.toml not found"}
+		}
 		return DoctorCheck{Name: name, Status: "fail", Details: err.Error()}
 	}
+	store, found, err := codexstate.CredentialStoreFromTOML(string(content))
+	if err != nil {
+		return DoctorCheck{Name: name, Status: "fail", Details: fmt.Sprintf("parse config.toml: %v", err)}
+	}
+	ok := found && store == "file"
 	if !ok {
-		status := "warn"
-		if required {
-			status = "fail"
-		}
-		return DoctorCheck{Name: name, Status: status, Details: "config present but file credential store is not configured"}
+		return DoctorCheck{Name: name, Status: "warn", Details: "config present but file credential store is not configured"}
 	}
 	if linkTarget != "" {
 		return DoctorCheck{Name: name, Status: "ok", Details: "file credential store configured via symlink -> " + linkTarget}
 	}
 	return DoctorCheck{Name: name, Status: "ok", Details: "file credential store configured"}
+}
+
+func checkManagedFileStoreConfig(name, path, defaultConfigPath string) DoctorCheck {
+	details, err := codexstate.ValidateManagedConfigPath(path, defaultConfigPath)
+	if err != nil {
+		message := err.Error()
+		if details.IsSymlink {
+			if details.RawLinkTarget == "" {
+				message += "; config.toml is a symlink whose raw target could not be read"
+			} else {
+				message += "; config.toml symlink -> " + details.RawLinkTarget
+			}
+		}
+		return DoctorCheck{Name: name, Status: "fail", Details: message}
+	}
+	ok, err := profileConfigUsesFileStore(path, defaultConfigPath)
+	if err != nil {
+		message := err.Error()
+		if details.IsSymlink {
+			message += "; config.toml symlink -> " + details.RawLinkTarget
+		}
+		return DoctorCheck{Name: name, Status: "fail", Details: message}
+	}
+	if !ok {
+		return DoctorCheck{Name: name, Status: "fail", Details: "config present but file credential store is not configured"}
+	}
+	if details.IsSymlink {
+		return DoctorCheck{Name: name, Status: "ok", Details: "file credential store configured via symlink -> " + details.RawLinkTarget}
+	}
+	return DoctorCheck{Name: name, Status: "ok", Details: "file credential store configured via single-link manual override"}
 }
 
 func checkAuthFile(name, path string) DoctorCheck {

@@ -10,12 +10,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 )
 
 // App wires command handlers with persistent config.
 type App struct {
-	store        *Store
-	claudeRunner claudeCommandRunner
+	store               *Store
+	claudeRunner        claudeCommandRunner
+	claudeFableResolver claudeFableApplicabilityResolver
 }
 
 func NewApp() (*App, error) {
@@ -39,7 +42,11 @@ func newApp(readOnly bool) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{store: NewStore(paths), claudeRunner: osClaudeCommandRunner{}}, nil
+	return &App{
+		store:               NewStore(paths),
+		claudeRunner:        osClaudeCommandRunner{},
+		claudeFableResolver: newLocalClaudeFableApplicabilityResolver(),
+	}, nil
 }
 
 func RunCLI(args []string) error {
@@ -553,7 +560,11 @@ func ensureProfileCodexExecutionReady(paths Paths, profile Profile) error {
 		return err
 	}
 	configPath := filepath.Join(profile.CodexHome, "config.toml")
-	ok, err := profileConfigUsesFileStore(configPath)
+	defaultConfigPath := filepath.Join(paths.DefaultCodexHome, "config.toml")
+	if _, err := codexstate.ValidateManagedConfigPath(configPath, defaultConfigPath); err != nil {
+		return fmt.Errorf("validate managed profile config: %w", err)
+	}
+	ok, err := profileConfigUsesFileStore(configPath, defaultConfigPath)
 	if err != nil {
 		return err
 	}

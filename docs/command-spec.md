@@ -10,6 +10,17 @@ This document defines the public `multisubs` command surface.
 
 Unknown commands and rejected arguments must not create product state.
 
+## Managed Codex config contract
+
+Every managed Codex `config.toml` must be either:
+
+- a regular, non-symlink file with a verifiable hard-link count of exactly one; or
+- a symlink whose fully resolved path is exactly the fully resolved default Codex `config.toml`, and whose target is regular.
+
+All managed command setup, execution readiness, status, doctor, model inspection, and monitor account loading use the same filesystem validator before parsing TOML or starting a provider process. Hard-linked configs fail without automatic repair. The default Codex account and default config stay unmanaged and keep their separate default-account rules.
+
+Existing valid default-config symlinks and single-link manual overrides need no migration. The exact old generated regular config may still become a default-config symlink during managed setup. Any hard-linked config, arbitrary symlink, broken link, or non-regular config must be fixed manually.
+
 ## Top level
 
 ### `multisubs init`
@@ -172,7 +183,17 @@ Runs the official interactive Claude CLI. A managed target receives its derived 
 Runs official Claude print mode after fresh target-scoped auth and usage checks.
 
 - The default account and usable managed profiles share one candidate list.
-- Candidates rank by their worst applicable session, weekly all-model, or Fable percentage, then by name.
+- Original Claude arguments are parsed once for `--model`/`-m`, `--fallback-model`, `--settings`, `--setting-sources`, session restoration, `--`, and the invocation directory. The same arguments are forwarded unchanged.
+- Effective settings are resolved for each candidate. The default user source is `~/.claude/settings.json`, ignoring inherited `CLAUDE_CONFIG_DIR`; a managed candidate's user source is `<profile.ConfigDir>/settings.json`.
+- With no `--setting-sources`, the standard user, project, and local sources apply. An explicit list selects only those named standard sources, and an empty value selects none. Managed settings and explicit inline or path-based `--settings` remain independent of that selection. Relative explicit paths use the invocation directory.
+- Selected standard settings merge from user to project to local precedence, followed by explicit `--settings` and managed policy. Local macOS policy reads `/Library/Application Support/ClaudeCode/managed-settings.json` and then sorted `/Library/Application Support/ClaudeCode/managed-settings.d/*.json` fragments.
+- Project and local settings use the repository or worktree root. Outside a repository they use the invocation directory. If the root cannot be established safely, only the relevant project and local fields become uncertain.
+- Primary precedence is CLI model, effective candidate `ANTHROPIC_MODEL`, effective settings model, then account or organization default. Fallback precedence is CLI fallback, then the highest-precedence persistent `fallbackModel`, then no fallback. A CLI fallback fully replaces persistent fallback; a CLI primary does not.
+- Model classification is candidate-specific. Fable IDs and values matching the effective Fable alias are applicable. `best`, unresolved `default`, custom values, malformed or cyclic aliases, and restored sessions without a conclusive override are possible. Sonnet, Opus, and Haiku aliases first use that candidate's alias mappings; recognized full non-Fable IDs are not applicable.
+- Fallback chains use comma splitting, case-insensitive deduplication, and at most three entries. Any applicable or possible entry requires Fable.
+- Locally unreadable managed or server-side model fields are represented as field-level uncertainty. They matter only when a higher-precedence CLI value does not settle that field. Full recognized non-Fable CLI primary and fallback values can together prove that Fable is not applicable.
+- Candidates with applicable or possible Fable use require an available, unexhausted Fable window. Candidates rank by their worst applicable session, weekly all-model, or candidate-specific Fable percentage, then by name.
+- Settings files must be regular and at most 2 MiB. Routing streams only `model`, `fallbackModel`, and the supported model environment fields. Malformed, duplicate, wrong-type, unreadable, oversized, or non-regular input makes only the affected fields and candidates uncertain; it does not reject the wrapper invocation.
 - Duplicate organizations are removed before execution.
 - A busy candidate is skipped while the next candidate is tried.
 - If every eligible candidate is busy, the command returns the normal busy error. If none is usable, it returns one no-usable-account error.
