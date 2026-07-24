@@ -161,6 +161,22 @@ func TestManagedLoginCommandsForceFileBackedAuth(t *testing.T) {
 	}
 }
 
+func TestCmdAddRejectsReservedDefaultCodexProfileName(t *testing.T) {
+	app := newTestAppForCLI(t)
+
+	err := app.cmdAdd([]string{"default"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected add validation exit code 2, got %T %v", err, err)
+	}
+	if !strings.Contains(exitErr.Message, "reserved for the built-in default Codex account") {
+		t.Fatalf("unexpected error: %s", exitErr.Message)
+	}
+	if _, statErr := os.Stat(app.store.paths.MultisubsHome); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("reserved name validation created state: %v", statErr)
+	}
+}
+
 func TestEnsureProfileCodexExecutionReadyRejectsAuthSymlink(t *testing.T) {
 	app := newTestAppForCLI(t)
 	writeDefaultFileStoreConfig(t, app)

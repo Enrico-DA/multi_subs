@@ -147,7 +147,7 @@ func profileDoctorChecks(paths Paths, name string, profile Profile, codexFound b
 	prefix := "profile " + name
 	out := make([]DoctorCheck, 0, 4)
 
-	if err := ValidateProfileName(name); err != nil {
+	if err := ValidateCodexProfileName(name); err != nil {
 		out = append(out, DoctorCheck{Name: prefix + " name", Status: "fail", Details: err.Error()})
 	} else {
 		out = append(out, DoctorCheck{Name: prefix + " name", Status: "ok", Details: "valid"})

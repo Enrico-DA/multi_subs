@@ -847,6 +847,33 @@ func TestSelectExecProfileUsesDefaultMetadataSource(t *testing.T) {
 	}
 }
 
+func TestSelectExecProfileCannotResolveBuiltInDefaultHomeToManagedProfileByLabel(t *testing.T) {
+	app := newTestAppForCLI(t)
+	cfg := DefaultConfig()
+	cfg.Profiles[codexDefaultAccountName] = Profile{
+		Name:      codexDefaultAccountName,
+		CodexHome: filepath.Join(app.store.paths.ProfilesDir, codexDefaultAccountName, "codex-home"),
+	}
+
+	selected, err := app.selectExecProfile(cfg, func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error) {
+		return usage.SelectedAccount{
+			Account: usage.MonitorAccount{
+				Label:     codexDefaultAccountName,
+				CodexHome: app.store.paths.DefaultCodexHome,
+			},
+		}, nil
+	}, "")
+	if err != nil {
+		t.Fatalf("selectExecProfile: %v", err)
+	}
+	if selected.IsProfile {
+		t.Fatalf("built-in default home resolved to managed profile: %+v", selected.Profile)
+	}
+	if got, want := selected.CodexHome, normalizeExecCodexHome(app.store.paths.DefaultCodexHome); got != want {
+		t.Fatalf("selected Codex home: got %q want %q", got, want)
+	}
+}
+
 func TestWriteSelectedProfileMetadataNoPathIsNoOp(t *testing.T) {
 	if err := writeSelectedProfileMetadata(Paths{MultisubsHome: t.TempDir()}, "", execSelectionMetadata{Profile: "alpha"}); err != nil {
 		t.Fatalf("writeSelectedProfileMetadata without path failed: %v", err)

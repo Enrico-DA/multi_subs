@@ -12,11 +12,11 @@ Enforcement: Release publication is allowed only from `Enrico-DA/multi_subs`. A 
 
 ## Keep upstream attribution
 
-Decision: Preserve attribution and license references to `olliecrow/multicodex`.
+Decision: Preserve the Apache 2.0 license terms and attribution to `olliecrow/multicodex`.
 
 Why: The fork comes from Ollie's project even though its product identity and public command tree now differ.
 
-Enforcement: `LICENSE`, README attribution, repository guidance, and the upstream translation map retain the upstream name.
+Enforcement: `LICENSE` preserves the Apache 2.0 terms. README attribution, `AGENTS.md` repository guidance, and `docs/upstream-sync.md` preserve the upstream name.
 
 ## Use symmetric provider namespaces
 

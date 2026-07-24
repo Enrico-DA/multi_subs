@@ -550,6 +550,15 @@ func TestLoadMonitorAccountsPrefersMultisubsProfiles(t *testing.T) {
 	}
 }
 
+func TestMonitorProfileNameRejectsBuiltInDefaultCodexAccountLabel(t *testing.T) {
+	if monitorProfileNameValid("default") {
+		t.Fatal("expected the built-in default Codex account label to be rejected as a managed profile")
+	}
+	if !monitorProfileNameValid("work") {
+		t.Fatal("expected an ordinary managed profile name to stay valid")
+	}
+}
+
 func TestLoadMonitorAccountsRejectsUnsupportedMultisubsVersion(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

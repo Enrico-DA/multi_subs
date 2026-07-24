@@ -90,6 +90,8 @@ The Codex monitor also accepts the nested topics `tui`, `doctor`, `completion`, 
 
 Bare Codex routes were removed. For example, `multisubs status` exits with code 2 and points to `multisubs codex status`.
 
+The profile name `default` is reserved for each provider's built-in default account and cannot be used for a managed profile.
+
 ## State and environment
 
 The product state root is `~/multisubs`. Set `MULTISUBS_HOME` to use another location. Set `MULTISUBS_DEFAULT_CODEX_HOME` only when the default Codex home is not `~/.codex`.

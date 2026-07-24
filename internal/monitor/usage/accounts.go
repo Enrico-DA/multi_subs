@@ -18,6 +18,7 @@ const (
 	defaultMultisubsHomeDirName = "multisubs"
 	defaultMonitorSubdirName    = "monitor"
 	defaultAccountsFileName     = "accounts.json"
+	defaultCodexAccountLabel    = "default"
 	accountsFileEnvVar          = "MULTISUBS_MONITOR_ACCOUNTS_FILE"
 	multisubsHomeEnvVar         = "MULTISUBS_HOME"
 	defaultCodexHomeEnvVar      = "MULTISUBS_DEFAULT_CODEX_HOME"
@@ -259,7 +260,7 @@ func monitorProfileHomeSafe(profilesDir, name, home string) error {
 
 func monitorProfileNameValid(name string) bool {
 	name = strings.TrimSpace(name)
-	if name == "" || name == "." || name == ".." {
+	if name == "" || name == "." || name == ".." || name == defaultCodexAccountLabel {
 		return false
 	}
 	return !strings.ContainsAny(name, `/\`)

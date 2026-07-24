@@ -58,6 +58,8 @@ Calls the same initialization path as `multisubs init`. No extra arguments are a
 
 Creates and registers one isolated profile under `MULTISUBS_HOME/profiles/<name>/codex-home`. It applies the configured resource policy without overwriting regular user files.
 
+The name `default` is reserved for the built-in default Codex account. Add rejects it with exit code 2 before creating state. Stored Codex registries using that managed profile name are invalid.
+
 ### `multisubs codex login <name> [codex login args...]`
 
 Runs official `codex login` with the profile-local `CODEX_HOME`. User arguments keep their order. The managed file-backed-auth override is appended.
@@ -140,6 +142,8 @@ Prints Codex namespace or command help without state mutation.
 ### `multisubs claude add <name>`
 
 Creates one managed Claude profile under `MULTISUBS_HOME/providers/claude/profiles/<name>/config` and saves provider metadata in the separate Claude registry.
+
+The name `default` is reserved for the built-in default Claude account and cannot be used for a managed profile.
 
 ### `multisubs claude login <name> [claude auth login args...]`
 

@@ -15,7 +15,7 @@ import (
 const (
 	execSelectionTimeout    = 10 * time.Second
 	envSelectedProfilePath  = "MULTISUBS_SELECTED_PROFILE_PATH"
-	defaultExecAccountLabel = "default"
+	defaultExecAccountLabel = codexDefaultAccountName
 )
 
 type execAccountSelector func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error)
@@ -301,6 +301,9 @@ func availableUsedPercentPtr(v int) *int {
 
 func lookupSelectedExecProfile(cfg *Config, selected usage.SelectedAccount) (string, Profile, bool) {
 	if name := strings.TrimSpace(selected.Account.Label); name != "" {
+		if name == codexDefaultAccountName {
+			return "", Profile{}, false
+		}
 		if profile, ok := cfg.Profiles[name]; ok {
 			return name, profile, true
 		}

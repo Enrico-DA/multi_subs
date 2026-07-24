@@ -27,3 +27,15 @@ func TestValidateProfileName(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateCodexProfileNameRejectsBuiltInDefaultAccountName(t *testing.T) {
+	t.Parallel()
+
+	err := ValidateCodexProfileName("default")
+	if err == nil {
+		t.Fatal("expected the built-in default Codex account name to be rejected")
+	}
+	if got, want := err.Error(), `profile name "default" is reserved for the built-in default Codex account`; got != want {
+		t.Fatalf("unexpected error: got %q want %q", got, want)
+	}
+}

@@ -77,6 +77,69 @@ func TestStoreLoadRejectsInvalidProfileNames(t *testing.T) {
 	}
 }
 
+func TestStoreLoadRejectsReservedDefaultCodexProfileNameWithValidationExit(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		profileKey  string
+		profileName string
+	}{
+		{name: "reserved map key", profileKey: "default", profileName: "default"},
+		{name: "reserved stored name", profileKey: "work", profileName: "default"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multisubs"))
+			t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
+
+			paths, err := ResolvePaths()
+			if err != nil {
+				t.Fatalf("ResolvePaths: %v", err)
+			}
+			store := NewStore(paths)
+			if err := store.EnsureBaseDirs(); err != nil {
+				t.Fatalf("EnsureBaseDirs: %v", err)
+			}
+			raw := `{"version":1,"profiles":{"` + test.profileKey + `":{"name":"` + test.profileName + `","codex_home":"` + filepath.Join(paths.ProfilesDir, test.profileKey, "codex-home") + `"}}}`
+			if err := os.WriteFile(paths.ConfigPath, []byte(raw+"\n"), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			_, err = store.Load()
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+				t.Fatalf("expected stored-config validation exit code 2, got %T %v", err, err)
+			}
+			if !strings.Contains(exitErr.Message, "reserved for the built-in default Codex account") {
+				t.Fatalf("unexpected error: %s", exitErr.Message)
+			}
+		})
+	}
+}
+
+func TestStoreCreateProfileRejectsReservedDefaultCodexProfileName(t *testing.T) {
+	root := t.TempDir()
+	paths := Paths{
+		MultisubsHome:    filepath.Join(root, "multisubs"),
+		ConfigPath:       filepath.Join(root, "multisubs", "config.json"),
+		ProfilesDir:      filepath.Join(root, "multisubs", "profiles"),
+		DefaultCodexHome: filepath.Join(root, "codex-default"),
+	}
+	store := NewStore(paths)
+
+	_, _, err := store.CreateProfile("default", nil)
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected create validation exit code 2, got %T %v", err, err)
+	}
+	if !strings.Contains(exitErr.Message, "reserved for the built-in default Codex account") {
+		t.Fatalf("unexpected error: %s", exitErr.Message)
+	}
+	if _, statErr := os.Stat(paths.MultisubsHome); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("reserved name validation created state: %v", statErr)
+	}
+}
+
 func TestStoreLoadRejectsMismatchedStoredProfileName(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multisubs"))

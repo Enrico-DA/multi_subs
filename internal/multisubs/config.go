@@ -119,10 +119,19 @@ func (s *Store) Load() (*Config, error) {
 		cfg.Profiles = map[string]Profile{}
 	}
 	for name := range cfg.Profiles {
-		if err := ValidateProfileName(name); err != nil {
-			return nil, fmt.Errorf("invalid stored profile name %q: %w", name, err)
+		if err := ValidateCodexProfileName(name); err != nil {
+			return nil, &ExitError{
+				Code:    2,
+				Message: fmt.Sprintf("invalid stored Codex profile name %q: %v", name, err),
+			}
 		}
 		profile := cfg.Profiles[name]
+		if err := ValidateCodexProfileName(profile.Name); err != nil {
+			return nil, &ExitError{
+				Code:    2,
+				Message: fmt.Sprintf("invalid stored Codex profile name %q: %v", profile.Name, err),
+			}
+		}
 		if profile.Name != name {
 			return nil, fmt.Errorf("stored profile %q has mismatched name %q", name, profile.Name)
 		}
@@ -173,8 +182,8 @@ func (s *Store) Save(cfg *Config) error {
 }
 
 func (s *Store) CreateProfile(name string, resources *ProfileResources) (Profile, []ResourceChange, error) {
-	if err := ValidateProfileName(name); err != nil {
-		return Profile{}, nil, err
+	if err := ValidateCodexProfileName(name); err != nil {
+		return Profile{}, nil, &ExitError{Code: 2, Message: err.Error()}
 	}
 	resolved, err := s.ResolveProfileResources(resources)
 	if err != nil {
@@ -231,7 +240,7 @@ func (s *Store) EnsureProfileDir(profile Profile, resources *ProfileResources) (
 }
 
 func (s *Store) ensureProfileStoragePathSafe(profile Profile) error {
-	if err := ValidateProfileName(profile.Name); err != nil {
+	if err := ValidateCodexProfileName(profile.Name); err != nil {
 		return fmt.Errorf("invalid profile name %q: %w", profile.Name, err)
 	}
 	profileDir := filepath.Join(s.paths.ProfilesDir, profile.Name)

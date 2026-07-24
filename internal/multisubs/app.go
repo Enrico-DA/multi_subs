@@ -395,7 +395,7 @@ func (a *App) cmdAdd(args []string) error {
 		return &ExitError{Code: 2, Message: "usage: multisubs codex add <name>"}
 	}
 	name := strings.TrimSpace(args[0])
-	if err := ValidateProfileName(name); err != nil {
+	if err := ValidateCodexProfileName(name); err != nil {
 		return &ExitError{Code: 2, Message: err.Error()}
 	}
 
