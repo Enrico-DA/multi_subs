@@ -372,12 +372,21 @@ func (repo *repository) checkForbiddenLegacyEnvironmentReads() {
 		}
 		ast.Inspect(file, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok || len(call.Args) != 1 || !isSelector(call.Fun, osName, "Getenv") {
+			if !ok || len(call.Args) != 1 {
+				return true
+			}
+			functionName := ""
+			switch {
+			case isSelector(call.Fun, osName, "Getenv"):
+				functionName = "Getenv"
+			case isSelector(call.Fun, osName, "LookupEnv"):
+				functionName = "LookupEnv"
+			default:
 				return true
 			}
 			value, constant := constantStringExpression(call.Args[0])
 			if constant && strings.HasPrefix(value, legacyEnvironmentPrefix+"_") {
-				repo.errors = append(repo.errors, fmt.Sprintf("%s: active os.Getenv read of the legacy environment namespace is prohibited", relativePath))
+				repo.errors = append(repo.errors, fmt.Sprintf("%s: active os.%s read of the legacy environment namespace is prohibited", relativePath, functionName))
 			}
 			return true
 		})

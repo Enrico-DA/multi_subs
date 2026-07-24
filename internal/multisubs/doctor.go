@@ -465,7 +465,11 @@ func isSensitiveTrackedPath(p string) bool {
 	}
 	if strings.Contains(clean, "/multisubs/providers/claude/") ||
 		strings.HasPrefix(clean, "multisubs/providers/claude/") ||
+		strings.Contains(clean, "/.multisubs/providers/claude/") ||
+		strings.HasPrefix(clean, ".multisubs/providers/claude/") ||
 		strings.Contains(clean, "/multi_subs/providers/claude/") ||
+		strings.Contains(clean, "/.multicodex/providers/claude/") ||
+		strings.HasPrefix(clean, ".multicodex/providers/claude/") ||
 		strings.Contains(clean, "/multicodex/providers/claude/") ||
 		strings.HasPrefix(clean, "multicodex/providers/claude/") {
 		return true

@@ -279,6 +279,14 @@ func TestProductIdentityMutations(t *testing.T) {
 		requireErrorContaining(t, fixture.errors(), "active os.Getenv read")
 	})
 
+	t.Run("active legacy environment lookup fails", func(t *testing.T) {
+		fixture := newIdentityFixture(t)
+		active := "\nfunc prohibitedLegacyLookupForMutationTest() {\n\t_, _ = os.LookupEnv(\"MULTI\" + \"CODEX_HOME\")\n}\n"
+		comment := "\n// retained expected text: os.LookupEnv(\"MULTI\" + \"CODEX_HOME\")\n"
+		fixture.appendText(t, "internal/multisubs/app.go", active+comment)
+		requireErrorContaining(t, fixture.errors(), "active os.LookupEnv read")
+	})
+
 	t.Run("every mandatory legacy occurrence fails when deleted", func(t *testing.T) {
 		categories := make(map[legacyCategory]bool)
 		for index, rule := range requiredLegacyLines {

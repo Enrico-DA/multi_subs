@@ -132,6 +132,8 @@ var requiredLegacyLines = []legacyRule{
 	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\t\"github.com/enrico-da/.{legacy}/profiles/\","),
 	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\tstrings.Contains(clean, \"/{legacy}/profiles/\") ||"),
 	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\tstrings.Contains(clean, \"/.{legacy}/profiles/\") {"),
+	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\tstrings.Contains(clean, \"/.{legacy}/providers/claude/\") ||"),
+	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\tstrings.HasPrefix(clean, \".{legacy}/providers/claude/\") ||"),
 	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\tstrings.Contains(clean, \"/{legacy}/providers/claude/\") ||"),
 	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\tstrings.HasPrefix(clean, \"{legacy}/providers/claude/\") {"),
 
@@ -147,6 +149,8 @@ var requiredLegacyLines = []legacyRule{
 	requiredLegacyLine("internal/multisubs/doctor_test.go", legacyNegativeTest, "\t\t{path: \"github.com/olliecrow/{legacy}/profiles/work/codex-home/config.toml\", sensitive: true},"),
 	requiredLegacyLine("internal/multisubs/doctor_test.go", legacyNegativeTest, "\t\t{path: \".{legacy}/config.json\", sensitive: true},"),
 	requiredLegacyLine("internal/multisubs/doctor_test.go", legacyNegativeTest, "\t\t{path: \".{legacy}/profiles/work/codex-home/config.toml\", sensitive: true},"),
+	requiredLegacyLine("internal/multisubs/doctor_test.go", legacyNegativeTest, "\t\t{path: \".{legacy}/providers/claude/config.json\", sensitive: true},"),
+	requiredLegacyLine("internal/multisubs/doctor_test.go", legacyNegativeTest, "\t\t{path: \"workspace/.{legacy}/providers/claude/config.json\", sensitive: true},"),
 	requiredLegacyLine("internal/multisubs/doctor_test.go", legacyNegativeTest, "\t\t{path: \"github.com/olliecrow/.{legacy}/config.json\", sensitive: true},"),
 	requiredLegacyLine("internal/multisubs/doctor_test.go", legacyNegativeTest, "\t\t{path: \"github.com/olliecrow/{legacy}/docs/readme.md\", sensitive: false},"),
 
