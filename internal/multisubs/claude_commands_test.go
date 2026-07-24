@@ -201,6 +201,15 @@ func TestClaudeUsageReportsAllWindowsAndMissingFable(t *testing.T) {
 	createClaudeProfiles(t, app, "work")
 	fable := 30.0
 	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			email := "work@example.com"
+			organization := "work-org"
+			if claudeConfigDirFromEnv(env) == "" {
+				email = "default@example.com"
+				organization = "default-org"
+			}
+			return fakeClaudeAuthJSONWithOrg(true, email, organization), nil, nil
+		}
 		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
 			t.Fatalf("usage args: %#v", args)
 		}
@@ -235,6 +244,9 @@ func TestClaudeUsageHidesMalformedProviderResultText(t *testing.T) {
 	const marker = "synthetic-provider-result-marker"
 	app, runner, _ := newClaudeTestApp(t)
 	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
+		}
 		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
 			t.Fatalf("unexpected usage args: %#v", args)
 		}
@@ -351,7 +363,7 @@ func TestClaudeReadOnlyCommandsAndNamespaceHelpDoNotCreateState(t *testing.T) {
 			runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
 				switch {
 				case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
-					return fakeClaudeAuthJSON(false, ""), nil, nil
+					return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
 				case reflect.DeepEqual(args, claudeUsageProbeArgs()):
 					return fakeClaudeUsageEnvelope(1, 2, nil), nil, nil
 				case reflect.DeepEqual(args, []string{"--version"}):

@@ -8,7 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -129,6 +132,294 @@ func TestUsageDisplayNamesAreCollisionFreeAndDeterministic(t *testing.T) {
 	}
 }
 
+func TestCollapseCodexUsageCollectionsMergesDefaultWithManagedSubscription(t *testing.T) {
+	alpha := codexUsageCollectionFixture(
+		"alpha",
+		codexRoutingTargetManaged,
+		"alpha-account",
+		"alpha@example.com",
+		25,
+	)
+	egcom := codexUsageCollectionFixture(
+		"egcom",
+		codexRoutingTargetManaged,
+		"shared-account",
+		"owner@example.com",
+		70,
+	)
+	defaultAccount := codexUsageCollectionFixture(
+		defaultExecAccountLabel,
+		codexRoutingTargetDefault,
+		"",
+		" OWNER@example.com ",
+		10,
+	)
+
+	accounts := collapseCodexUsageCollections([]codexUsageCollection{
+		alpha,
+		egcom,
+		defaultAccount,
+	})
+	if len(accounts) != 2 {
+		t.Fatalf("logical account count: got %d want 2", len(accounts))
+	}
+	if accounts[0].Name != "alpha" || accounts[0].Identity != "alpha@example.com" {
+		t.Fatalf("independent account: %+v", accounts[0])
+	}
+	duplicate := accounts[1]
+	if duplicate.Name != "egcom (also default)" ||
+		duplicate.Identity != "owner@example.com" ||
+		duplicate.Failure != "" {
+		t.Fatalf("default duplicate row: %+v", duplicate)
+	}
+	if duplicate.Windows[1].UsedPercent == nil || *duplicate.Windows[1].UsedPercent != 70 {
+		t.Fatalf("quota snapshots were averaged or reordered: %+v", duplicate.Windows)
+	}
+
+	report := usageReport{Providers: []usageProviderReport{{Name: "Codex", Accounts: accounts}}}
+	available, total := usageReportAvailability(report)
+	if available != 2 || total != 2 {
+		t.Fatalf("logical availability: got %d of %d want 2 of 2", available, total)
+	}
+}
+
+func TestCollapseCodexUsageCollectionsUsesStableSortedAliases(t *testing.T) {
+	collected := []codexUsageCollection{
+		codexUsageCollectionFixture("zeta", codexRoutingTargetManaged, "shared", "person@example.com", 40),
+		codexUsageCollectionFixture("alpha", codexRoutingTargetManaged, "shared", "person@example.com", 90),
+		codexUsageCollectionFixture(defaultExecAccountLabel, codexRoutingTargetDefault, "shared", "person@example.com", 10),
+	}
+	accounts := collapseCodexUsageCollections(collected)
+	if len(accounts) != 1 {
+		t.Fatalf("logical account count: got %d want 1", len(accounts))
+	}
+	if got, want := accounts[0].Name, "alpha (also zeta) (also default)"; got != want {
+		t.Fatalf("stable aliases: got %q want %q", got, want)
+	}
+	if accounts[0].Windows[1].UsedPercent == nil || *accounts[0].Windows[1].UsedPercent != 40 {
+		t.Fatalf("representative changed with alias sorting: %+v", accounts[0].Windows)
+	}
+}
+
+func TestCollapseCodexUsageCollectionsKeepsDuplicateFailurePartial(t *testing.T) {
+	success := codexUsageCollectionFixture("alpha", codexRoutingTargetManaged, "shared", "person@example.com", 40)
+	partial := codexUsageCollectionFixture("beta", codexRoutingTargetManaged, "shared", "person@example.com", 90)
+	partial.Account.Failure = "weekly usage unavailable"
+
+	accounts := collapseCodexUsageCollections([]codexUsageCollection{success, partial})
+	if len(accounts) != 1 ||
+		accounts[0].Windows[1].UsedPercent == nil ||
+		*accounts[0].Windows[1].UsedPercent != 40 ||
+		accounts[0].Failure != "weekly usage unavailable" {
+		t.Fatalf("duplicate failure did not stay partial with successful snapshot: %+v", accounts)
+	}
+}
+
+func TestCodexUsageSuccessfulQuotaWithoutIdentityIsPartial(t *testing.T) {
+	collected := codexUsageCollectionFixture(
+		"work",
+		codexRoutingTargetManaged,
+		"",
+		"malformed identity",
+		20,
+	)
+	accounts := collapseCodexUsageCollections([]codexUsageCollection{collected})
+	if len(accounts) != 1 ||
+		accounts[0].Identity != "" ||
+		accounts[0].Failure != "identity unavailable" ||
+		len(accounts[0].Windows) == 0 {
+		t.Fatalf("missing identity did not retain partial quota: %+v", accounts)
+	}
+	report := usageReport{Providers: []usageProviderReport{{Name: "Codex", Accounts: accounts}}}
+	if !usageReportHasFailures(report) {
+		t.Fatal("missing identity must preserve strict partial failure")
+	}
+}
+
+func TestCodexUsageWeeklyFailureRecoversIdentityAndAvoidsDuplicateCount(t *testing.T) {
+	codexHome := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(codexHome, "auth.json"),
+		[]byte(`{"email":" Person@Example.com "}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write synthetic auth identity: %v", err)
+	}
+	partialSummary := &monitorusage.Summary{
+		SessionWindow: monitorusage.WindowSummary{UsedPercent: 10},
+		WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: -1},
+	}
+	source := &fakeCodexUsageSource{
+		summary: partialSummary,
+		err:     monitorusage.ErrWeeklyUsageUnavailable,
+	}
+	app := &App{codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
+		return source
+	}}
+	target := codexUsageTarget{
+		codexRoutingTarget: codexRoutingTarget{
+			Kind: codexRoutingTargetDefault,
+			Account: monitorusage.MonitorAccount{
+				Label:     defaultExecAccountLabel,
+				CodexHome: codexHome,
+			},
+		},
+		DisplayName: defaultExecAccountLabel,
+	}
+
+	partial := app.collectCodexUsageCollection(target)
+	if partial.Summary == nil || partial.Summary.AccountEmail != "person@example.com" {
+		t.Fatalf("weekly failure did not recover normalized identity: %+v", partial.Summary)
+	}
+	if partial.Account.Failure != "weekly usage unavailable" ||
+		len(partial.Account.Windows) == 0 {
+		t.Fatalf("weekly failure lost partial quota: %+v", partial.Account)
+	}
+
+	success := codexUsageCollectionFixture(
+		"work",
+		codexRoutingTargetManaged,
+		"shared-account",
+		"person@example.com",
+		40,
+	)
+	accounts := collapseCodexUsageCollections([]codexUsageCollection{success, partial})
+	if len(accounts) != 1 ||
+		accounts[0].Name != "work (also default)" ||
+		accounts[0].Failure != "weekly usage unavailable" {
+		t.Fatalf("recovered failed duplicate inflated logical count: %+v", accounts)
+	}
+	available, total := usageReportAvailability(usageReport{
+		Providers: []usageProviderReport{{Name: "Codex", Accounts: accounts}},
+	})
+	if available != 0 || total != 1 {
+		t.Fatalf("recovered failed duplicate availability: got %d of %d want 0 of 1", available, total)
+	}
+}
+
+func TestCodexUsageSessionOnlySuccessRecoversIdentity(t *testing.T) {
+	codexHome := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(codexHome, "auth.json"),
+		[]byte(`{"email":" Person@Example.com "}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write synthetic auth identity: %v", err)
+	}
+	app := &App{codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
+		return &fakeCodexUsageSource{summary: &monitorusage.Summary{
+			SessionWindow: monitorusage.WindowSummary{UsedPercent: 10},
+			WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: -1},
+		}}
+	}}
+	target := codexUsageTarget{
+		codexRoutingTarget: codexRoutingTarget{
+			Kind: codexRoutingTargetDefault,
+			Account: monitorusage.MonitorAccount{
+				Label:     defaultExecAccountLabel,
+				CodexHome: codexHome,
+			},
+		},
+		DisplayName: defaultExecAccountLabel,
+	}
+
+	collected := app.collectCodexUsageCollection(target)
+	if collected.Summary == nil ||
+		collected.Summary.AccountEmail != "person@example.com" {
+		t.Fatalf("session-only success did not recover identity: %+v", collected.Summary)
+	}
+	if collected.Account.Failure != "weekly usage unavailable" {
+		t.Fatalf("session-only failure category: %q", collected.Account.Failure)
+	}
+}
+
+func TestRecoverCodexUsageIdentityFillsEmailBesideStrongAccountID(t *testing.T) {
+	codexHome := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(codexHome, "auth.json"),
+		[]byte(`{"email":"person@example.com"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write synthetic auth identity: %v", err)
+	}
+	collected := codexUsageCollection{
+		Target: codexUsageTarget{codexRoutingTarget: codexRoutingTarget{
+			Account: monitorusage.MonitorAccount{CodexHome: codexHome},
+		}},
+		Summary: &monitorusage.Summary{AccountID: "strong-account-id"},
+	}
+
+	recoverCodexUsageCollectionIdentity(&collected)
+	if collected.Summary.AccountEmail != "person@example.com" {
+		t.Fatalf("strong account ID blocked safe display-email recovery: %+v", collected.Summary)
+	}
+}
+
+func TestCodexUsageAmbiguousEmailFallbackKeepsConservativePartialCount(t *testing.T) {
+	first := codexUsageCollectionFixture(
+		"alpha",
+		codexRoutingTargetManaged,
+		"account-one",
+		"shared@example.com",
+		20,
+	)
+	second := codexUsageCollectionFixture(
+		"beta",
+		codexRoutingTargetManaged,
+		"account-two",
+		"shared@example.com",
+		30,
+	)
+	ambiguous := codexUsageCollectionFixture(
+		"fallback",
+		codexRoutingTargetManaged,
+		"",
+		"shared@example.com",
+		40,
+	)
+
+	accounts := collapseCodexUsageCollections([]codexUsageCollection{first, second, ambiguous})
+	if len(accounts) != 3 {
+		t.Fatalf("ambiguous email fallback was unsafely collapsed: %+v", accounts)
+	}
+	if accounts[2].Name != "fallback" ||
+		accounts[2].Identity != "" ||
+		accounts[2].Failure != "identity unavailable" ||
+		len(accounts[2].Windows) == 0 {
+		t.Fatalf("ambiguous fallback did not retain a separate partial quota row: %+v", accounts[2])
+	}
+	available, total := usageReportAvailability(usageReport{
+		Providers: []usageProviderReport{{Name: "Codex", Accounts: accounts}},
+	})
+	if available != 2 || total != 3 {
+		t.Fatalf("ambiguous fallback availability: got %d of %d want conservative 2 of 3", available, total)
+	}
+}
+
+func codexUsageCollectionFixture(name string, kind codexRoutingTargetKind, accountID, email string, weekly float64) codexUsageCollection {
+	summary := &monitorusage.Summary{
+		AccountID:     accountID,
+		AccountEmail:  email,
+		SessionWindow: monitorusage.WindowSummary{UsedPercent: 10},
+		WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: int(weekly)},
+	}
+	target := codexUsageTarget{
+		codexRoutingTarget: codexRoutingTarget{
+			Kind: kind,
+			Account: monitorusage.MonitorAccount{
+				Label:     name,
+				CodexHome: "/synthetic/" + name,
+			},
+		},
+		DisplayName: name,
+	}
+	return codexUsageCollection{
+		Target:  target,
+		Account: adaptCodexUsageAccount(name, summary),
+		Summary: summary,
+	}
+}
+
 func TestTamperedManagedCodexHomeCannotSuppressDefaultUsageTarget(t *testing.T) {
 	root := t.TempDir()
 	app := &App{store: NewStore(Paths{
@@ -153,6 +444,7 @@ func TestTamperedManagedCodexHomeCannotSuppressDefaultUsageTarget(t *testing.T) 
 			t.Fatalf("unsafe managed target reached usage source: %+v", account)
 		}
 		return &fakeCodexUsageSource{summary: &monitorusage.Summary{
+			AccountEmail: "default@example.com",
 			WeeklyWindow: monitorusage.WindowSummary{UsedPercent: 20},
 		}}
 	}
@@ -206,7 +498,7 @@ func TestAdaptCodexUsageShowsSessionWeeklyAndSortedModelLimits(t *testing.T) {
 	for _, window := range account.Windows {
 		labels = append(labels, window.Label)
 	}
-	if !reflect.DeepEqual(labels, []string{"Session (5h)", "Weekly", "Spark weekly", "Zeta weekly"}) {
+	if !reflect.DeepEqual(labels, []string{"Session (5h)", "Weekly", "Spark weekly"}) {
 		t.Fatalf("Codex report windows: got %q", labels)
 	}
 	if account.Windows[0].UsedPercent == nil || *account.Windows[0].UsedPercent != 24 {
@@ -215,27 +507,38 @@ func TestAdaptCodexUsageShowsSessionWeeklyAndSortedModelLimits(t *testing.T) {
 }
 
 func TestAdaptCodexUsageDoesNotExposeIdentityLikeLimitNames(t *testing.T) {
-	summary := &monitorusage.Summary{
-		SessionWindow: monitorusage.WindowSummary{UsedPercent: -1},
-		WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: 20},
-		RateLimitWindows: map[string]monitorusage.RateLimitWindow{
-			"codex": {
-				SessionWindow: monitorusage.WindowSummary{UsedPercent: -1},
-				WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: 20},
-			},
-			"opaque-account-id": {
-				LimitName:    "person@example.com",
-				WeeklyWindow: monitorusage.WindowSummary{UsedPercent: 45},
-			},
+	unknownNames := []string{
+		"123e4567-e89b-12d3-a456-426614174000",
+		"account-org-opaque-id",
+		"sk-" + strings.Repeat("x", 32),
+		"/synthetic/private/provider/path",
+	}
+	rateLimits := map[string]monitorusage.RateLimitWindow{
+		"codex": {
+			SessionWindow: monitorusage.WindowSummary{UsedPercent: -1},
+			WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: 20},
 		},
+	}
+	for index, limitName := range unknownNames {
+		rateLimits["unknown-"+strconv.Itoa(index)] = monitorusage.RateLimitWindow{
+			LimitName:    limitName,
+			WeeklyWindow: monitorusage.WindowSummary{UsedPercent: 45},
+		}
+	}
+	summary := &monitorusage.Summary{
+		SessionWindow:    monitorusage.WindowSummary{UsedPercent: -1},
+		WeeklyWindow:     monitorusage.WindowSummary{UsedPercent: 20},
+		RateLimitWindows: rateLimits,
 	}
 	account := adaptCodexUsageAccount("work", summary)
 	rendered := ""
 	for _, window := range account.Windows {
 		rendered += window.Label
 	}
-	if strings.Contains(rendered, "person@example.com") || strings.Contains(rendered, "opaque-account-id") {
-		t.Fatalf("Codex adapter exposed an identity-like limit label: %q", rendered)
+	for _, forbidden := range unknownNames {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("Codex adapter exposed provider limit name %q: %q", forbidden, rendered)
+		}
 	}
 }
 
@@ -251,7 +554,8 @@ func TestPrintUsageReportCombinedGolden(t *testing.T) {
 			{
 				Name: "Codex",
 				Accounts: []usageAccountReport{{
-					Name: "egcom",
+					Name:     "egcom",
+					Identity: "personal@example.com",
 					Windows: []usageWindowReport{
 						{Label: "Session (5h)", UsedPercent: testFloat64Ptr(24), ResetAt: &sessionReset},
 						{Label: "Weekly", UsedPercent: testFloat64Ptr(61), ResetAt: &weeklyReset},
@@ -262,7 +566,8 @@ func TestPrintUsageReportCombinedGolden(t *testing.T) {
 			{
 				Name: "Claude",
 				Accounts: []usageAccountReport{{
-					Name: "gmail",
+					Name:     "gmail",
+					Identity: "owner@example.com",
 					Windows: []usageWindowReport{
 						{Label: "Session (~5h)", UsedPercent: testFloat64Ptr(18), ResetText: "Resets in 1 hour"},
 						{Label: "Weekly all models", UsedPercent: testFloat64Ptr(37), ResetText: "Resets Monday at 9:00 AM"},
@@ -280,13 +585,13 @@ func TestPrintUsageReportCombinedGolden(t *testing.T) {
 		"Updated: Thu 23 Jul 2026 22:15 CEST\n" +
 		"\n" +
 		"Codex\n" +
-		"  egcom\n" +
+		"  egcom · personal@example.com\n" +
 		"    Session (5h)  24% used · resets in 2h 14m (Fri 24 Jul 00:29 CEST)\n" +
 		"    Weekly        61% used · resets in 3d 10h (Mon 27 Jul 09:00 CEST)\n" +
 		"    Spark weekly  not reported\n" +
 		"\n" +
 		"Claude\n" +
-		"  gmail\n" +
+		"  gmail · owner@example.com\n" +
 		"    Session (~5h)      18% used · Resets in 1 hour\n" +
 		"    Weekly all models  37% used · Resets Monday at 9:00 AM\n" +
 		"    Fable weekly       52% used · Resets Tuesday at 10:00 AM\n" +
@@ -308,7 +613,8 @@ func TestPrintUsageReportProviderOnlyAndResetStates(t *testing.T) {
 			Name: "Codex",
 			Accounts: []usageAccountReport{
 				{
-					Name: "alpha",
+					Name:     "alpha",
+					Identity: "alpha@example.com",
 					Windows: []usageWindowReport{
 						{Label: "Session", UsedPercent: testFloat64Ptr(10)},
 						{Label: "Weekly", UsedPercent: testFloat64Ptr(20), ResetAt: &expired},
@@ -325,11 +631,11 @@ func TestPrintUsageReportProviderOnlyAndResetStates(t *testing.T) {
 		"Updated: Thu 23 Jul 2026 20:15 UTC\n" +
 		"\n" +
 		"Codex\n" +
-		"  alpha\n" +
+		"  alpha · alpha@example.com\n" +
 		"    Session  10% used · reset unknown\n" +
 		"    Weekly   20% used · reset due\n" +
 		"\n" +
-		"  default\n" +
+		"  default · identity unavailable\n" +
 		"    unavailable · not logged in\n" +
 		"\n" +
 		"Result: partial · 1 of 2 accounts available\n"
@@ -390,20 +696,22 @@ func TestPrintUsageReportShowsRetainedSessionAsPartialWhenWeeklyIsUnavailable(t 
 }
 
 func TestCollectConcurrentPreservesTargetOrder(t *testing.T) {
-	release := make(chan struct{})
+	release := []chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 	started := make(chan int, 3)
 	resultsDone := make(chan []usageAccountReport, 1)
 	go func() {
 		resultsDone <- collectConcurrent([]int{0, 1, 2}, func(target int) usageAccountReport {
 			started <- target
-			<-release
+			<-release[target]
 			return usageAccountReport{Name: string(rune('a' + target))}
 		})
 	}()
 	for range []int{0, 1, 2} {
 		<-started
 	}
-	close(release)
+	close(release[2])
+	close(release[0])
+	close(release[1])
 	results := <-resultsDone
 	var names []string
 	for _, result := range results {
@@ -417,8 +725,22 @@ func TestCollectConcurrentPreservesTargetOrder(t *testing.T) {
 func TestClaudeUsageCollectorHandlesOptionalFableAndSafeFailures(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "alpha", "beta")
-	runner.capture = func(ctx context.Context, _ []string, env []string) ([]byte, []byte, error) {
-		switch claudeConfigDirFromEnv(env) {
+	runner.capture = func(ctx context.Context, args []string, env []string) ([]byte, []byte, error) {
+		configDir := claudeConfigDirFromEnv(env)
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			switch configDir {
+			case profiles["alpha"].ConfigDir:
+				return fakeClaudeAuthJSONWithOrg(true, "alpha@example.com", "alpha-org"), nil, nil
+			case profiles["beta"].ConfigDir:
+				return fakeClaudeAuthJSONWithOrg(true, "beta@example.com", "beta-org"), nil, nil
+			default:
+				return nil, nil, &exec.Error{Name: "claude", Err: exec.ErrNotFound}
+			}
+		}
+		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
+			t.Fatalf("unexpected Claude usage args: %#v", args)
+		}
+		switch configDir {
 		case profiles["alpha"].ConfigDir:
 			return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
 		case profiles["beta"].ConfigDir:
@@ -456,7 +778,20 @@ func TestClaudeUsageCollectorCategorizesTimeoutAndLoggedOut(t *testing.T) {
 	oldTimeout := usageAccountTimeout
 	usageAccountTimeout = time.Millisecond
 	t.Cleanup(func() { usageAccountTimeout = oldTimeout })
-	runner.capture = func(ctx context.Context, _ []string, env []string) ([]byte, []byte, error) {
+	runner.capture = func(ctx context.Context, args []string, env []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			configDir := claudeConfigDirFromEnv(env)
+			email := "default@example.com"
+			organization := "default-org"
+			if configDir == profiles["logged-out"].ConfigDir {
+				email = "logged-out@example.com"
+				organization = "logged-out-org"
+			}
+			return fakeClaudeAuthJSONWithOrg(true, email, organization), nil, nil
+		}
+		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
+			t.Fatalf("unexpected Claude usage args: %#v", args)
+		}
 		if claudeConfigDirFromEnv(env) == profiles["logged-out"].ConfigDir {
 			return []byte(`{"is_error":true,"result":"Please log in to Claude."}`), nil, nil
 		}
@@ -478,7 +813,10 @@ func TestClaudeUsageCollectorIsolatesManagedProfilePathFailure(t *testing.T) {
 	if err := os.Remove(profile.ConfigDir); err != nil {
 		t.Fatalf("remove synthetic profile directory: %v", err)
 	}
-	runner.capture = func(context.Context, []string, []string) ([]byte, []byte, error) {
+	runner.capture = func(_ context.Context, args []string, _ []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
+		}
 		return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
 	}
 	report := app.collectClaudeUsage()
@@ -490,22 +828,494 @@ func TestClaudeUsageCollectorIsolatesManagedProfilePathFailure(t *testing.T) {
 	}
 }
 
-func TestUsageCommandsRejectEveryArgumentWithExitTwo(t *testing.T) {
-	app := &App{}
-	for _, test := range []struct {
-		provider string
-		args     []string
-	}{
-		{provider: usageProviderAll, args: []string{"--json"}},
-		{provider: usageProviderCodex, args: []string{"--json"}},
-		{provider: usageProviderCodex, args: []string{"--help"}},
-		{provider: usageProviderClaude, args: []string{"unexpected"}},
-	} {
-		err := app.cmdUsage(test.args, test.provider)
-		var exitErr *ExitError
-		if !errors.As(err, &exitErr) || exitErr.Code != 2 {
-			t.Fatalf("cmdUsage(%q, %q) = %T %v, want exit 2", test.args, test.provider, err, err)
+func TestClaudeUsageCollectsIdentityWithBoundedProbesAndCollapsesOrganization(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profile := createClaudeProfiles(t, app, "egcom")["egcom"]
+	var authCalls atomic.Int32
+	var usageCalls atomic.Int32
+	var deadlineLock sync.Mutex
+	deadlines := make(map[string]time.Time)
+	probeCounts := make(map[string]int)
+	deadlineMismatch := false
+	runner.capture = func(ctx context.Context, args, env []string) ([]byte, []byte, error) {
+		deadline, bounded := ctx.Deadline()
+		if !bounded {
+			t.Fatalf("unbounded Claude probe: %#v", args)
 		}
+		configDir := claudeConfigDirFromEnv(env)
+		deadlineLock.Lock()
+		if first, exists := deadlines[configDir]; exists {
+			if !first.Equal(deadline) {
+				deadlineMismatch = true
+			}
+		} else {
+			deadlines[configDir] = deadline
+		}
+		probeCounts[configDir]++
+		deadlineLock.Unlock()
+		switch {
+		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
+			authCalls.Add(1)
+			email := "owner@example.com"
+			if configDir == profile.ConfigDir {
+				email = "OWNER@EXAMPLE.COM"
+			}
+			return fakeClaudeAuthJSONWithOrg(true, email, "opaque-shared-org"), nil, nil
+		case reflect.DeepEqual(args, claudeUsageProbeArgs()):
+			usageCalls.Add(1)
+			if configDir == profile.ConfigDir {
+				return fakeClaudeUsageEnvelope(30, 70, nil), nil, nil
+			}
+			return fakeClaudeUsageEnvelope(5, 10, nil), nil, nil
+		default:
+			return nil, nil, errors.New("unexpected probe")
+		}
+	}
+
+	report := app.collectClaudeUsage()
+	if authCalls.Load() != 4 || usageCalls.Load() != 2 {
+		t.Fatalf("probe counts: auth=%d usage=%d want auth=4 usage=2", authCalls.Load(), usageCalls.Load())
+	}
+	deadlineLock.Lock()
+	if deadlineMismatch || len(probeCounts) != 2 {
+		t.Fatalf("Claude auth/usage/auth did not share one target deadline: deadlines=%v counts=%v", deadlines, probeCounts)
+	}
+	for configDir, count := range probeCounts {
+		if count != 3 {
+			t.Fatalf("probe sequence for %q: got %d calls want 3", configDir, count)
+		}
+	}
+	deadlineLock.Unlock()
+	if len(report.Accounts) != 1 {
+		t.Fatalf("organization account count: got %d want 1", len(report.Accounts))
+	}
+	account := report.Accounts[0]
+	if account.Name != "egcom (also default)" ||
+		account.Identity != "owner@example.com" ||
+		account.Failure != "" {
+		t.Fatalf("organization row: %+v", account)
+	}
+	if account.Windows[1].UsedPercent == nil || *account.Windows[1].UsedPercent != 70 {
+		t.Fatalf("expected deterministic managed quota snapshot, got %+v", account.Windows)
+	}
+}
+
+func TestValidateClaudeUsageIdentityHasNoRoutingRestrictions(t *testing.T) {
+	status := claudeAuthStatus{
+		LoggedIn:     true,
+		Identity:     " PERSON@Example.com ",
+		AuthMethod:   "api-key",
+		APIProvider:  "thirdParty",
+		Subscription: "pro",
+		OrgID:        " organization-one ",
+	}
+	identity, err := validateClaudeUsageIdentity(status)
+	if err != nil {
+		t.Fatalf("usage identity rejected valid official fields: %v", err)
+	}
+	if identity.Organization != "organization-one" || identity.AccountEmail != "person@example.com" {
+		t.Fatalf("usage identity: %+v", identity)
+	}
+	if validateClaudeRoutingAuth(status) == nil {
+		t.Fatal("routing validation changed to accept a non-Max third-party method")
+	}
+}
+
+func TestValidateClaudeUsageIdentityRequiresOfficialStatusOrganizationAndEmail(t *testing.T) {
+	valid := claudeAuthStatus{
+		LoggedIn: true,
+		Identity: "person@example.com",
+		OrgID:    "organization-one",
+	}
+	for _, test := range []struct {
+		name   string
+		status claudeAuthStatus
+	}{
+		{name: "logged out", status: func() claudeAuthStatus {
+			status := valid
+			status.LoggedIn = false
+			return status
+		}()},
+		{name: "missing organization", status: func() claudeAuthStatus {
+			status := valid
+			status.OrgID = ""
+			return status
+		}()},
+		{name: "malformed email", status: func() claudeAuthStatus {
+			status := valid
+			status.Identity = "not-an-email"
+			return status
+		}()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if identity, err := validateClaudeUsageIdentity(test.status); err == nil {
+				t.Fatalf("invalid usage identity accepted: %+v", identity)
+			}
+		})
+	}
+}
+
+func TestClaudeUsageKeepsDifferentOrganizationsWithSameEmailSeparate(t *testing.T) {
+	collected := []claudeUsageCollection{
+		{
+			Target:       claudeTarget{Name: "alpha", DisplayName: "alpha", Kind: "managed"},
+			Account:      claudeUsageAccountFixture("alpha", 20),
+			Organization: "organization-one",
+			AccountEmail: "person@example.com",
+		},
+		{
+			Target:       claudeTarget{Name: "beta", DisplayName: "beta", Kind: "managed"},
+			Account:      claudeUsageAccountFixture("beta", 30),
+			Organization: "organization-two",
+			AccountEmail: "person@example.com",
+		},
+	}
+	accounts := collapseClaudeUsageCollections(collected)
+	if len(accounts) != 2 ||
+		accounts[0].Name != "alpha" ||
+		accounts[1].Name != "beta" {
+		t.Fatalf("different organizations merged by email: %+v", accounts)
+	}
+}
+
+func TestClaudeUsageOrganizationCollapseKeepsProbeFailurePartial(t *testing.T) {
+	success := claudeUsageCollection{
+		Target:       claudeTarget{Name: "alpha", DisplayName: "alpha", Kind: "managed"},
+		Account:      claudeUsageAccountFixture("alpha", 20),
+		Organization: "shared-organization",
+		AccountEmail: "person@example.com",
+	}
+	failed := claudeUsageCollection{
+		Target:       claudeTarget{Name: "beta", DisplayName: "beta", Kind: "managed"},
+		Account:      usageAccountReport{Name: "beta", Failure: "usage probe failed"},
+		Organization: "shared-organization",
+		AccountEmail: "person@example.com",
+	}
+	accounts := collapseClaudeUsageCollections([]claudeUsageCollection{success, failed})
+	if len(accounts) != 1 ||
+		len(accounts[0].Windows) != 3 ||
+		accounts[0].Failure != "usage probe failed" {
+		t.Fatalf("duplicate Claude failure did not stay partial: %+v", accounts)
+	}
+}
+
+func TestClaudeUsageIdentityFailureRetainsQuotaAndStrictPartial(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			return nil, nil, errors.New("synthetic auth failure with opaque-org")
+		}
+		return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
+	}
+
+	report := app.collectClaudeUsage()
+	if len(report.Accounts) != 1 ||
+		report.Accounts[0].Failure != "identity unavailable" ||
+		len(report.Accounts[0].Windows) != 3 {
+		t.Fatalf("identity failure discarded valid Claude quota: %+v", report.Accounts)
+	}
+	if !usageReportHasFailures(usageReport{Providers: []usageProviderReport{report}}) {
+		t.Fatal("Claude identity failure must produce strict exit 1")
+	}
+}
+
+func TestClaudeUsageSuppressesMalformedEmail(t *testing.T) {
+	collected := []claudeUsageCollection{{
+		Target:       claudeTarget{Name: "work", DisplayName: "work", Kind: "managed"},
+		Account:      claudeUsageAccountFixture("work", 20),
+		Organization: "opaque-organization",
+		AccountEmail: monitorusage.NormalizeAccountEmail("not-an-email"),
+	}}
+	accounts := collapseClaudeUsageCollections(collected)
+	if len(accounts) != 1 ||
+		accounts[0].Identity != "" ||
+		accounts[0].Failure != "identity unavailable" {
+		t.Fatalf("malformed Claude email was not suppressed: %+v", accounts)
+	}
+}
+
+func claudeUsageAccountFixture(name string, weekly float64) usageAccountReport {
+	return usageAccountReport{
+		Name: name,
+		Windows: []usageWindowReport{
+			{Label: "Session (~5h)", UsedPercent: testFloat64Ptr(10)},
+			{Label: "Weekly all models", UsedPercent: testFloat64Ptr(weekly)},
+			{Label: "Fable weekly"},
+		},
+	}
+}
+
+func TestUsageCommandsRejectEveryFlagBeforeStateOrProbes(t *testing.T) {
+	root := t.TempDir()
+	multisubsHome := filepath.Join(root, "missing-multisubs")
+	var codexProbes atomic.Int32
+	var claudeProbes atomic.Int32
+	runner := &fakeClaudeRunner{}
+	runner.capture = func(context.Context, []string, []string) ([]byte, []byte, error) {
+		claudeProbes.Add(1)
+		return nil, nil, errors.New("unexpected Claude probe")
+	}
+	app := &App{
+		store: NewStore(Paths{
+			MultisubsHome:    multisubsHome,
+			ConfigPath:       filepath.Join(multisubsHome, "config.json"),
+			ProfilesDir:      filepath.Join(multisubsHome, "profiles"),
+			DefaultCodexHome: filepath.Join(root, "missing-default"),
+		}),
+		claudeRunner: runner,
+		codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
+			codexProbes.Add(1)
+			return nil
+		},
+	}
+	for _, test := range []struct {
+		name    string
+		args    []string
+		message string
+	}{
+		{name: "combined -h", args: []string{"usage", "-h"}, message: "usage: multisubs usage"},
+		{name: "combined --help", args: []string{"usage", "--help"}, message: "usage: multisubs usage"},
+		{name: "combined --json", args: []string{"usage", "--json"}, message: "usage: multisubs usage"},
+		{name: "Codex -h", args: []string{"codex", "usage", "-h"}, message: "usage: multisubs codex usage"},
+		{name: "Codex --help", args: []string{"codex", "usage", "--help"}, message: "usage: multisubs codex usage"},
+		{name: "Codex --json", args: []string{"codex", "usage", "--json"}, message: "usage: multisubs codex usage"},
+		{name: "Claude -h", args: []string{"claude", "usage", "-h"}, message: "usage: multisubs claude usage"},
+		{name: "Claude --help", args: []string{"claude", "usage", "--help"}, message: "usage: multisubs claude usage"},
+		{name: "Claude --json", args: []string{"claude", "usage", "--json"}, message: "usage: multisubs claude usage"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := captureStdout(t, func() error { return app.Run(test.args) })
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 2 || exitErr.Message != test.message {
+				t.Fatalf("Run(%q) = %T %+v, want exit 2 message %q", test.args, err, err, test.message)
+			}
+			if output != "" {
+				t.Fatalf("rejected usage invocation printed stdout: %q", output)
+			}
+			if codexProbes.Load() != 0 || claudeProbes.Load() != 0 {
+				t.Fatalf("rejected usage invocation probed providers: codex=%d claude=%d", codexProbes.Load(), claudeProbes.Load())
+			}
+			if _, statErr := os.Lstat(multisubsHome); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("rejected usage invocation accessed product state: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestCmdCodexUsageCollapsesManagedAndDefaultWithExactOutput(t *testing.T) {
+	app := newCodexDuplicateUsageCommandApp(t, false)
+	output, err := captureStdout(t, func() error {
+		return app.cmdUsage(nil, usageProviderCodex)
+	})
+	if err != nil {
+		t.Fatalf("Codex duplicate usage: %v", err)
+	}
+	want := "" +
+		"multisubs codex usage\n" +
+		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+		"\n" +
+		"Codex\n" +
+		"  alpha (also default) · person@example.com\n" +
+		"    Session       30% used · reset unknown\n" +
+		"    Weekly        70% used · reset unknown\n" +
+		"    Spark weekly  not reported\n" +
+		"\n" +
+		"Result: complete · 1 of 1 accounts available\n"
+	if output != want {
+		t.Fatalf("Codex duplicate output:\n--- got ---\n%s--- want ---\n%s", output, want)
+	}
+}
+
+func TestCmdCodexUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
+	app := newCodexDuplicateUsageCommandApp(t, true)
+	output, err := captureStdout(t, func() error {
+		return app.cmdUsage(nil, usageProviderCodex)
+	})
+	requireExitCode(t, err, 1)
+	want := "" +
+		"multisubs codex usage\n" +
+		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+		"\n" +
+		"Codex\n" +
+		"  alpha (also default) · person@example.com\n" +
+		"    Session       30% used · reset unknown\n" +
+		"    Weekly        70% used · reset unknown\n" +
+		"    Spark weekly  not reported\n" +
+		"    partial · usage probe failed\n" +
+		"\n" +
+		"Result: partial · 0 of 1 accounts available\n"
+	if output != want {
+		t.Fatalf("Codex failed duplicate output:\n--- got ---\n%s--- want ---\n%s", output, want)
+	}
+}
+
+func TestCmdClaudeUsageCollapsesManagedAndDefaultWithExactOutput(t *testing.T) {
+	app := newClaudeDuplicateUsageCommandApp(t, claudeUsageCommandScenario{})
+	output, err := captureStdout(t, func() error {
+		return app.cmdUsage(nil, usageProviderClaude)
+	})
+	if err != nil {
+		t.Fatalf("Claude duplicate usage: %v", err)
+	}
+	want := "" +
+		"multisubs claude usage\n" +
+		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+		"\n" +
+		"Claude\n" +
+		"  egcom (also default) · person@example.com\n" +
+		"    Session (~5h)      30% used · Resets in 2 hours\n" +
+		"    Weekly all models  70% used · Resets Monday at 09:00\n" +
+		"    Fable weekly       not reported\n" +
+		"\n" +
+		"Result: complete · 1 of 1 accounts available\n"
+	if output != want {
+		t.Fatalf("Claude duplicate output:\n--- got ---\n%s--- want ---\n%s", output, want)
+	}
+}
+
+func TestCmdClaudeUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
+	app := newClaudeDuplicateUsageCommandApp(t, claudeUsageCommandScenario{defaultUsageFails: true})
+	output, err := captureStdout(t, func() error {
+		return app.cmdUsage(nil, usageProviderClaude)
+	})
+	requireExitCode(t, err, 1)
+	want := "" +
+		"multisubs claude usage\n" +
+		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+		"\n" +
+		"Claude\n" +
+		"  egcom (also default) · person@example.com\n" +
+		"    Session (~5h)      30% used · Resets in 2 hours\n" +
+		"    Weekly all models  70% used · Resets Monday at 09:00\n" +
+		"    Fable weekly       not reported\n" +
+		"    partial · usage probe failed\n" +
+		"\n" +
+		"Result: partial · 0 of 1 accounts available\n"
+	if output != want {
+		t.Fatalf("Claude failed duplicate output:\n--- got ---\n%s--- want ---\n%s", output, want)
+	}
+}
+
+func TestCmdClaudeUsageIdentityChangeRetainsQuotaWithoutGrouping(t *testing.T) {
+	app := newClaudeDuplicateUsageCommandApp(t, claudeUsageCommandScenario{managedIdentityChanges: true})
+	output, err := captureStdout(t, func() error {
+		return app.cmdUsage(nil, usageProviderClaude)
+	})
+	requireExitCode(t, err, 1)
+	want := "" +
+		"multisubs claude usage\n" +
+		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+		"\n" +
+		"Claude\n" +
+		"  egcom · identity unavailable\n" +
+		"    Session (~5h)      30% used · Resets in 2 hours\n" +
+		"    Weekly all models  70% used · Resets Monday at 09:00\n" +
+		"    Fable weekly       not reported\n" +
+		"    partial · identity unavailable\n" +
+		"\n" +
+		"  default · person@example.com\n" +
+		"    Session (~5h)      5% used · Resets in 2 hours\n" +
+		"    Weekly all models  10% used · Resets Monday at 09:00\n" +
+		"    Fable weekly       not reported\n" +
+		"\n" +
+		"Result: partial · 1 of 2 accounts available\n"
+	if output != want {
+		t.Fatalf("Claude identity-change output:\n--- got ---\n%s--- want ---\n%s", output, want)
+	}
+}
+
+func newCodexDuplicateUsageCommandApp(t *testing.T, defaultUsageFails bool) *App {
+	t.Helper()
+	app := newTestAppForCLI(t)
+	writeDefaultFileStoreConfig(t, app)
+	createTestProfiles(t, app, "alpha")
+	cfg, err := app.store.Load()
+	if err != nil {
+		t.Fatalf("load Codex usage fixture config: %v", err)
+	}
+	if _, err := app.store.EnsureProfileDir(cfg.Profiles["alpha"], nil); err != nil {
+		t.Fatalf("prepare Codex usage fixture profile: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(app.store.paths.DefaultCodexHome, "auth.json"),
+		[]byte(`{"email":"person@example.com"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write default Codex identity fixture: %v", err)
+	}
+
+	app.codexUsageSource = func(account monitorusage.MonitorAccount) monitorusage.Source {
+		if account.Label == defaultExecAccountLabel && defaultUsageFails {
+			return &fakeCodexUsageSource{err: errors.New("synthetic usage failure")}
+		}
+		if account.Label == "alpha" {
+			return &fakeCodexUsageSource{summary: &monitorusage.Summary{
+				AccountID:     "shared-account",
+				AccountEmail:  "person@example.com",
+				SessionWindow: monitorusage.WindowSummary{UsedPercent: 30},
+				WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: 70},
+			}}
+		}
+		return &fakeCodexUsageSource{summary: &monitorusage.Summary{
+			AccountEmail:  "PERSON@EXAMPLE.COM",
+			SessionWindow: monitorusage.WindowSummary{UsedPercent: 5},
+			WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: 10},
+		}}
+	}
+	app.usageClock = func() time.Time {
+		return time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
+	}
+	app.usageLocation = time.UTC
+	return app
+}
+
+type claudeUsageCommandScenario struct {
+	defaultUsageFails      bool
+	managedIdentityChanges bool
+}
+
+func newClaudeDuplicateUsageCommandApp(t *testing.T, scenario claudeUsageCommandScenario) *App {
+	t.Helper()
+	app, runner, _ := newClaudeTestApp(t)
+	profile := createClaudeProfiles(t, app, "egcom")["egcom"]
+	var authLock sync.Mutex
+	authCalls := make(map[string]int)
+	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
+		configDir := claudeConfigDirFromEnv(env)
+		switch {
+		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
+			authLock.Lock()
+			authCalls[configDir]++
+			call := authCalls[configDir]
+			authLock.Unlock()
+			if scenario.managedIdentityChanges && configDir == profile.ConfigDir && call == 2 {
+				return fakeClaudeAuthJSONWithOrg(true, "changed@example.com", "changed-organization"), nil, nil
+			}
+			return fakeClaudeAuthJSONWithOrg(true, "PERSON@EXAMPLE.COM", "shared-organization"), nil, nil
+		case reflect.DeepEqual(args, claudeUsageProbeArgs()):
+			if configDir == "" && scenario.defaultUsageFails {
+				return nil, nil, errors.New("synthetic usage failure")
+			}
+			if configDir == profile.ConfigDir {
+				return fakeClaudeUsageEnvelope(30, 70, nil), nil, nil
+			}
+			return fakeClaudeUsageEnvelope(5, 10, nil), nil, nil
+		default:
+			return nil, nil, errors.New("unexpected synthetic Claude probe")
+		}
+	}
+	app.usageClock = func() time.Time {
+		return time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
+	}
+	app.usageLocation = time.UTC
+	return app
+}
+
+func requireExitCode(t *testing.T, err error, want int) {
+	t.Helper()
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != want {
+		t.Fatalf("exit error: got %T %v want code %d", err, err, want)
 	}
 }
 
@@ -534,6 +1344,92 @@ func TestCodexUsageCommandIsReadOnlyAndReturnsPartialExit(t *testing.T) {
 	}
 	if _, statErr := os.Lstat(multisubsHome); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("usage command created product state: %v", statErr)
+	}
+}
+
+func TestCodexUsageMissingIdentityPrintsExactPartialAndExitsOne(t *testing.T) {
+	root := t.TempDir()
+	app := &App{
+		store: NewStore(Paths{
+			MultisubsHome:    filepath.Join(root, "multisubs"),
+			ConfigPath:       filepath.Join(root, "multisubs", "config.json"),
+			ProfilesDir:      filepath.Join(root, "multisubs", "profiles"),
+			DefaultCodexHome: filepath.Join(root, "default-codex"),
+		}),
+		codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
+			return &fakeCodexUsageSource{summary: &monitorusage.Summary{
+				SessionWindow: monitorusage.WindowSummary{UsedPercent: 10},
+				WeeklyWindow:  monitorusage.WindowSummary{UsedPercent: 20},
+			}}
+		},
+		usageClock:    func() time.Time { return time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC) },
+		usageLocation: time.UTC,
+	}
+	output, err := captureStdout(t, func() error {
+		return app.cmdUsage(nil, usageProviderCodex)
+	})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("strict missing-identity exit: %T %v", err, err)
+	}
+	want := "" +
+		"multisubs codex usage\n" +
+		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+		"\n" +
+		"Codex\n" +
+		"  default · identity unavailable\n" +
+		"    Session       10% used · reset unknown\n" +
+		"    Weekly        20% used · reset unknown\n" +
+		"    Spark weekly  not reported\n" +
+		"    partial · identity unavailable\n" +
+		"\n" +
+		"Result: partial · 0 of 1 accounts available\n"
+	if output != want {
+		t.Fatalf("missing-identity output:\n--- got ---\n%s--- want ---\n%s", output, want)
+	}
+}
+
+func TestUsageOutputNeverPrintsOpaqueIDsUserIDsOrPaths(t *testing.T) {
+	now := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
+	account := codexUsageCollectionFixture(
+		"work",
+		codexRoutingTargetManaged,
+		"opaque-account-id",
+		"person@example.com",
+		20,
+	)
+	account.Summary.UserID = "opaque-user-id"
+	account.Target.Account.CodexHome = "/synthetic/private/codex-home"
+	accounts := collapseCodexUsageCollections([]codexUsageCollection{account})
+	claudeAccounts := collapseClaudeUsageCollections([]claudeUsageCollection{{
+		Target:       claudeTarget{Name: "claude-work", DisplayName: "claude-work", Kind: "managed"},
+		Account:      claudeUsageAccountFixture("claude-work", 30),
+		Organization: "opaque-organization",
+		AccountEmail: "claude@example.com",
+	}})
+	report := usageReport{
+		Command:   "multisubs usage",
+		UpdatedAt: now,
+		Providers: []usageProviderReport{
+			{Name: "Codex", Accounts: accounts},
+			{Name: "Claude", Accounts: claudeAccounts},
+		},
+	}
+	var output bytes.Buffer
+	printUsageReport(&output, report, now, time.UTC)
+	rendered := output.String()
+	for _, forbidden := range []string{
+		"opaque-account-id",
+		"opaque-user-id",
+		"/synthetic/private/codex-home",
+		"opaque-organization",
+	} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("usage output exposed %q:\n%s", forbidden, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "work · person@example.com") {
+		t.Fatalf("validated email missing from local usage output:\n%s", rendered)
 	}
 }
 
@@ -665,6 +1561,7 @@ func TestCombinedUsagePrintsCodexWhenClaudeBinaryIsMissing(t *testing.T) {
 		claudeRunner: runner,
 		codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
 			return &fakeCodexUsageSource{summary: &monitorusage.Summary{
+				AccountEmail: "default@example.com",
 				SessionWindow: monitorusage.WindowSummary{
 					UsedPercent:        10,
 					WindowDurationMins: &sessionMinutes,

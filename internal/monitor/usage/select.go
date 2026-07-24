@@ -57,7 +57,168 @@ func (f *Fetcher) SelectAccountForModel(ctx context.Context, model string) (Sele
 	now := time.Now().UTC()
 	f.refreshAccounts(now, false)
 	results := f.fetchAccountsConcurrent(ctx, now, activeHomeSet{})
+	results = collapseFetchedCandidatesByIdentityForModel(results, model)
 	return selectBestAccountFromResultsForModel(results, model)
+}
+
+func collapseFetchedCandidatesByIdentity(results []accountFetchResult) []accountFetchResult {
+	return collapseFetchedCandidatesByIdentityForModel(results, "")
+}
+
+func collapseFetchedCandidatesByIdentityForModel(results []accountFetchResult, model string) []accountFetchResult {
+	records := make([]CodexIdentityRecord, len(results))
+	for index, result := range results {
+		records[index] = CodexIdentityRecord{
+			AccountID:    result.account.AccountID,
+			AccountEmail: result.account.AccountEmail,
+		}
+	}
+
+	groups := ReconcileCodexIdentities(records)
+	collapsed := make([]accountFetchResult, 0, len(groups))
+	for _, group := range groups {
+		if !group.Resolved {
+			continue
+		}
+		if !successfulDuplicateSnapshotsAgreeForModel(results, group.MemberIndexes, model) {
+			continue
+		}
+		representativeIndex := deterministicSuccessfulResultIndex(results, group.MemberIndexes)
+		if representativeIndex < 0 {
+			continue
+		}
+		collapsed = append(collapsed, results[representativeIndex])
+	}
+	return collapsed
+}
+
+type weeklyEligibilitySnapshot struct {
+	requiredBucketAvailable bool
+	weeklyAvailable         bool
+	exhausted               bool
+	usedPercent             int
+	reset                   weeklyResetSemantics
+}
+
+type weeklyResetSemantics struct {
+	kind       uint8
+	seconds    int64
+	resetNanos int64
+}
+
+// relativeResetDriftToleranceSeconds bounds only countdown skew introduced by
+// concurrent provider fetches. Exact provider reset timestamps and every other
+// eligibility field still have to agree exactly.
+const relativeResetDriftToleranceSeconds int64 = 5
+
+func successfulDuplicateSnapshotsAgreeForModel(results []accountFetchResult, indexes []int, model string) bool {
+	var expected weeklyEligibilitySnapshot
+	var relativeResetMin int64
+	var relativeResetMax int64
+	relativeResetSeen := false
+	successCount := 0
+	for _, index := range indexes {
+		if index < 0 || index >= len(results) {
+			continue
+		}
+		result := results[index]
+		if result.fetchErr != nil || result.snapshot == nil {
+			continue
+		}
+		current := weeklyEligibilityForModel(result.account, model)
+		if successCount == 0 {
+			expected = current
+		} else if !weeklyEligibilitySnapshotsAgree(expected, current) {
+			return false
+		}
+		if current.reset.kind == 1 {
+			if !relativeResetSeen {
+				relativeResetMin = current.reset.seconds
+				relativeResetMax = current.reset.seconds
+				relativeResetSeen = true
+			} else {
+				if current.reset.seconds < relativeResetMin {
+					relativeResetMin = current.reset.seconds
+				}
+				if current.reset.seconds > relativeResetMax {
+					relativeResetMax = current.reset.seconds
+				}
+			}
+		}
+		successCount++
+	}
+	return successCount > 0 &&
+		(!relativeResetSeen ||
+			relativeResetMax-relativeResetMin <= relativeResetDriftToleranceSeconds)
+}
+
+func weeklyEligibilityForModel(account AccountSummary, model string) weeklyEligibilitySnapshot {
+	weekly, hasModelWindow := selectWeeklyWindowForModel(account, model)
+	requiredBucketAvailable := !isSparkModel(model) || hasModelWindow
+	if !requiredBucketAvailable {
+		return weeklyEligibilitySnapshot{}
+	}
+	return weeklyEligibilitySnapshot{
+		requiredBucketAvailable: true,
+		weeklyAvailable:         usageWindowAvailable(weekly),
+		exhausted:               usageWindowIsKnownExhausted(weekly),
+		usedPercent:             weekly.UsedPercent,
+		reset:                   normalizedWeeklyResetSemantics(weekly),
+	}
+}
+
+func weeklyEligibilitySnapshotsAgree(first, second weeklyEligibilitySnapshot) bool {
+	return first.requiredBucketAvailable == second.requiredBucketAvailable &&
+		first.weeklyAvailable == second.weeklyAvailable &&
+		first.exhausted == second.exhausted &&
+		first.usedPercent == second.usedPercent &&
+		weeklyResetSemanticsAgree(first.reset, second.reset)
+}
+
+func normalizedWeeklyResetSemantics(window WindowSummary) weeklyResetSemantics {
+	if window.ResetsAt != nil {
+		return weeklyResetSemantics{kind: 2, resetNanos: window.ResetsAt.UTC().UnixNano()}
+	}
+	if window.SecondsUntilReset != nil {
+		seconds := *window.SecondsUntilReset
+		if seconds < 0 {
+			seconds = 0
+		}
+		return weeklyResetSemantics{kind: 1, seconds: seconds}
+	}
+	return weeklyResetSemantics{}
+}
+
+func weeklyResetSemanticsAgree(first, second weeklyResetSemantics) bool {
+	if first.kind != second.kind {
+		return false
+	}
+	switch first.kind {
+	case 0:
+		return true
+	case 1:
+		if first.seconds > second.seconds {
+			return first.seconds-second.seconds <= relativeResetDriftToleranceSeconds
+		}
+		return second.seconds-first.seconds <= relativeResetDriftToleranceSeconds
+	case 2:
+		return first.resetNanos == second.resetNanos
+	default:
+		return false
+	}
+}
+
+func deterministicSuccessfulResultIndex(results []accountFetchResult, indexes []int) int {
+	for _, index := range indexes {
+		if index < 0 || index >= len(results) {
+			continue
+		}
+		result := results[index]
+		if result.fetchErr == nil && result.snapshot != nil {
+			return index
+		}
+	}
+	return -1
 }
 
 func selectBestAccountFromResultsForModel(results []accountFetchResult, model string) (SelectedAccount, error) {
