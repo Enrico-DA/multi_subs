@@ -1,0 +1,760 @@
+package multisubs
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
+
+	"github.com/Enrico-DA/multi_subs/internal/codexstate"
+)
+
+const configVersion = 1
+const generatedProfileConfigContent = "cli_auth_credentials_store = \"file\"\n"
+
+// Config stores multisubs metadata only. It does not store secrets.
+type Config struct {
+	Version          int                `json:"version"`
+	ProfileResources *ProfileResources  `json:"profile_resources,omitempty"`
+	Profiles         map[string]Profile `json:"profiles"`
+}
+
+// Profile maps a user-friendly name to an isolated Codex home path.
+type Profile struct {
+	Name      string `json:"name"`
+	CodexHome string `json:"codex_home"`
+}
+
+func DefaultConfig() *Config {
+	return &Config{
+		Version:  configVersion,
+		Profiles: map[string]Profile{},
+	}
+}
+
+// Store persists config and manages profile filesystem state.
+type Store struct {
+	paths Paths
+}
+
+func NewStore(paths Paths) *Store {
+	return &Store{paths: paths}
+}
+
+func (s *Store) EnsureBaseDirs() error {
+	if err := ensurePathNotSymlinkIfExists(s.paths.MultisubsHome); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.paths.MultisubsHome, 0o700); err != nil {
+		return fmt.Errorf("create multisubs home: %w", err)
+	}
+	if err := os.Chmod(s.paths.MultisubsHome, 0o700); err != nil {
+		return fmt.Errorf("secure multisubs home permissions: %w", err)
+	}
+	if err := ensurePathNotSymlinkIfExists(s.paths.ProfilesDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.paths.ProfilesDir, 0o700); err != nil {
+		return fmt.Errorf("create profiles dir: %w", err)
+	}
+	if err := os.Chmod(s.paths.ProfilesDir, 0o700); err != nil {
+		return fmt.Errorf("secure profiles dir permissions: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) WithConfigLock(fn func() error) error {
+	if err := s.EnsureBaseDirs(); err != nil {
+		return err
+	}
+	lockPath := filepath.Join(s.paths.MultisubsHome, "config.lock")
+	if err := ensureRegularSingleFileForWrite(lockPath, "multisubs config lock"); err != nil {
+		return err
+	}
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("open config lock: %w", err)
+	}
+	defer lockFile.Close()
+	if err := lockFile.Chmod(0o600); err != nil {
+		return fmt.Errorf("secure config lock permissions: %w", err)
+	}
+	info, err := lockFile.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect config lock: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("multisubs config lock is not a regular file: %s", lockPath)
+	}
+	if fileHasMultipleLinks(info) {
+		return fmt.Errorf("multisubs config lock has multiple hard links: %s", lockPath)
+	}
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock config: %w", err)
+	}
+	defer func() { _ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) }()
+	return fn()
+}
+
+func (s *Store) Load() (*Config, error) {
+	if err := ensureRegularSingleFile(s.paths.ConfigPath, "multisubs config"); err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(s.paths.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	cfg := DefaultConfig()
+	if err := json.Unmarshal(b, cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if cfg.Version != 0 && cfg.Version != configVersion {
+		return nil, fmt.Errorf("unsupported config version %d; expected %d", cfg.Version, configVersion)
+	}
+	if cfg.Profiles == nil {
+		cfg.Profiles = map[string]Profile{}
+	}
+	for name := range cfg.Profiles {
+		if err := ValidateCodexProfileName(name); err != nil {
+			return nil, &ExitError{
+				Code:    2,
+				Message: fmt.Sprintf("invalid stored Codex profile name %q: %v", name, err),
+			}
+		}
+		profile := cfg.Profiles[name]
+		if err := ValidateCodexProfileName(profile.Name); err != nil {
+			return nil, &ExitError{
+				Code:    2,
+				Message: fmt.Sprintf("invalid stored Codex profile name %q: %v", profile.Name, err),
+			}
+		}
+		if profile.Name != name {
+			return nil, fmt.Errorf("stored profile %q has mismatched name %q", name, profile.Name)
+		}
+	}
+	if cfg.Version == 0 {
+		cfg.Version = configVersion
+	}
+	return cfg, nil
+}
+
+func (s *Store) Save(cfg *Config) error {
+	if err := s.EnsureBaseDirs(); err != nil {
+		return err
+	}
+	if err := ensureRegularSingleFileForWrite(s.paths.ConfigPath, "multisubs config"); err != nil {
+		return err
+	}
+	cfg.Version = configVersion
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(s.paths.ConfigPath), filepath.Base(s.paths.ConfigPath)+".tmp.")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	tmpClosed := false
+	defer func() {
+		if !tmpClosed {
+			_ = tmp.Close()
+		}
+		_ = os.Remove(tmpPath)
+	}()
+	if _, err := tmp.Write(append(b, '\n')); err != nil {
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		tmpClosed = true
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	tmpClosed = true
+	if err := os.Rename(tmpPath, s.paths.ConfigPath); err != nil {
+		return fmt.Errorf("replace config: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) CreateProfile(name string, resources *ProfileResources) (Profile, []ResourceChange, error) {
+	if err := ValidateCodexProfileName(name); err != nil {
+		return Profile{}, nil, &ExitError{Code: 2, Message: err.Error()}
+	}
+	resolved, err := s.ResolveProfileResources(resources)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	if err := s.EnsureBaseDirs(); err != nil {
+		return Profile{}, nil, err
+	}
+	profileDir := filepath.Join(s.paths.ProfilesDir, name)
+	codexHome := filepath.Join(profileDir, "codex-home")
+	profile := Profile{Name: name, CodexHome: codexHome}
+	if err := s.ensureProfileStoragePathSafe(profile); err != nil {
+		return Profile{}, nil, err
+	}
+	if err := s.validateProfileResourceDestinations(codexHome, resources, resolved); err != nil {
+		return Profile{}, nil, err
+	}
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		return Profile{}, nil, fmt.Errorf("create profile dir: %w", err)
+	}
+
+	if err := s.ensureProfileConfig(codexHome); err != nil {
+		return Profile{}, nil, err
+	}
+	changes, err := s.reconcileProfileResources(codexHome, resources, resolved)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+
+	return profile, changes, nil
+}
+
+func (s *Store) EnsureProfileDir(profile Profile, resources *ProfileResources) ([]ResourceChange, error) {
+	if profile.CodexHome == "" {
+		return nil, errors.New("profile codex home is empty")
+	}
+	resolved, err := s.ResolveProfileResources(resources)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureProfileStoragePathSafe(profile); err != nil {
+		return nil, err
+	}
+	if err := s.validateProfileResourceDestinations(profile.CodexHome, resources, resolved); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(profile.CodexHome, 0o700); err != nil {
+		return nil, fmt.Errorf("create profile codex home: %w", err)
+	}
+	if err := s.ensureProfileConfig(profile.CodexHome); err != nil {
+		return nil, err
+	}
+	return s.reconcileProfileResources(profile.CodexHome, resources, resolved)
+}
+
+func (s *Store) ensureProfileStoragePathSafe(profile Profile) error {
+	if err := ValidateCodexProfileName(profile.Name); err != nil {
+		return fmt.Errorf("invalid profile name %q: %w", profile.Name, err)
+	}
+	profileDir := filepath.Join(s.paths.ProfilesDir, profile.Name)
+	expectedCodexHome := filepath.Join(profileDir, "codex-home")
+	if filepath.Clean(profile.CodexHome) != profile.CodexHome {
+		return fmt.Errorf("profile codex home %s does not match clean profile-local path %s", profile.CodexHome, filepath.Clean(profile.CodexHome))
+	}
+	if rel, err := filepath.Rel(s.paths.ProfilesDir, profile.CodexHome); err != nil || rel != filepath.Join(profile.Name, "codex-home") {
+		return fmt.Errorf("profile codex home %s does not match profile-local path under %s", profile.CodexHome, s.paths.ProfilesDir)
+	}
+	if !sameProfilePath(profile.CodexHome, expectedCodexHome) {
+		return fmt.Errorf("profile codex home %s does not match expected profile-local path %s", profile.CodexHome, expectedCodexHome)
+	}
+	for _, path := range uniquePaths(s.paths.MultisubsHome, s.paths.ProfilesDir, profileDir, expectedCodexHome, profile.CodexHome) {
+		if err := ensurePathNotSymlinkIfExists(path); err != nil {
+			return err
+		}
+		if err := ensureExistingDirPrivate(path); err != nil {
+			return err
+		}
+	}
+	for _, path := range uniquePaths(s.paths.ProfilesDir, profileDir, expectedCodexHome, profile.CodexHome) {
+		if err := ensurePathPrefixesBelowRootNotSymlinks(s.paths.MultisubsHome, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensurePathPrefixesBelowRootNotSymlinks(root, path string) error {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return nil
+	}
+	current := root
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return fmt.Errorf("inspect profile path %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("profile path is a symlink, expected profile-local directory: %s", current)
+		}
+	}
+	return nil
+}
+
+func ensurePathNotSymlinkIfExists(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect profile path %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("profile path is a symlink, expected profile-local directory: %s", path)
+	}
+	return nil
+}
+
+func ensureExistingDirPrivate(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if info.IsDir() && info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("profile path permissions are %o, expected no group/world permissions: %s", info.Mode().Perm(), path)
+	}
+	return nil
+}
+
+func uniquePaths(paths ...string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		key := filepath.Clean(path)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, path)
+	}
+	return out
+}
+
+func sameProfilePath(a, b string) bool {
+	return canonicalProfilePath(a) == canonicalProfilePath(b)
+}
+
+func canonicalProfilePath(p string) string {
+	cleaned := filepath.Clean(p)
+	if abs, err := filepath.Abs(cleaned); err == nil {
+		cleaned = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return filepath.Clean(resolved)
+	}
+
+	prefix := cleaned
+	suffix := []string{}
+	for {
+		info, err := os.Lstat(prefix)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				suffix = append([]string{filepath.Base(prefix)}, suffix...)
+				next := filepath.Dir(prefix)
+				if next == prefix {
+					return filepath.Clean(cleaned)
+				}
+				prefix = next
+				continue
+			}
+			return filepath.Clean(cleaned)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolvedPrefix, err := filepath.EvalSymlinks(prefix)
+			if err != nil {
+				return filepath.Clean(cleaned)
+			}
+			resolvedInfo, err := os.Stat(resolvedPrefix)
+			if err != nil || !resolvedInfo.IsDir() {
+				return filepath.Clean(cleaned)
+			}
+			if len(suffix) == 0 {
+				return filepath.Clean(resolvedPrefix)
+			}
+			parts := append([]string{resolvedPrefix}, suffix...)
+			return filepath.Clean(filepath.Join(parts...))
+		}
+		if !info.IsDir() {
+			return filepath.Clean(cleaned)
+		}
+		break
+	}
+	resolvedPrefix, err := filepath.EvalSymlinks(prefix)
+	if err != nil {
+		return filepath.Clean(cleaned)
+	}
+	if len(suffix) == 0 {
+		return filepath.Clean(resolvedPrefix)
+	}
+	parts := append([]string{resolvedPrefix}, suffix...)
+	return filepath.Clean(filepath.Join(parts...))
+}
+
+func HasAuthFile(codexHome string) (bool, error) {
+	_, err := os.Stat(filepath.Join(codexHome, "auth.json"))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, fmt.Errorf("check auth file: %w", err)
+}
+
+func profileConfigUsesFileStore(configPath, defaultConfigPath string) (bool, error) {
+	store, found, err := profileConfigCredentialStore(configPath, defaultConfigPath)
+	if err != nil {
+		return false, err
+	}
+	return found && store == "file", nil
+}
+
+func profileConfigCredentialStore(configPath, defaultConfigPath string) (string, bool, error) {
+	if _, err := codexstate.ValidateManagedConfigPath(configPath, defaultConfigPath); err != nil {
+		return "", false, fmt.Errorf("validate managed profile config: %w", err)
+	}
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", false, fmt.Errorf("read profile config: %w", err)
+	}
+	store, found, err := codexstate.CredentialStoreFromTOML(string(b))
+	if err != nil {
+		return "", false, fmt.Errorf("parse profile config: %w", err)
+	}
+	return store, found, nil
+}
+
+func ensureRegularFileOrSymlinkTarget(path, label string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		targetInfo, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("%s symlink target is not readable: %w", label, err)
+		}
+		if !targetInfo.Mode().IsRegular() {
+			return fmt.Errorf("%s symlink target is not a regular file: %s", label, path)
+		}
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file: %s", label, path)
+	}
+	return nil
+}
+
+func ensureRegularSingleFile(path, label string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink: %s", label, path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file: %s", label, path)
+	}
+	if fileHasMultipleLinks(info) {
+		return fmt.Errorf("%s has multiple hard links: %s", label, path)
+	}
+	return nil
+}
+
+func ensureRegularSingleFileForWrite(path, label string) error {
+	if err := ensureRegularSingleFile(path, label); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureProfileConfig(codexHome string) error {
+	configPath := filepath.Join(codexHome, "config.toml")
+	defaultConfigPath := filepath.Join(s.paths.DefaultCodexHome, "config.toml")
+
+	_, err := os.Lstat(configPath)
+	if err == nil {
+		details, err := codexstate.ValidateManagedConfigPath(configPath, defaultConfigPath)
+		if err != nil {
+			return fmt.Errorf("validate existing profile config: %w", err)
+		}
+		if details.IsSymlink {
+			return nil
+		}
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("read profile config: %w", err)
+		}
+		if string(content) != generatedProfileConfigContent {
+			return nil
+		}
+		if err := os.Remove(configPath); err != nil {
+			return fmt.Errorf("replace generated profile config: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("check profile config: %w", err)
+	}
+
+	if err := os.Symlink(defaultConfigPath, configPath); err != nil {
+		return fmt.Errorf("link profile config to default codex config: %w", err)
+	}
+	createdLinkInfo, err := os.Lstat(configPath)
+	if err != nil {
+		return fmt.Errorf("inspect newly linked profile config: %w", err)
+	}
+	if _, err := codexstate.ValidateManagedConfigPath(configPath, defaultConfigPath); err != nil {
+		removeErr := removeCreatedProfileConfigLink(configPath, defaultConfigPath, createdLinkInfo)
+		if removeErr != nil {
+			return fmt.Errorf("validate newly linked profile config: %w (cleanup failed: %v)", err, removeErr)
+		}
+		return fmt.Errorf("validate newly linked profile config: %w", err)
+	}
+	return nil
+}
+
+func removeCreatedProfileConfigLink(configPath, rawTarget string, createdLinkInfo os.FileInfo) error {
+	info, err := os.Lstat(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect newly linked profile config: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	createdStat, createdOK := createdLinkInfo.Sys().(*syscall.Stat_t)
+	currentStat, currentOK := info.Sys().(*syscall.Stat_t)
+	if !createdOK || !currentOK || createdStat.Dev != currentStat.Dev || createdStat.Ino != currentStat.Ino {
+		return nil
+	}
+	currentTarget, err := os.Readlink(configPath)
+	if err != nil {
+		return fmt.Errorf("read newly linked profile config: %w", err)
+	}
+	if currentTarget != rawTarget {
+		return nil
+	}
+	if err := os.Remove(configPath); err != nil {
+		return fmt.Errorf("remove invalid newly linked profile config: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureProfileSkills(codexHome string, resolved *resolvedSkillResources) error {
+	profileSkillsPath := filepath.Join(codexHome, "skills")
+
+	if err := ensurePathNotSymlinkIfExists(profileSkillsPath); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(profileSkillsPath); err == nil && !info.IsDir() {
+		return fmt.Errorf("profile skills path is not a directory: %s", profileSkillsPath)
+	}
+	if err := ensurePathPrefixesBelowRootNotSymlinks(codexHome, profileSkillsPath); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(profileSkillsPath, 0o700); err != nil {
+		return fmt.Errorf("create profile skills dir: %w", err)
+	}
+	if err := os.Chmod(profileSkillsPath, 0o700); err != nil {
+		return fmt.Errorf("secure profile skills dir permissions: %w", err)
+	}
+
+	if resolved == nil || len(resolved.sources) == 0 {
+		return nil
+	}
+	defaultSkillsPath := resolved.sources[0]
+	if err := s.removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath, resolved.desired); err != nil {
+		return err
+	}
+
+	names := make([]string, 0, len(resolved.desired))
+	for name := range resolved.desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		defaultEntryPath := resolved.desired[name]
+		profileEntryPath := filepath.Join(profileSkillsPath, name)
+
+		info, err := os.Lstat(profileEntryPath)
+		switch {
+		case err == nil:
+			if info.Mode()&os.ModeSymlink != 0 {
+				rawTarget, readErr := os.Readlink(profileEntryPath)
+				if readErr != nil {
+					return fmt.Errorf("read profile skill symlink %s: %w", profileEntryPath, readErr)
+				}
+				if rawTarget == defaultEntryPath {
+					continue
+				}
+				_, readErr = resolveExistingSymlinkTarget(profileEntryPath)
+				if readErr != nil {
+					if errors.Is(readErr, syscall.EINVAL) {
+						if info, statErr := os.Lstat(profileEntryPath); statErr == nil && info.Mode()&os.ModeSymlink == 0 {
+							continue
+						}
+					}
+					if !errors.Is(readErr, os.ErrNotExist) {
+						return fmt.Errorf("resolve profile skill symlink %s: %w", profileEntryPath, readErr)
+					}
+				}
+				if err := os.Remove(profileEntryPath); err != nil {
+					return fmt.Errorf("replace profile skill symlink %s: %w", profileEntryPath, err)
+				}
+			}
+			if info.Mode()&os.ModeSymlink == 0 {
+				continue
+			}
+		case !errors.Is(err, os.ErrNotExist):
+			return fmt.Errorf("inspect profile skill entry %s: %w", profileEntryPath, err)
+		}
+
+		if err := linkProfileSkill(defaultEntryPath, profileEntryPath); err != nil {
+			return fmt.Errorf("link profile skill %s: %w", name, err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Store) removeStaleManagedSkillLinks(defaultSkillsPath, profileSkillsPath string, desired map[string]string) error {
+	entries, err := os.ReadDir(profileSkillsPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read profile skills dir: %w", err)
+	}
+	for _, entry := range entries {
+		profileEntryPath := filepath.Join(profileSkillsPath, entry.Name())
+		info, err := os.Lstat(profileEntryPath)
+		if err != nil {
+			return fmt.Errorf("inspect profile skill entry %s: %w", profileEntryPath, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if entry.Name() == ".system" {
+			_, inherited, err := inspectProfileSystemSkill(defaultSkillsPath, profileEntryPath)
+			if err != nil {
+				return err
+			}
+			if inherited {
+				if err := os.Remove(profileEntryPath); err != nil {
+					return fmt.Errorf("remove inherited profile system skills symlink: %w", err)
+				}
+			}
+			continue
+		}
+		if _, wanted := desired[entry.Name()]; wanted {
+			continue
+		}
+		target, err := resolveExistingSymlinkTarget(profileEntryPath)
+		if err != nil {
+			if errors.Is(err, syscall.EINVAL) {
+				if info, statErr := os.Lstat(profileEntryPath); statErr == nil && info.Mode()&os.ModeSymlink == 0 {
+					continue
+				}
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("resolve profile skill symlink %s: %w", profileEntryPath, err)
+			}
+			target, err = resolveBrokenManagedSymlinkTarget(profileEntryPath)
+			if err != nil {
+				return fmt.Errorf("resolve profile skill symlink %s: %w", profileEntryPath, err)
+			}
+			if !pathIsInsideRoot(defaultSkillsPath, target) {
+				return fmt.Errorf("profile skill symlink must point under default skills directory: %s", profileEntryPath)
+			}
+			if err := os.Remove(profileEntryPath); err != nil {
+				return fmt.Errorf("remove stale profile skill symlink %s: %w", profileEntryPath, err)
+			}
+			continue
+		}
+		if !pathIsInsideRoot(defaultSkillsPath, target) {
+			return fmt.Errorf("profile skill symlink must point under default skills directory: %s", profileEntryPath)
+		}
+		if !isInheritableSkillName(strings.TrimSpace(entry.Name())) {
+			if err := os.Remove(profileEntryPath); err != nil {
+				return fmt.Errorf("remove non-inheritable profile skill symlink %s: %w", profileEntryPath, err)
+			}
+		}
+	}
+	return nil
+}
+
+func linkProfileSkill(defaultEntryPath, profileEntryPath string) error {
+	if err := os.Symlink(defaultEntryPath, profileEntryPath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			info, statErr := os.Lstat(profileEntryPath)
+			if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				target, readErr := os.Readlink(profileEntryPath)
+				if readErr == nil && target == defaultEntryPath {
+					return nil
+				}
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func resolveExistingSymlinkTarget(path string) (string, error) {
+	return resolveExistingPath(path)
+}
+
+func resolveExistingPath(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
+}
+
+func resolveBrokenManagedSymlinkTarget(path string) (string, error) {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return "", err
+	}
+	if containsParentPathSegment(target) {
+		return "", fmt.Errorf("symlink target contains parent directory traversal: %s", target)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(path), target)
+	}
+	return filepath.Clean(target), nil
+}
+
+func containsParentPathSegment(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func pathIsInsideRoot(root, path string) bool {
+	root = canonicalProfilePath(root)
+	path = canonicalProfilePath(path)
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}

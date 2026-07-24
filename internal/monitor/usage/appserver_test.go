@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Enrico-DA/multicodex/internal/codexstate"
+	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 )
 
 func TestRawAndDefaultAppServerArgsDoNotForceManagedAuth(t *testing.T) {
@@ -199,8 +199,8 @@ func TestFetchBlocksAuthStateErrorBeforeStartingSession(t *testing.T) {
 func TestWithoutCodexProfileEnvRemovesStaleProfileState(t *testing.T) {
 	env := withoutCodexProfileEnv([]string{
 		"CODEX_HOME=/tmp/stale",
-		"MULTICODEX_ACTIVE_PROFILE=stale",
-		"MULTICODEX_SELECTED_PROFILE_PATH=/tmp/stale.json",
+		"MULTISUBS_ACTIVE_PROFILE=stale",
+		"MULTISUBS_SELECTED_PROFILE_PATH=/tmp/stale.json",
 		"OPENAI_API_KEY=stale",
 		"CODEX_AUTH_TOKEN=stale",
 		"KEEP=value",
@@ -209,11 +209,11 @@ func TestWithoutCodexProfileEnvRemovesStaleProfileState(t *testing.T) {
 	if strings.Contains(joined, "CODEX_HOME=") {
 		t.Fatalf("expected CODEX_HOME to be removed, got %q", env)
 	}
-	if strings.Contains(joined, "MULTICODEX_ACTIVE_PROFILE=") {
-		t.Fatalf("expected MULTICODEX_ACTIVE_PROFILE to be removed, got %q", env)
+	if strings.Contains(joined, "MULTISUBS_ACTIVE_PROFILE=") {
+		t.Fatalf("expected MULTISUBS_ACTIVE_PROFILE to be removed, got %q", env)
 	}
-	if strings.Contains(joined, "MULTICODEX_SELECTED_PROFILE_PATH=") {
-		t.Fatalf("expected MULTICODEX_SELECTED_PROFILE_PATH to be removed, got %q", env)
+	if strings.Contains(joined, "MULTISUBS_SELECTED_PROFILE_PATH=") {
+		t.Fatalf("expected MULTISUBS_SELECTED_PROFILE_PATH to be removed, got %q", env)
 	}
 	if strings.Contains(joined, "OPENAI_API_KEY=") || strings.Contains(joined, "CODEX_AUTH_TOKEN=") {
 		t.Fatalf("expected account override credentials to be removed, got %q", env)

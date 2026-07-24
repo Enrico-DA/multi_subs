@@ -2,6 +2,13 @@
 plan/
 
 # Local auth and profile state
+.multisubs/
+**/.multisubs/config.json
+**/.multisubs/profiles/
+**/multisubs/config.json
+**/multisubs/profiles/
+**/multisubs/providers/claude/
+# Legacy-sensitive state remains ignored to prevent credential commits.
 .multicodex/
 **/.multicodex/config.json
 **/.multicodex/profiles/
@@ -21,6 +28,9 @@ plan/
 
 # Logs and temp artifacts
 *.log
+__pycache__/
+*.py[cod]
 tmp/
+/multisubs
 /multicodex
 .DS_Store
