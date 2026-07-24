@@ -58,20 +58,21 @@ var requiredLegacyLines = []legacyRule{
 	requiredLegacyLine("AGENTS.md", legacyAttribution, "- A read-only upstream remote may reference `github.com/olliecrow/{legacy}`."),
 	requiredLegacyLine("CONTRIBUTING.md", legacyUpstreamMap, "Pull-request CI runs a non-publishing identity check. When syncing from `olliecrow/{legacy}`, apply the translation map in `docs/upstream-sync.md` and preserve upstream attribution and license text."),
 
-	requiredLegacyLine("README.md", legacyRejection, "Any legacy `{LEGACY}_*` variable causes startup to fail before state access. Clear it before running `multisubs`. Runtime never reads the old product home or old environment namespace. Old variables are still removed from provider child environments as a denylist."),
+	requiredLegacyLine("README.md", legacyRejection, "Any legacy `{LEGACY}_*` variable causes startup to fail before state access. Clear it before running `multisubs`. Runtime never reads the old product home or old environment namespace. All legacy `{LEGACY}_*` controls are still removed from provider child environments as a denylist."),
+	requiredLegacyLine("README.md", legacyDenylist, "- Provider child environments remove credential overrides, inherited active product controls, and all legacy `{LEGACY}_*` controls. Multisubs adds only `MULTISUBS_ACTIVE_PROFILE` to managed Codex children for the selected profile; default-account Codex, neutral Codex help, and Claude children do not receive it."),
 	requiredLegacyLine("README.md", legacyLeakProtection, "Filesystem monitor discovery prunes both `~/{legacy}` and `~/.{legacy}`, including canonical targets reached through aliases."),
 	requiredLegacyLine("README.md", legacyAttribution, "This fork is based on [olliecrow/{legacy}](https://github.com/olliecrow/{legacy}) and preserves its attribution and license."),
 
 	requiredLegacyLine("docs/README.md", legacyUpstreamMap, "- [`upstream-sync.md`](upstream-sync.md) records the durable identity and command translation from `olliecrow/{legacy}`."),
 	requiredLegacyLine("docs/command-spec.md", legacyRejection, "Startup checks the environment before path resolution. If any `{LEGACY}_*` variable is present, the command exits with code 2 and tells the user to clear it."),
-	requiredLegacyLine("docs/command-spec.md", legacyDenylist, "Runtime never reads the old environment namespace or the old `~/{legacy}` state root. Known old variables remain on provider child-environment denylists to prevent account-routing leakage."),
+	requiredLegacyLine("docs/command-spec.md", legacyDenylist, "Runtime never reads the old environment namespace or the old `~/{legacy}` state root. All old `{LEGACY}_*` variables remain on provider child-environment denylists to prevent account-routing leakage."),
 	requiredLegacyLine("docs/command-spec.md", legacyLeakProtection, "Monitor discovery also prunes `~/.{legacy}` and the canonical alias targets of both legacy roots before descent."),
 
 	requiredLegacyLine("docs/decisions.md", legacyAttribution, "Decision: Preserve the Apache 2.0 license terms and attribution to `olliecrow/{legacy}`."),
 	requiredLegacyLine("docs/decisions.md", legacyRejection, "Decision: Old `{LEGACY}_*` variables cause startup to fail before state access."),
 	requiredLegacyLine("docs/decisions.md", legacyLeakProtection, "Enforcement: Top-level startup rejects any old product-prefixed variable. Provider child environments still strip old controls. The old `~/{legacy}` and `.{legacy}` patterns remain only as legacy-sensitive ignore and leak protection."),
 
-	requiredLegacyLine("docs/security-and-privacy.md", legacyDenylist, "- known legacy `{LEGACY}_*` controls."),
+	requiredLegacyLine("docs/security-and-privacy.md", legacyDenylist, "- all legacy `{LEGACY}_*` controls."),
 	requiredLegacyLine("docs/security-and-privacy.md", legacyRejection, "- Any `{LEGACY}_*` variable rejects top-level startup before state access."),
 	requiredLegacyLine("docs/security-and-privacy.md", legacyLeakProtection, "- Runtime never reads `{LEGACY}_HOME`."),
 	requiredLegacyLine("docs/security-and-privacy.md", legacyLeakProtection, "- Runtime never defaults to `~/{legacy}`."),
@@ -104,6 +105,10 @@ var requiredLegacyLines = []legacyRule{
 	requiredLegacyLine("internal/multisubs/claude_process_test.go", legacyNegativeTest, "\t\t\"{LEGACY}_CLAUDE_PROFILE=legacy\","),
 	requiredLegacyLine("internal/multisubs/claude_process_test.go", legacyNegativeTest, "\t\t\"{LEGACY}_HOME\","),
 	requiredLegacyLine("internal/multisubs/claude_process_test.go", legacyNegativeTest, "\t\t\"{LEGACY}_CLAUDE_PROFILE\","),
+	requiredLegacyLine("internal/multisubs/cli_test.go", legacyNegativeTest, "\t\t\t\tt.Setenv(\"{LEGACY}_HOME\", filepath.Join(root, \"legacy-product-state\"))"),
+	requiredLegacyLine("internal/multisubs/cli_test.go", legacyNegativeTest, "\t\t\t\tt.Setenv(\"{LEGACY}_ACTIVE_PROFILE\", \"legacy\")"),
+	requiredLegacyLine("internal/multisubs/cli_test.go", legacyNegativeTest, "\t\t\t\tt.Setenv(\"{LEGACY}_UNKNOWN_CONTROL\", \"legacy\")"),
+	requiredLegacyLine("internal/multisubs/cli_test.go", legacyNegativeTest, "\t\tforbidden = append(forbidden, \"{LEGACY}_HOME\", \"{LEGACY}_ACTIVE_PROFILE\", \"{LEGACY}_UNKNOWN_CONTROL\")"),
 
 	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\t\".{legacy}/\","),
 	requiredLegacyLine("internal/multisubs/doctor.go", legacyLeakProtection, "\t\t\"**/{legacy}/config.json\","),

@@ -71,7 +71,9 @@ Runs login for every configured Codex profile in sorted order. No extra argument
 
 ### `multisubs codex cli <name> [codex args...]`
 
-Runs the official interactive Codex CLI with the named profile. The child receives the profile-local `CODEX_HOME` and active profile marker. Product controls and account override variables are removed first.
+Runs the official interactive Codex CLI with the named profile. Inherited product controls and account override variables are removed first. Multisubs then gives the managed Codex child its profile-local `CODEX_HOME` and only the selected `MULTISUBS_ACTIVE_PROFILE` marker.
+
+Exact `multisubs codex cli <name> --help` and `multisubs codex cli <name> -h` requests instead run official Codex help with only the help flag and a neutral sanitized environment. The named profile need not exist. These requests do not load config, create product state, reconcile resources, add the active profile marker, or force managed auth. A help flag mixed with any other Codex argument is rejected with exit code 2; `--` still ends option handling.
 
 ### `multisubs codex exec [codex exec args...]`
 
@@ -209,6 +211,6 @@ Each exits with code 2 and points to the matching `multisubs codex ...` route.
 
 Startup checks the environment before path resolution. If any `MULTICODEX_*` variable is present, the command exits with code 2 and tells the user to clear it.
 
-Runtime never reads the old environment namespace or the old `~/multicodex` state root. Known old variables remain on provider child-environment denylists to prevent account-routing leakage.
+Runtime never reads the old environment namespace or the old `~/multicodex` state root. All old `MULTICODEX_*` variables remain on provider child-environment denylists to prevent account-routing leakage.
 
 Monitor discovery also prunes `~/.multicodex` and the canonical alias targets of both legacy roots before descent.

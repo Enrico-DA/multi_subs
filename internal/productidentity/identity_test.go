@@ -32,6 +32,7 @@ var identityFixturePaths = []string{
 	"internal/multisubs/app.go",
 	"internal/multisubs/claude_process.go",
 	"internal/multisubs/claude_process_test.go",
+	"internal/multisubs/cli_test.go",
 	"internal/multisubs/doctor.go",
 	"internal/multisubs/doctor_test.go",
 	"internal/multisubs/help_completion_test.go",

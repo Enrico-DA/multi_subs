@@ -119,6 +119,11 @@ func runCodexCLI(args []string) error {
 		printCodexHelp()
 		return nil
 	}
+	if args[0] == "cli" {
+		if handled, err := runCodexCLIHelpFastPath(args[1:]); handled {
+			return err
+		}
+	}
 	if args[0] == "help" {
 		if len(args) == 1 {
 			printCodexHelp()
@@ -212,6 +217,11 @@ func (a *App) cmdCodex(args []string) error {
 		}
 		printCodexHelp()
 		return nil
+	}
+	if args[0] == "cli" {
+		if handled, err := runCodexCLIHelpFastPath(args[1:]); handled {
+			return err
+		}
 	}
 	if args[0] == "help" {
 		if len(args) == 1 {

@@ -33,6 +33,35 @@ func TestRunCLIHelpNamespacesDoNotCreateState(t *testing.T) {
 	}
 }
 
+func TestRunCLICodexCLIProfileHelpUsesNeutralProviderPathWithoutState(t *testing.T) {
+	for _, helpFlag := range []string{"--help", "-h"} {
+		helpFlag := helpFlag
+		t.Run(strings.TrimLeft(helpFlag, "-"), func(t *testing.T) {
+			root := t.TempDir()
+			multisubsHome := filepath.Join(root, "missing-multisubs-home")
+			t.Setenv("HOME", root)
+			t.Setenv("MULTISUBS_HOME", multisubsHome)
+			t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "stale-default-codex"))
+			t.Setenv("CODEX_HOME", filepath.Join(root, "stale-codex"))
+			t.Setenv("MULTISUBS_ACTIVE_PROFILE", "stale")
+			t.Setenv("MULTISUBS_SELECTED_PROFILE_PATH", filepath.Join(root, "stale-selection"))
+			t.Setenv("MULTISUBS_HEARTBEAT_PROMPT", "stale-prompt")
+			t.Setenv("OPENAI_API_KEY", "stale-secret")
+			t.Setenv("CODEX_AUTH_TOKEN", "stale-secret")
+			t.Setenv("WORKER_TOOL_SETTING", "keep")
+			logPath := installCodexHelpRecorder(t, root)
+
+			if err := RunCLI([]string{"codex", "cli", "missing-profile", helpFlag}); err != nil {
+				t.Fatalf("RunCLI target-scoped CLI help: %v", err)
+			}
+			assertNeutralCodexHelpInvocation(t, logPath, helpFlag, false)
+			if _, err := os.Stat(multisubsHome); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("target-scoped CLI help created product state: %v", err)
+			}
+		})
+	}
+}
+
 func TestRunCLIRejectsBareCodexCommandsWithoutStateMutation(t *testing.T) {
 	commands := []string{
 		"add",
@@ -117,6 +146,10 @@ func TestRunCLIRejectsUndocumentedArgumentsBeforeCreatingState(t *testing.T) {
 		{"codex", "login-all", "unexpected"},
 		{"codex", "status", "unexpected"},
 		{"codex", "reconcile", "unexpected"},
+		{"codex", "cli", "--help", "unexpected"},
+		{"codex", "cli", "-h", "missing-profile"},
+		{"codex", "cli", "missing-profile", "--help", "unexpected"},
+		{"codex", "cli", "missing-profile", "unexpected", "-h"},
 		{"codex", "monitor", "doctor", "unexpected"},
 		{"codex", "monitor", "tui", "unexpected"},
 		{"claude", "status", "unexpected"},

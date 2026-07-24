@@ -70,6 +70,62 @@ func TestCmdCLIHelpWorksWithoutProfiles(t *testing.T) {
 	}
 }
 
+func TestCodexCLIProfileHelpUsesNeutralProviderPathThroughAppDispatch(t *testing.T) {
+	dispatches := []struct {
+		name string
+		run  func(*App, string) error
+	}{
+		{
+			name: "App.Run",
+			run: func(app *App, helpFlag string) error {
+				return app.Run([]string{"codex", "cli", "missing-profile", helpFlag})
+			},
+		},
+		{
+			name: "cmdCodex",
+			run: func(app *App, helpFlag string) error {
+				return app.cmdCodex([]string{"cli", "missing-profile", helpFlag})
+			},
+		},
+	}
+
+	for _, dispatch := range dispatches {
+		dispatch := dispatch
+		for _, helpFlag := range []string{"--help", "-h"} {
+			helpFlag := helpFlag
+			t.Run(dispatch.name+"_"+strings.TrimLeft(helpFlag, "-"), func(t *testing.T) {
+				root := t.TempDir()
+				multisubsHome := filepath.Join(root, "missing-multisubs-home")
+				t.Setenv("MULTISUBS_HOME", multisubsHome)
+				t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "stale-default-codex"))
+				t.Setenv("CODEX_HOME", filepath.Join(root, "stale-codex"))
+				t.Setenv("MULTISUBS_ACTIVE_PROFILE", "stale")
+				t.Setenv("MULTISUBS_SELECTED_PROFILE_PATH", filepath.Join(root, "stale-selection"))
+				t.Setenv("MULTISUBS_HEARTBEAT_PROMPT", "stale-prompt")
+				t.Setenv("OPENAI_API_KEY", "stale-secret")
+				t.Setenv("CODEX_AUTH_TOKEN", "stale-secret")
+				t.Setenv("MULTICODEX_HOME", filepath.Join(root, "legacy-product-state"))
+				t.Setenv("MULTICODEX_ACTIVE_PROFILE", "legacy")
+				t.Setenv("MULTICODEX_UNKNOWN_CONTROL", "legacy")
+				t.Setenv("WORKER_TOOL_SETTING", "keep")
+				logPath := installCodexHelpRecorder(t, root)
+
+				app, err := NewApp()
+				if err != nil {
+					t.Fatalf("NewApp: %v", err)
+				}
+				if err := dispatch.run(app, helpFlag); err != nil {
+					t.Fatalf("%s target-scoped CLI help: %v", dispatch.name, err)
+				}
+				assertNeutralCodexHelpInvocation(t, logPath, helpFlag, true)
+				if _, err := os.Stat(multisubsHome); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("target-scoped CLI help created product state: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestCmdCLIKeepsGoalStateProfileLocalAcrossConcurrentTerminals(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multi"))
@@ -164,5 +220,65 @@ sleep 0.1
 
 	if _, err := os.Stat(filepath.Join(root, "default-codex", "state_5.sqlite")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected default Codex state to stay untouched, stat err=%v", err)
+	}
+}
+
+func installCodexHelpRecorder(t *testing.T, root string) string {
+	t.Helper()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	logPath := filepath.Join(root, "codex-help.log")
+	script := `#!/bin/sh
+{
+  printf 'arg_count=%s\n' "$#"
+  index=0
+  for arg in "$@"; do
+    printf 'arg_%s=%s\n' "$index" "$arg"
+    index=$((index + 1))
+  done
+  env
+} > ` + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func assertNeutralCodexHelpInvocation(t *testing.T, logPath, helpFlag string, includeLegacy bool) {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read Codex help log: %v", err)
+	}
+	log := string(data)
+	if !strings.Contains(log, "arg_count=1\narg_0="+helpFlag+"\n") {
+		t.Fatalf("unexpected forwarded Codex help arguments: %q", log)
+	}
+	if strings.Contains(log, managedCodexAuthConfig) {
+		t.Fatalf("neutral Codex help received managed auth override: %q", log)
+	}
+	if !strings.Contains(log, "\nWORKER_TOOL_SETTING=keep\n") {
+		t.Fatalf("neutral Codex help dropped an unrelated environment value: %q", log)
+	}
+	forbidden := []string{
+		"CODEX_HOME",
+		"MULTISUBS_HOME",
+		"MULTISUBS_DEFAULT_CODEX_HOME",
+		"MULTISUBS_ACTIVE_PROFILE",
+		"MULTISUBS_SELECTED_PROFILE_PATH",
+		"MULTISUBS_HEARTBEAT_PROMPT",
+		"OPENAI_API_KEY",
+		"CODEX_AUTH_TOKEN",
+	}
+	if includeLegacy {
+		forbidden = append(forbidden, "MULTICODEX_HOME", "MULTICODEX_ACTIVE_PROFILE", "MULTICODEX_UNKNOWN_CONTROL")
+	}
+	for _, key := range forbidden {
+		if strings.Contains(log, "\n"+key+"=") {
+			t.Fatalf("neutral Codex help retained %s: %q", key, log)
+		}
 	}
 }
