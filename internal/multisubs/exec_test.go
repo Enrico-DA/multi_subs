@@ -797,7 +797,7 @@ func TestCmdExecDoesNotFallBackToExhaustedDefaultAccount(t *testing.T) {
 func TestCmdExecFailsClosedWhenDefaultAccountIsLoggedOut(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
-	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "logged-out")
+	t.Setenv("FAKE_CODEX_LOGIN_STATE", "logged-out")
 	if err := os.MkdirAll(app.store.paths.DefaultCodexHome, 0o700); err != nil {
 		t.Fatalf("mkdir default Codex home: %v", err)
 	}
@@ -825,7 +825,7 @@ func TestCmdExecFailsClosedWhenDefaultAccountIsLoggedOut(t *testing.T) {
 func TestCmdExecFailsClosedWhenDefaultLoginStatusIsUnavailable(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
-	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "error")
+	t.Setenv("FAKE_CODEX_LOGIN_STATE", "error")
 
 	originalSelector := defaultExecAccountSelector
 	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
@@ -849,7 +849,7 @@ func TestCmdExecFailsClosedWhenDefaultLoginStatusIsUnavailable(t *testing.T) {
 func TestCmdExecFailsClosedWhenDefaultLoginStatusTimesOut(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
-	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "timeout")
+	t.Setenv("FAKE_CODEX_LOGIN_STATE", "timeout")
 	originalTimeout := codexLoginStatusTimeout
 	codexLoginStatusTimeout = 100 * time.Millisecond
 	defer func() { codexLoginStatusTimeout = originalTimeout }()
@@ -874,7 +874,7 @@ func TestCmdExecFailsClosedWhenDefaultLoginStatusTimesOut(t *testing.T) {
 func TestCmdExecDoesNotCheckDefaultLoginWhenProfileSelected(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
-	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "error")
+	t.Setenv("FAKE_CODEX_LOGIN_STATE", "error")
 
 	originalSelector := defaultExecAccountSelector
 	defaultExecAccountSelector = func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error) {
@@ -896,8 +896,9 @@ func TestCmdExecDoesNotCheckDefaultLoginWhenProfileSelected(t *testing.T) {
 
 func TestCmdExecFailsClosedWhenProfileUsageUnavailableAndDefaultLoggedOut(t *testing.T) {
 	app, logPath, _ := newExecSelectionTestApp(t)
-	createExecProfiles(t, app, "alpha", "beta")
-	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "logged-out")
+	createExecProfiles(t, app, "alpha")
+	writeExecSelectionDefaultData(t, app, 20, 20, 30*time.Minute)
+	t.Setenv("FAKE_CODEX_LOGIN_STATE", "logged-out")
 
 	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
 	var exitErr *ExitError
@@ -1242,7 +1243,7 @@ func TestSelectExecProfilePersistsUsageSelectionMetadata(t *testing.T) {
 }
 
 func TestSelectExecProfileUsesDefaultMetadataSource(t *testing.T) {
-	app := newTestAppForCLI(t)
+	app, _ := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
 
 	cfg, err := app.loadConfigIfExists()
@@ -1293,7 +1294,7 @@ func TestCodexRoutingTargetsKeepTypedDefaultWhenManagedHomeIsTampered(t *testing
 }
 
 func TestSelectExecProfileCannotResolveBuiltInDefaultHomeToManagedProfileByLabel(t *testing.T) {
-	app := newTestAppForCLI(t)
+	app, _ := newExecTestApp(t)
 	cfg := DefaultConfig()
 	cfg.Profiles[codexDefaultAccountName] = Profile{
 		Name:      codexDefaultAccountName,
@@ -1467,7 +1468,7 @@ func TestWriteSelectedProfileMetadataRejectsPathOutsideMultisubsHome(t *testing.
 }
 
 const fakeExecLoginStatusScript = `if [[ "${1:-}" == "login" && "${2:-}" == "status" ]]; then
-  case "${MULTISUBS_FAKE_LOGIN_STATE:-logged-in}" in
+  case "${FAKE_CODEX_LOGIN_STATE:-logged-in}" in
     logged-in)
       echo "Logged in using ChatGPT"
       exit 0
