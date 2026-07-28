@@ -201,7 +201,7 @@ func profileDoctorChecks(paths Paths, name string, profile Profile, codexFound b
 	out = append(out, authCheck)
 
 	if codexFound && configCheck.Status != "fail" && authCheck.Status != "fail" {
-		state, account, detail := codexLoginStatusWithTimeout(profile.CodexHome, timeout)
+		state, account, detail := codexLoginStatusWithTimeout(profile.CodexHome, timeout, true)
 		status := "warn"
 		if state == "logged-in" || state == "ok" {
 			status = "ok"

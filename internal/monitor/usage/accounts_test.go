@@ -611,10 +611,10 @@ func TestLoadMonitorAccountsPrefersMultisubsProfiles(t *testing.T) {
 }
 
 func TestMonitorProfileNameRejectsBuiltInDefaultCodexAccountLabel(t *testing.T) {
-	if monitorProfileNameValid("default") {
+	if multisubsManagedProfileNameValid("default") {
 		t.Fatal("expected the built-in default Codex account label to be rejected as a managed profile")
 	}
-	if !monitorProfileNameValid("work") {
+	if !multisubsManagedProfileNameValid("work") {
 		t.Fatal("expected an ordinary managed profile name to stay valid")
 	}
 }
@@ -1019,11 +1019,19 @@ func TestLoadAccountsFromMultisubsConfigRejectsInvalidProfileName(t *testing.T) 
 	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
 
 	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatalf("mkdir config dir: %v", err)
+	profileName := "Work"
+	profileHome := filepath.Join(configDir, "profiles", profileName, "codex-home")
+	if err := os.MkdirAll(profileHome, 0o700); err != nil {
+		t.Fatalf("mkdir profile home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profileHome, "auth.json"), []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profileHome, "config.toml"), []byte("cli_auth_credentials_store = \"file\"\n"), 0o600); err != nil {
+		t.Fatalf("write profile config: %v", err)
 	}
 	configPath := filepath.Join(configDir, "config.json")
-	configBody := `{"version":1,"profiles":{"../shared":{"name":"../shared","codex_home":"` + filepath.Join(configDir, "shared", "codex-home") + `"}}}`
+	configBody := `{"version":1,"profiles":{"` + profileName + `":{"name":"` + profileName + `","codex_home":"` + profileHome + `"}}}`
 	if err := os.WriteFile(configPath, []byte(configBody), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

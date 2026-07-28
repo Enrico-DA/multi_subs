@@ -794,6 +794,136 @@ func TestCmdExecDoesNotFallBackToExhaustedDefaultAccount(t *testing.T) {
 	}
 }
 
+func TestCmdExecFailsClosedWhenDefaultAccountIsLoggedOut(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "logged-out")
+	if err := os.MkdirAll(app.store.paths.DefaultCodexHome, 0o700); err != nil {
+		t.Fatalf("mkdir default Codex home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(app.store.paths.DefaultCodexHome, "auth.json"), []byte(`{"stale":true}`), 0o600); err != nil {
+		t.Fatalf("write stale default auth: %v", err)
+	}
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected exit code 2 for logged-out default, got %T (%v)", err, err)
+	}
+	if !strings.Contains(exitErr.Message, "default Codex account is not logged in") {
+		t.Fatalf("unexpected logged-out error: %q", exitErr.Message)
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected codex exec not to run, stat err=%v", statErr)
+	}
+}
+
+func TestCmdExecFailsClosedWhenDefaultLoginStatusIsUnavailable(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "error")
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	if err == nil {
+		t.Fatal("expected unavailable default login status to fail")
+	}
+	if !strings.Contains(err.Error(), "login status unavailable") || !strings.Contains(err.Error(), "exit code 7") {
+		t.Fatalf("expected safe login-status error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "opaque-provider-diagnostic") {
+		t.Fatalf("default login-status error exposed subprocess output: %v", err)
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected codex exec not to run, stat err=%v", statErr)
+	}
+}
+
+func TestCmdExecFailsClosedWhenDefaultLoginStatusTimesOut(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "timeout")
+	originalTimeout := codexLoginStatusTimeout
+	codexLoginStatusTimeout = 100 * time.Millisecond
+	defer func() { codexLoginStatusTimeout = originalTimeout }()
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	start := time.Now()
+	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	if err == nil || !strings.Contains(err.Error(), "login status timed out") {
+		t.Fatalf("expected bounded default login-status timeout, got %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("default login-status check exceeded bounded failure time")
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected codex exec not to run, stat err=%v", statErr)
+	}
+}
+
+func TestCmdExecDoesNotCheckDefaultLoginWhenProfileSelected(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "error")
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error) {
+		return usage.SelectedAccount{Account: usage.MonitorAccount{Label: "alpha"}}, nil
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	if err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"}); err != nil {
+		t.Fatalf("profile exec unexpectedly checked default login: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), "profile=alpha") {
+		t.Fatalf("expected selected profile exec, got %q", data)
+	}
+}
+
+func TestCmdExecFailsClosedWhenProfileUsageUnavailableAndDefaultLoggedOut(t *testing.T) {
+	app, logPath, _ := newExecSelectionTestApp(t)
+	createExecProfiles(t, app, "alpha", "beta")
+	t.Setenv("MULTISUBS_FAKE_LOGIN_STATE", "logged-out")
+
+	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected logged-out default to fail closed, got %T (%v)", err, err)
+	}
+	if !strings.Contains(exitErr.Message, "default Codex account is not logged in") {
+		t.Fatalf("unexpected logged-out default error: %q", exitErr.Message)
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected codex exec not to run, stat err=%v", statErr)
+	}
+}
+
+func selectDefaultExecAccountForTest(t *testing.T) execAccountSelector {
+	t.Helper()
+	return func(_ context.Context, accounts []usage.MonitorAccount, _ string) (usage.SelectedAccount, error) {
+		for _, account := range accounts {
+			if account.Label == defaultExecAccountLabel {
+				return usage.SelectedAccount{Account: account}, nil
+			}
+		}
+		return usage.SelectedAccount{}, errors.New("default account missing")
+	}
+}
+
 func TestCmdExecUsesEligibleDefaultAccountWithoutManagedProfiles(t *testing.T) {
 	app, logPath, _ := newExecSelectionTestApp(t)
 	writeExecSelectionDefaultData(t, app, 99, 99, 30*time.Minute)
@@ -1336,6 +1466,29 @@ func TestWriteSelectedProfileMetadataRejectsPathOutsideMultisubsHome(t *testing.
 	}
 }
 
+const fakeExecLoginStatusScript = `if [[ "${1:-}" == "login" && "${2:-}" == "status" ]]; then
+  case "${MULTISUBS_FAKE_LOGIN_STATE:-logged-in}" in
+    logged-in)
+      echo "Logged in using ChatGPT"
+      exit 0
+      ;;
+    logged-out)
+      echo "Not logged in" >&2
+      exit 1
+      ;;
+    error)
+      echo "opaque-provider-diagnostic" >&2
+      exit 7
+      ;;
+    timeout)
+      sleep 3
+      echo "Logged in using ChatGPT"
+      exit 0
+      ;;
+  esac
+fi
+`
+
 func newExecTestApp(t *testing.T) (*App, string) {
 	t.Helper()
 
@@ -1348,7 +1501,9 @@ func newExecTestApp(t *testing.T) (*App, string) {
 		t.Fatalf("mkdir fake bin: %v", err)
 	}
 	logPath := filepath.Join(root, "codex.log")
-	script := "#!/usr/bin/env bash\nset -euo pipefail\nprofile=\"${MULTISUBS_ACTIVE_PROFILE:-}\"\nprintf 'profile=%s\\ncodex_home=%s\\nargs=%s\\n' \"$profile\" \"${CODEX_HOME:-}\" \"$*\" > " + shellQuote(logPath) + "\n"
+	script := "#!/usr/bin/env bash\nset -euo pipefail\n" + fakeExecLoginStatusScript + `profile="${MULTISUBS_ACTIVE_PROFILE:-}"
+printf 'profile=%s\ncodex_home=%s\nargs=%s\n' "$profile" "${CODEX_HOME:-}" "$*" > ` + shellQuote(logPath) + `
+`
 	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
@@ -1374,8 +1529,7 @@ func newExecSelectionTestApp(t *testing.T) (*App, string, string) {
 		t.Fatalf("mkdir fake bin: %v", err)
 	}
 	logPath := filepath.Join(root, "codex.log")
-	script := `#!/usr/bin/env bash
-set -euo pipefail
+	script := "#!/usr/bin/env bash\nset -euo pipefail\n" + fakeExecLoginStatusScript + `
 if [[ "${1:-}" == "--version" ]]; then
   echo "codex-cli fake"
   exit 0

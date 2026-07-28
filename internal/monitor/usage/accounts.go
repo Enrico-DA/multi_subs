@@ -209,7 +209,7 @@ func loadAccountsFromMultisubsConfigWithRejected() ([]MonitorAccount, []string, 
 				rejectedHomes = append(rejectedHomes, home)
 			}
 		}
-		if !monitorProfileNameValid(name) {
+		if !multisubsManagedProfileNameValid(name) {
 			warnings = append(warnings, fmt.Sprintf("skipping multisubs profile %q: invalid profile name", name))
 			reject()
 			continue
@@ -279,12 +279,11 @@ func monitorProfileHomeSafe(profilesDir, name, home string) error {
 	return nil
 }
 
-func monitorProfileNameValid(name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" || name == "." || name == ".." || name == defaultCodexAccountLabel {
+func multisubsManagedProfileNameValid(name string) bool {
+	if name == defaultCodexAccountLabel {
 		return false
 	}
-	return !strings.ContainsAny(name, `/\`)
+	return codexstate.ValidateProfileName(name) == nil
 }
 
 func monitorFileHasMultipleLinks(info os.FileInfo) bool {

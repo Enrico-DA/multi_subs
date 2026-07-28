@@ -64,7 +64,7 @@ Before a provider child starts, the environment removes:
 - every inherited `MULTISUBS_*` variable, including unknown future controls;
 - all legacy `MULTICODEX_*` controls.
 
-The child then receives exactly the provider home required for its selected context. A managed Codex child also receives exactly one product variable: the selected `MULTISUBS_ACTIVE_PROFILE` marker added by multisubs. It does not inherit a caller-supplied marker. Default-account Codex, neutral provider help, and every Claude child receive no `MULTISUBS_*` variable. Default Codex execution receives no managed auth override, and neutral or default Claude execution receives no `CLAUDE_CONFIG_DIR`.
+The child then receives exactly the provider home required for its selected context. A managed Codex child also receives exactly one product variable: the selected `MULTISUBS_ACTIVE_PROFILE` marker added by multisubs. It does not inherit a caller-supplied marker. Default-account Codex, neutral provider help, and every Claude child receive no `MULTISUBS_*` variable. Default Codex execution receives no managed auth override, and neutral or default Claude execution receives no `CLAUDE_CONFIG_DIR`. Before launching the default Codex account, `multisubs codex exec` runs a bounded `codex login status` in the default Codex home so file and OS keyring credential stores are both supported. That check must not mutate default auth state or expose default auth details or raw subprocess output.
 
 ## Legacy-sensitive rejection
 

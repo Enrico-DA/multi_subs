@@ -140,17 +140,30 @@ func parallelWorkers(total int) int {
 }
 
 func codexLoginStatus(codexHome string) (state, account, detail string) {
-	return codexLoginStatusWithTimeout(codexHome, codexLoginStatusTimeout)
+	return codexLoginStatusWithTimeout(codexHome, codexLoginStatusTimeout, true)
 }
 
-func codexLoginStatusWithTimeout(codexHome string, timeout time.Duration) (state, account, detail string) {
+func defaultCodexLoginStatus(codexHome string) (state, account, detail string) {
+	return codexLoginStatusWithTimeout(codexHome, codexLoginStatusTimeout, false)
+}
+
+func codexLoginStatusWithTimeout(codexHome string, timeout time.Duration, managed bool) (state, account, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	args := codexstate.WithManagedAuthOverride([]string{"login", "status"})
+	args := []string{"login", "status"}
+	if managed {
+		args = codexstate.WithManagedAuthOverride(args)
+	}
 	cmd := codexLoginStatusCommandContext(ctx, "codex", args...)
 	cmd.WaitDelay = 500 * time.Millisecond
-	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")
+	var env []string
+	if managed {
+		env = profileCodexEnv(os.Environ(), codexHome, "")
+	} else {
+		env = sanitizedCodexEnv(os.Environ(), codexHome)
+	}
+	cmd.Env = env
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

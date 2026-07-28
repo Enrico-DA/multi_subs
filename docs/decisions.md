@@ -104,6 +104,16 @@ Claude settings inspection is data-minimizing. It reads only routing fields from
 
 Claude then puts every valid default or managed target in one score-sorted, organization-deduplicated, reservation-locked candidate set. Claude reads usage through the official CLI without reading credential contents.
 
+## Verify default Codex login before exec
+
+Decision: Before launching the default Codex account, `multisubs codex exec` confirms login with the official Codex CLI.
+
+Why: The default account is unmanaged and may use file or OS keyring credential stores. Checking at selection time avoids treating `auth.json` presence as account state and prevents launching a prompt when the default is logged out or its status is unavailable.
+
+Trade-offs: Selecting the default adds one bounded login-status subprocess. If status is logged out or unavailable, exec fails before launching the prompt even when underlying credentials might recover later.
+
+Enforcement: `internal/multisubs/exec.go`, `internal/multisubs/status.go`, `docs/command-spec.md`
+
 ## Prefer plain English
 
 Decision: Use short, direct language in output, docs, comments, tests, reviews, and change records.
