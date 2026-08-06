@@ -1,7 +1,6 @@
 package multisubs
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Enrico-DA/multi_subs/internal/codexstate"
+	"github.com/Enrico-DA/multi_subs/internal/processprobe"
 )
 
 var codexHeartbeatTimeout = 60 * time.Second
@@ -210,14 +210,12 @@ func runCodexHeartbeat(codexHome string, settings heartbeatSettings) (string, er
 	})
 	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Dir = codexHome
-	cmd.WaitDelay = 500 * time.Millisecond
 	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")
 
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-
-	err := cmd.Run()
+	_, truncated, err := processprobe.CombinedOutput(cmd)
+	if truncated {
+		return processprobe.ErrOutputLimit.Error(), processprobe.ErrOutputLimit
+	}
 	if err == nil {
 		return "heartbeat sent", nil
 	}

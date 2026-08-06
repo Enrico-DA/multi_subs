@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestClaudeAddUsesSeparateV1SidecarAndPrivateDerivedPath(t *testing.T) {
@@ -108,6 +110,42 @@ func TestClaudeSidecarRejectsUnknownOrMissingVersion(t *testing.T) {
 				t.Fatalf("expected version rejection, got %v", err)
 			}
 		})
+	}
+}
+
+func TestClaudeConfigLockTimesOutWhenHeld(t *testing.T) {
+	app, _, _ := newClaudeTestApp(t)
+	store := newClaudeStore(app.store.paths)
+	store.configLockTimeout = 100 * time.Millisecond
+	if err := store.EnsureBaseDirs(); err != nil {
+		t.Fatalf("EnsureBaseDirs: %v", err)
+	}
+	lockPath := filepath.Join(store.paths.ClaudeProviderDir, "config.lock")
+	held, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		t.Fatalf("open held Claude config lock: %v", err)
+	}
+	defer held.Close()
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatalf("hold Claude config lock: %v", err)
+	}
+	defer syscall.Flock(int(held.Fd()), syscall.LOCK_UN)
+
+	callbackRan := false
+	start := time.Now()
+	err = store.WithConfigLock(func() error {
+		callbackRan = true
+		return nil
+	})
+	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "Claude config lock timed out") {
+		t.Fatalf("expected Claude config lock timeout, got %v", err)
+	}
+	if callbackRan {
+		t.Fatal("Claude config callback ran without the lock")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Claude config lock timeout exceeded bound: %s", elapsed)
 	}
 }
 

@@ -136,6 +136,8 @@ Active product controls use the `MULTISUBS_*` namespace. This includes heartbeat
 
 An explicit Codex monitor account file may be selected with `MULTISUBS_MONITOR_ACCOUNTS_FILE`.
 
+The live monitor reloads account targets on its polling schedule. If a reload fails, it closes and clears the old targets, shows the normal fetch error, and retries later. It never keeps probing the stale set.
+
 Any legacy `MULTICODEX_*` variable causes startup to fail before state access. Clear it before running `multisubs`. Runtime never reads the old product home or old environment namespace. All legacy `MULTICODEX_*` controls are still removed from provider child environments as a denylist.
 
 Filesystem monitor discovery prunes both `~/multicodex` and `~/.multicodex`, including canonical targets reached through aliases.
@@ -156,6 +158,7 @@ Codex:
 - The usage snapshot preserves a declared five-hour session window, or one other unambiguous declared non-weekly duration, alongside weekly and model-specific weekly limits. A session-only primary response still triggers the weekly fallback; the snapshot merges that session with safe fallback weekly fields. It never guesses a session window from response position.
 - `exec` resolves the effective model from `--model`/`-m`, exact root `model` config overrides, or one common root model across every candidate config. Conflicting candidate models fail with code 2. A Codex `--profile`/`-p` selector requires an explicit model.
 - Routing and the usage snapshot use the same source rule for the default account. A private regular `auth.json` with `tokens.access_token` uses OAuth directly, with no app-server process. If that file is not usable, multisubs starts the official app server against the default home in unmanaged mode. This fallback uses a sanitized environment, adds no managed file-store override, and does not read or fingerprint credentials in the app-server source. It still requires real weekly data; unavailable, exhausted, or model-ineligible usage is skipped as before. The official process may write non-credential logs, caches, database files, and database write-ahead files in the default home, but it does not change credentials.
+- Explicit OAuth eligibility is authoritative. `allowed: false` makes a weekly bucket unavailable, and `limit_reached: true` makes it exhausted. Omitted fields keep the narrow older-response compatibility behavior.
 - If scoring selects the default account, exec asks the official Codex CLI to confirm its login. This check honors the CLI's configured credential store and does not treat a missing `auth.json` as proof of logout. Multisubs makes two bounded attempts, with a short pause between them. If neither confirms login and another account is available, it prints a prominent stderr warning that names the default account and says `Run: codex login`, excludes the default for that command, and selects once more from the remaining accounts. A redirect always has that visible warning. If no other account can run the job, exec exits with code 1 and one blocked message with the same cause and fix. Default-account execution remains unmanaged and receives no managed auth override.
 - `heartbeat` uses an ephemeral, read-only Codex request and a private lock under `MULTISUBS_HOME`.
 - Resource reconciliation does not overwrite regular user files. It changes only documented product-owned links.
@@ -200,6 +203,7 @@ Completion covers both provider namespaces, Codex monitor topics, all help topic
 - Never copy, sync, transmit, or share provider auth files between machines.
 - Use the official provider login commands for every managed profile.
 - State directories must be private regular directories. Sensitive files, locks, and routing metadata reject unsafe links.
+- Codex and Claude registry locks time out after five seconds rather than proceeding unlocked. Timed provider probes cap captured output at 1,000,000 bytes, bound inherited-pipe draining after cancellation, and reject truncated output as incomplete.
 - Provider child environments remove credential overrides, every inherited `MULTISUBS_*` variable, and all legacy `MULTICODEX_*` controls. Multisubs adds only `MULTISUBS_ACTIVE_PROFILE` to managed Codex children for the selected profile; default-account Codex, neutral provider help, and Claude children receive no `MULTISUBS_*` variable.
 - Output avoids raw credentials, raw provider failure text, and caller-supplied arguments in wrapper failure messages.
 - Current and legacy-sensitive state patterns remain ignored to prevent accidental credential commits.

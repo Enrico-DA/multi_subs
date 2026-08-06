@@ -336,6 +336,55 @@ func TestFetcherCloseClosesAllSources(t *testing.T) {
 	}
 }
 
+func TestFetcherStopsUsingOldTargetsWhenAccountReloadFails(t *testing.T) {
+	tests := []struct {
+		name    string
+		loader  func() ([]MonitorAccount, string, error)
+		message string
+	}{
+		{
+			name: "reload error",
+			loader: func() ([]MonitorAccount, string, error) {
+				return nil, "", errors.New("synthetic registry read failure")
+			},
+			message: "synthetic registry read failure",
+		},
+		{
+			name: "unsafe registry",
+			loader: func() ([]MonitorAccount, string, error) {
+				return nil, "synthetic registry is unsafe", nil
+			},
+			message: "synthetic registry is unsafe",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			oldSource := &fakeSource{name: "old", out: &Summary{
+				WeeklyWindow: WindowSummary{UsedPercent: 10},
+			}}
+			fetcher := &Fetcher{
+				accounts: []accountFetcher{{
+					account: MonitorAccount{Label: "old", CodexHome: "/old"},
+					primary: oldSource,
+				}},
+				accountLoader:          test.loader,
+				accountRefreshInterval: 0,
+			}
+
+			_, err := fetcher.Fetch(context.Background())
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("reload failure was not surfaced: %v", err)
+			}
+			if oldSource.fetches != 0 {
+				t.Fatalf("old target was fetched %d time(s) after reload failure", oldSource.fetches)
+			}
+			if oldSource.closeCount != 1 || len(fetcher.accounts) != 0 {
+				t.Fatalf("old targets were not stopped: close=%d accounts=%d", oldSource.closeCount, len(fetcher.accounts))
+			}
+		})
+	}
+}
+
 type fakeEstimator struct {
 	values map[string]ObservedTokenEstimate
 	errs   map[string]error

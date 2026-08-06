@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestStoreSaveAndLoad(t *testing.T) {
@@ -321,6 +322,49 @@ func TestStoreWithConfigLockRejectsSymlinkedLockFile(t *testing.T) {
 	}
 	if string(b) != "keep me\n" {
 		t.Fatalf("expected victim not to be overwritten, got %q", string(b))
+	}
+}
+
+func TestStoreWithConfigLockTimesOutWhenHeld(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multisubs"))
+	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "codex-default"))
+
+	paths, err := ResolvePaths()
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	store := NewStore(paths)
+	store.configLockTimeout = 100 * time.Millisecond
+	if err := store.EnsureBaseDirs(); err != nil {
+		t.Fatalf("EnsureBaseDirs: %v", err)
+	}
+	lockPath := filepath.Join(paths.MultisubsHome, "config.lock")
+	held, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		t.Fatalf("open held config lock: %v", err)
+	}
+	defer held.Close()
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatalf("hold config lock: %v", err)
+	}
+	defer syscall.Flock(int(held.Fd()), syscall.LOCK_UN)
+
+	callbackRan := false
+	start := time.Now()
+	err = store.WithConfigLock(func() error {
+		callbackRan = true
+		return nil
+	})
+	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "config lock timed out") {
+		t.Fatalf("expected config lock timeout, got %v", err)
+	}
+	if callbackRan {
+		t.Fatal("config callback ran without the lock")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("config lock timeout exceeded bound: %s", elapsed)
 	}
 }
 

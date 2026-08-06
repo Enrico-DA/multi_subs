@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
@@ -29,11 +30,15 @@ type claudeProfile struct {
 }
 
 type claudeStore struct {
-	paths Paths
+	paths             Paths
+	configLockTimeout time.Duration
 }
 
 func newClaudeStore(paths Paths) *claudeStore {
-	return &claudeStore{paths: withClaudePaths(paths)}
+	return &claudeStore{
+		paths:             withClaudePaths(paths),
+		configLockTimeout: defaultAccountConfigLockTimeout,
+	}
 }
 
 func withClaudePaths(paths Paths) Paths {
@@ -181,7 +186,11 @@ func (s *claudeStore) WithConfigLock(fn func() error) error {
 	if err := validatePrivateRegularFileInfo(lockPath, "Claude config lock", info); err != nil {
 		return err
 	}
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+	lockTimeout := accountConfigLockTimeout(s.configLockTimeout)
+	if err := lockFileWithTimeout(lockFile, lockTimeout); err != nil {
+		if errors.Is(err, errFileLockTimeout) {
+			return fmt.Errorf("Claude config lock timed out after %s", lockTimeout)
+		}
 		return fmt.Errorf("lock Claude config: %w", err)
 	}
 	defer func() { _ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) }()

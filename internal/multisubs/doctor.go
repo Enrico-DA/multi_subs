@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Enrico-DA/multi_subs/internal/codexstate"
+	"github.com/Enrico-DA/multi_subs/internal/processprobe"
 )
 
 type DoctorReport struct {
@@ -105,8 +106,11 @@ func RunCodexDoctor(store *Store, cfg *Config, timeout time.Duration) DoctorRepo
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "codex", "--version")
 		cmd.Env = neutralCodexEnv(os.Environ())
-		out, err := cmd.CombinedOutput()
-		if err != nil {
+		out, truncated, err := processprobe.CombinedOutput(cmd)
+		if truncated {
+			detail = fmt.Sprintf("%s (codex --version output exceeded safe limit)", path)
+			checks = append(checks, DoctorCheck{Name: "codex binary", Status: "warn", Details: detail})
+		} else if err != nil {
 			detail = fmt.Sprintf("%s (codex --version failed: %v)", path, err)
 			checks = append(checks, DoctorCheck{Name: "codex binary", Status: "warn", Details: detail})
 		} else {
