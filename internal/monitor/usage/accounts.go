@@ -127,11 +127,21 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 			if autoWarning != "" {
 				collector.warnf("%s", autoWarning)
 			}
-			for _, account := range autoAccounts {
-				if isMultisubsProfileHome(account.CodexHome) {
-					continue
+			multisubsRoots, rootsErr := canonicalMultisubsHomeRoots()
+			if rootsErr != nil {
+				collector.warnf("auto discovery error: %v", rootsErr)
+			} else {
+				for _, account := range autoAccounts {
+					excluded, excludeErr := pathCanonicallyInsideAny(account.CodexHome, multisubsRoots)
+					if excludeErr != nil {
+						collector.warnf("skipping discovery candidate %q: canonical path could not be verified", account.CodexHome)
+						continue
+					}
+					if excluded {
+						continue
+					}
+					collector.add(account.Label, account.CodexHome, 30, false, SourceModeOAuth)
 				}
-				collector.add(account.Label, account.CodexHome, 30, false, SourceModeOAuth)
 			}
 		}
 	}
@@ -330,17 +340,25 @@ func monitorConfigFileUsesFileStore(path string) (bool, error) {
 	return found && store == "file", nil
 }
 
-func isMultisubsProfileHome(home string) bool {
-	configPath, err := multisubsConfigPath()
+func canonicalMultisubsHomeRoots() ([]string, error) {
+	multisubsHome, err := multisubsHomeDir()
 	if err != nil {
-		return false
+		return nil, fmt.Errorf("resolve multisubs home for discovery: %w", err)
 	}
-	profilesDir := filepath.Join(filepath.Dir(configPath), "profiles")
-	rel, err := filepath.Rel(profilesDir, filepath.Clean(home))
-	if err != nil || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
-		return false
+	multisubsHome = filepath.Clean(multisubsHome)
+	roots := []string{multisubsHome}
+	_, err = os.Lstat(multisubsHome)
+	if errors.Is(err, os.ErrNotExist) {
+		return roots, nil
 	}
-	return strings.HasSuffix(rel, string(os.PathSeparator)+"codex-home")
+	if err != nil {
+		return nil, fmt.Errorf("inspect multisubs home for discovery: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(multisubsHome)
+	if err != nil {
+		return nil, fmt.Errorf("resolve multisubs home for discovery: %w", err)
+	}
+	return dedupeStrings(append(roots, filepath.Clean(resolved))), nil
 }
 
 func loadAccountsFromFile() ([]MonitorAccount, string, error) {

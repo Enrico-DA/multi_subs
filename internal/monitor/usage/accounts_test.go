@@ -319,6 +319,97 @@ func TestLoadMonitorAccountsAutoDiscoversSystemCodexHomes(t *testing.T) {
 	}
 }
 
+func TestLoadMonitorAccountsDiscoveryExcludesProductState(t *testing.T) {
+	tmp := t.TempDir()
+	multisubsHome := filepath.Join(tmp, defaultMultisubsHomeDirName)
+	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv(multisubsHomeEnvVar, multisubsHome)
+	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
+
+	profileHome := filepath.Join(multisubsHome, "profiles", "managed", "codex-home")
+	if err := os.MkdirAll(filepath.Join(profileHome, "sessions"), 0o700); err != nil {
+		t.Fatalf("mkdir managed profile signals: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(profileHome, "config.toml"), []byte("cli_auth_credentials_store = \"file\"\n"), 0o600); err != nil {
+		t.Fatalf("write managed profile config: %v", err)
+	}
+	configBody := `{"version":1,"profiles":{"managed":{"name":"managed","codex_home":"` + profileHome + `"}}}`
+	if err := os.WriteFile(filepath.Join(multisubsHome, "config.json"), []byte(configBody), 0o600); err != nil {
+		t.Fatalf("write multisubs config: %v", err)
+	}
+
+	retiredHome := filepath.Join(multisubsHome, "retired", "codex", "old", "codex-home")
+	if err := os.MkdirAll(filepath.Join(retiredHome, "sessions"), 0o700); err != nil {
+		t.Fatalf("mkdir retired profile signals: %v", err)
+	}
+
+	accounts, warning, err := loadMonitorAccountsWithOptions(MonitorAccountOptions{Discover: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if warning != "" {
+		t.Fatalf("expected no warning, got %q", warning)
+	}
+	managedFound := false
+	for _, account := range accounts {
+		switch account.CodexHome {
+		case normalizeHome(retiredHome):
+			t.Fatalf("expected retired product state to be excluded: %#v", accounts)
+		case normalizeHome(profileHome):
+			managedFound = true
+			if account.SourceMode != SourceModeManagedAppServer {
+				t.Fatalf("expected registered profile to keep managed source mode, got %#v", account)
+			}
+		}
+	}
+	if !managedFound {
+		t.Fatalf("expected registered managed profile to be included: %#v", accounts)
+	}
+}
+
+func TestLoadMonitorAccountsDiscoveryKeepsHomesOutsideProductState(t *testing.T) {
+	tmp := t.TempDir()
+	multisubsHome := filepath.Join(tmp, defaultMultisubsHomeDirName)
+	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv(multisubsHomeEnvVar, multisubsHome)
+	t.Setenv(accountsFileEnvVar, filepath.Join(tmp, "missing.json"))
+	if err := os.MkdirAll(multisubsHome, 0o700); err != nil {
+		t.Fatalf("mkdir multisubs home: %v", err)
+	}
+
+	outsideHome := filepath.Join(tmp, "external", "work", "codex-home")
+	prefixSiblingHome := filepath.Join(multisubsHome+"-other", "codex-home")
+	for _, home := range []string{outsideHome, prefixSiblingHome} {
+		if err := os.MkdirAll(filepath.Join(home, "sessions"), 0o700); err != nil {
+			t.Fatalf("mkdir discovery signals: %v", err)
+		}
+	}
+
+	accounts, warning, err := loadMonitorAccountsWithOptions(MonitorAccountOptions{Discover: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if warning != "" {
+		t.Fatalf("expected no warning, got %q", warning)
+	}
+	found := map[string]bool{
+		normalizeHome(outsideHome):       false,
+		normalizeHome(prefixSiblingHome): false,
+	}
+	for _, account := range accounts {
+		if _, ok := found[account.CodexHome]; ok {
+			found[account.CodexHome] = true
+		}
+	}
+	for home, included := range found {
+		if !included {
+			t.Fatalf("expected outside discovered home %q to be included: %#v", home, accounts)
+		}
+	}
+}
+
 func TestLoadMonitorAccountsSkipsTransientAutoDiscoveredHomes(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
