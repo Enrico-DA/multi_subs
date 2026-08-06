@@ -142,6 +142,8 @@ Any legacy `MULTICODEX_*` variable causes startup to fail before state access. C
 
 Filesystem monitor discovery prunes both `~/multicodex` and `~/.multicodex`, including canonical targets reached through aliases.
 
+It excludes candidates canonically inside `MULTISUBS_HOME`; registered managed profiles still come from `config.json`.
+
 This phase does not move any live state or installed binary. Move or replace local state only in a separate, explicit migration step.
 
 For the current user, valid default-config symlinks and valid single-link manual overrides keep working. The old exact multisubs-generated regular config may be replaced with the default-config symlink during normal managed setup. Hard-linked configs, arbitrary config symlinks, broken links, and non-regular entries now require a manual fix before that profile can be used; multisubs does not repair them.
