@@ -62,7 +62,7 @@ func RunDoctor(ctx context.Context, options DoctorOptions) DoctorReport {
 }
 
 func (r DoctorReport) Healthy() bool {
-	return r.Status() != "failed"
+	return r.Status() == "healthy"
 }
 
 func (r DoctorReport) Status() string {

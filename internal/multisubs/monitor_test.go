@@ -136,7 +136,7 @@ func TestHelpMonitorTUITopic(t *testing.T) {
 	}
 }
 
-func TestPrintMonitorDoctorHumanUsesGenericDegradedReason(t *testing.T) {
+func TestMonitorDoctorMixedChecksFailSummaryAndExit(t *testing.T) {
 	t.Parallel()
 
 	report := usage.DoctorReport{Checks: []usage.DoctorCheck{
@@ -147,10 +147,15 @@ func TestPrintMonitorDoctorHumanUsesGenericDegradedReason(t *testing.T) {
 	printMonitorDoctorHumanTo(&buf, report)
 
 	out := buf.String()
-	if !strings.Contains(out, "monitor doctor result: PASS (degraded: at least one check failed)") {
-		t.Fatalf("expected generic degraded result, got %q", out)
+	if !strings.Contains(out, "monitor doctor result: FAIL (degraded: at least one check failed)") {
+		t.Fatalf("expected failed degraded result, got %q", out)
 	}
-	if strings.Contains(out, "usage source is unavailable") {
-		t.Fatalf("did not expect usage-source-only degraded reason, got %q", out)
+	if strings.Contains(out, "monitor doctor result: PASS") {
+		t.Fatalf("failed monitor check printed PASS: %q", out)
+	}
+	err := monitorDoctorResult(report)
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("monitor doctor result = %T (%v), want exit code 1", err, err)
 	}
 }

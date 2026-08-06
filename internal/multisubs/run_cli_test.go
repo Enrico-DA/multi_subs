@@ -101,6 +101,37 @@ func TestRunCLIRejectsBareCodexCommandsWithoutStateMutation(t *testing.T) {
 	}
 }
 
+func TestBareCodexCommandGuidanceDoesNotRepeatArguments(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MULTISUBS_HOME", "")
+	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", "")
+	app := newTestAppForCLI(t)
+	const privateArgument = "synthetic-private-argument"
+
+	for _, test := range []struct {
+		name string
+		run  func([]string) error
+	}{
+		{name: "CLI entry point", run: RunCLI},
+		{name: "App entry point", run: app.Run},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run([]string{"exec", privateArgument})
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+				t.Fatalf("bare exec failure = %T (%v), want exit code 2", err, err)
+			}
+			if !strings.Contains(exitErr.Message, "multisubs codex exec") {
+				t.Fatalf("missing namespaced guidance: %q", exitErr.Message)
+			}
+			if strings.Contains(exitErr.Message, privateArgument) {
+				t.Fatalf("bare command guidance repeated a private argument: %q", exitErr.Message)
+			}
+		})
+	}
+}
+
 func TestRunCLIRejectsLegacyEnvironmentBeforeStateAccess(t *testing.T) {
 	home := t.TempDir()
 	legacyHome := filepath.Join(home, "multicodex")

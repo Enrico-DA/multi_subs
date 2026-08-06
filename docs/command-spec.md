@@ -10,6 +10,8 @@ This document defines the public `multisubs` command surface.
 
 Unknown commands and rejected arguments must not create product state.
 
+Provider-wrapper failures identify the provider command or multisubs operation without repeating caller-supplied argument values.
+
 ## Managed Codex config contract
 
 Every managed Codex `config.toml` must be either:
@@ -39,6 +41,7 @@ Runs an aggregate read-only report with these sections:
 
 The JSON result has `base`, `codex`, and `claude` objects. Each contains a `checks` array.
 After valid argument parsing, all three sections are emitted even when the Codex profile registry is malformed, uses an unsupported version, or contains invalid stored names. That registry error becomes a failed shared/base check, and safe Codex and independent Claude checks continue against an empty Codex profile set.
+Any failed check makes the human summary `FAIL` and the command exit with code 1, regardless of check order or successful checks in another section.
 
 ### `multisubs usage`
 
@@ -177,11 +180,15 @@ The monitor uses official weekly data. Validated managed profiles try the Codex 
 
 `multisubs codex monitor doctor --json` keeps `name`, `ok`, and the human `details` sentence for every check. A successful usage-fetch check also includes `plan_type`, `source`, and the numeric `weekly_used_percent`. Each structured value is omitted when it is unavailable. In particular, unavailable weekly usage omits `weekly_used_percent` while `details` still says `weekly=unavailable`. Failed fetch checks keep the safe error in `details` and omit all three structured usage fields. The new fields add no session windows, provider account identifiers, paths, or raw provider payloads.
 
+Any failed monitor-doctor check makes the human summary `FAIL` and exits with code 1. A successful fetch does not hide another fetch or setup failure.
+
 `MULTISUBS_MONITOR_ACCOUNTS_FILE` may point to an explicit monitor account file.
 
 ### `multisubs codex doctor [--json] [--timeout 8s]`
 
 Runs only the focused Codex checks. It does not include Claude checks or create state.
+
+A managed `auth.json` with group or world permissions fails its credential check. The dependent login-status probe is skipped for that profile, while unrelated profiles and checks continue. The permission finding does not print the credential path, permission bits, or contents.
 
 ### `multisubs codex dry-run [operation]`
 

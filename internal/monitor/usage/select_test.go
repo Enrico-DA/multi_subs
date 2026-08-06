@@ -525,19 +525,26 @@ func TestSelectBestAccountAppliesSparkPolicyEquallyToDefaultAndManaged(t *testin
 }
 
 func TestSelectBestAccountForSparkRequiresSparkWeeklyWindow(t *testing.T) {
+	const privateModelArgument = "synthetic-private-spark-model"
 	withoutSpark := selectionResult("standard", 0, 10, 60)
-	_, err := selectBestAccountFromResultsForModel([]accountFetchResult{withoutSpark}, "spark")
+	_, err := selectBestAccountFromResultsForModel([]accountFetchResult{withoutSpark}, privateModelArgument)
 	if err == nil || !strings.Contains(err.Error(), "model-specific weekly limit") {
 		t.Fatalf("expected missing Spark weekly error, got %v", err)
+	}
+	if strings.Contains(err.Error(), privateModelArgument) {
+		t.Fatalf("missing Spark weekly error repeated the model argument: %v", err)
 	}
 
 	withMissingSpark := selectionResult("missing", 0, 10, 60)
 	withMissingSpark.account.RateLimitWindows = map[string]RateLimitWindow{
 		"spark": {LimitName: "Spark", WeeklyWindow: unavailableWindowSummary()},
 	}
-	_, err = selectBestAccountFromResultsForModel([]accountFetchResult{withMissingSpark}, "spark")
+	_, err = selectBestAccountFromResultsForModel([]accountFetchResult{withMissingSpark}, privateModelArgument)
 	if err == nil || !strings.Contains(err.Error(), "model-eligible") {
 		t.Fatalf("expected unusable Spark weekly error, got %v", err)
+	}
+	if strings.Contains(err.Error(), privateModelArgument) {
+		t.Fatalf("model eligibility error repeated the model argument: %v", err)
 	}
 }
 

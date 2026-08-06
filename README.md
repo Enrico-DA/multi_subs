@@ -183,7 +183,7 @@ multisubs codex dry-run
 multisubs codex dry-run login personal
 ```
 
-Doctor commands and dry-run startup create no multisubs product state and do not change credentials. A requested monitor-doctor app-server probe and the default Codex usage fallback may start the official process against the default home. That process can write non-credential operational state there. Aggregate doctor output always includes shared/base, Codex, and Claude sections after successful argument parsing, even when the Codex profile registry is invalid. Help, version, completion, invalid commands, and dynamic profile completion also avoid state creation.
+Doctor commands and dry-run startup create no multisubs product state and do not change credentials. A requested monitor-doctor app-server probe and the default Codex usage fallback may start the official process against the default home. That process can write non-credential operational state there. Aggregate doctor output always includes shared/base, Codex, and Claude sections after successful argument parsing, even when the Codex profile registry is invalid. Any failed aggregate, focused, or monitor-doctor check prints a `FAIL` summary and exits with code 1. A managed Codex credential file with group or world permissions fails its check and skips that profile's login-status probe without stopping unrelated checks. Help, version, completion, invalid commands, and dynamic profile completion also avoid state creation.
 
 ## Completion
 
@@ -201,7 +201,7 @@ Completion covers both provider namespaces, Codex monitor topics, all help topic
 - Use the official provider login commands for every managed profile.
 - State directories must be private regular directories. Sensitive files, locks, and routing metadata reject unsafe links.
 - Provider child environments remove credential overrides, every inherited `MULTISUBS_*` variable, and all legacy `MULTICODEX_*` controls. Multisubs adds only `MULTISUBS_ACTIVE_PROFILE` to managed Codex children for the selected profile; default-account Codex, neutral provider help, and Claude children receive no `MULTISUBS_*` variable.
-- Output avoids raw credentials and raw provider failure text.
+- Output avoids raw credentials, raw provider failure text, and caller-supplied arguments in wrapper failure messages.
 - Current and legacy-sensitive state patterns remain ignored to prevent accidental credential commits.
 
 See [the command contract](docs/command-spec.md), [the security contract](docs/security-and-privacy.md), and [the upstream translation map](docs/upstream-sync.md).
