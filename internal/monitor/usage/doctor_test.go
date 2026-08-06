@@ -59,8 +59,8 @@ func TestDoctorReportStatus(t *testing.T) {
 			if got := tc.report.Status(); got != tc.want {
 				t.Fatalf("Status() = %q, want %q", got, tc.want)
 			}
-			if got := tc.report.Healthy(); got != (tc.want != "failed") {
-				t.Fatalf("Healthy() = %v, want %v", got, tc.want != "failed")
+			if got := tc.report.Healthy(); got != (tc.want == "healthy") {
+				t.Fatalf("Healthy() = %v, want %v", got, tc.want == "healthy")
 			}
 		})
 	}

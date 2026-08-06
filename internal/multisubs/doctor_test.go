@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,22 @@ func TestDoctorReportHasFailures(t *testing.T) {
 	report.Checks = append(report.Checks, DoctorCheck{Name: "c", Status: "fail"})
 	if !report.HasFailures() {
 		t.Fatalf("expected failures")
+	}
+}
+
+func TestFocusedDoctorFailedCheckPrintsFailAndExitsOne(t *testing.T) {
+	app := newTestAppForCLI(t)
+	t.Setenv("PATH", t.TempDir())
+
+	output, err := captureStdout(t, func() error {
+		return app.cmdDoctor(nil)
+	})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("focused doctor failure = %T (%v), want exit code 1", err, err)
+	}
+	if !strings.Contains(output, "doctor result: FAIL") || strings.Contains(output, "doctor result: PASS") {
+		t.Fatalf("focused doctor printed the wrong failure summary:\n%s", output)
 	}
 }
 
@@ -295,6 +312,9 @@ func TestAggregateDoctorCompletesAllSectionsWhenCodexRegistryIsInvalid(t *testin
 							!strings.Contains(output, "[ok] Claude binary: claude test") {
 							t.Fatalf("aggregate human output missed registry or Claude checks:\n%s", output)
 						}
+						if !strings.Contains(output, "doctor result: FAIL") || strings.Contains(output, "doctor result: PASS") {
+							t.Fatalf("aggregate doctor printed the wrong failure summary:\n%s", output)
+						}
 					}
 
 					after, readErr := os.ReadFile(app.store.paths.ConfigPath)
@@ -508,6 +528,63 @@ func TestCheckAuthFileRejectsHardLink(t *testing.T) {
 	}
 	if !strings.Contains(check.Details, "multiple hard links") {
 		t.Fatalf("expected hard-link detail, got %q", check.Details)
+	}
+}
+
+func TestProfileDoctorRejectsLooseAuthPermissionsWithoutLoginProbe(t *testing.T) {
+	previousCommandContext := codexLoginStatusCommandContext
+	t.Cleanup(func() {
+		codexLoginStatusCommandContext = previousCommandContext
+	})
+
+	probeCalls := 0
+	codexLoginStatusCommandContext = func(context.Context, string, ...string) *exec.Cmd {
+		probeCalls++
+		return exec.Command("sh", "-c", "exit 0")
+	}
+
+	for _, mode := range []os.FileMode{0o640, 0o604} {
+		mode := mode
+		t.Run(mode.String(), func(t *testing.T) {
+			root := t.TempDir()
+			paths := Paths{ProfilesDir: filepath.Join(root, "profiles")}
+			codexHome := filepath.Join(paths.ProfilesDir, "work", "codex-home")
+			if err := os.MkdirAll(codexHome, 0o700); err != nil {
+				t.Fatalf("mkdir codex home: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(generatedProfileConfigContent), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			const privateContentMarker = "synthetic-private-value"
+			authContent := `{"marker":"` + privateContentMarker + `","tokens":{"access_token":"a","refresh_token":"r","id_token":"i"}}`
+			authPath := filepath.Join(codexHome, "auth.json")
+			if err := os.WriteFile(authPath, []byte(authContent), 0o600); err != nil {
+				t.Fatalf("write auth file: %v", err)
+			}
+			if err := os.Chmod(authPath, mode); err != nil {
+				t.Fatalf("set loose auth permissions: %v", err)
+			}
+
+			callsBefore := probeCalls
+			checks := profileDoctorChecks(paths, "work", Profile{Name: "work", CodexHome: codexHome}, true, time.Second)
+			if probeCalls != callsBefore {
+				t.Fatalf("loose auth permissions started %d login probe(s)", probeCalls-callsBefore)
+			}
+			for _, check := range checks {
+				if strings.Contains(check.Name, "login status") {
+					t.Fatalf("loose auth permissions included a login-status check: %v", checks)
+				}
+			}
+			authCheck := checks[len(checks)-1]
+			if authCheck.Name != "profile work auth" || authCheck.Status != "fail" {
+				t.Fatalf("loose auth check = %#v, want failed profile auth", authCheck)
+			}
+			for _, forbidden := range []string{codexHome, fmt.Sprintf("%o", mode.Perm()), privateContentMarker} {
+				if strings.Contains(authCheck.Details, forbidden) {
+					t.Fatalf("auth permission detail exposed %q: %q", forbidden, authCheck.Details)
+				}
+			}
+		})
 	}
 }
 
