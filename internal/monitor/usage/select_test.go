@@ -114,7 +114,7 @@ func TestSelectBestAccountDoesNotUseUnavailablePriorityFallback(t *testing.T) {
 }
 
 func TestCollapseFetchedCandidatesFailsClosedWhenDuplicateSnapshotsDisagree(t *testing.T) {
-	first := selectionResult("egcom", 0, 70, 600)
+	first := selectionResult("personal", 0, 70, 600)
 	first.account.AccountID = "shared-account"
 	first.account.AccountEmail = "person@example.com"
 	second := selectionResult("default", 0, 10, 60)
@@ -127,14 +127,14 @@ func TestCollapseFetchedCandidatesFailsClosedWhenDuplicateSnapshotsDisagree(t *t
 }
 
 func TestCollapseFetchedCandidatesChoosesPhysicalHomeAfterConsistentSnapshot(t *testing.T) {
-	first := selectionResult("egcom", 0, 70, 600)
+	first := selectionResult("personal", 0, 70, 600)
 	first.account.AccountID = "shared-account"
 	first.account.AccountEmail = "person@example.com"
 	second := selectionResult("default", 0, 70, 600)
 	second.account.AccountEmail = "person@example.com"
 
 	collapsed := collapseFetchedCandidatesByIdentity([]accountFetchResult{first, second})
-	if len(collapsed) != 1 || collapsed[0].account.Label != "egcom" {
+	if len(collapsed) != 1 || collapsed[0].account.Label != "personal" {
 		t.Fatalf("expected the first stable physical home after consistency, got %+v", collapsed)
 	}
 }

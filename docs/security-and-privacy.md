@@ -127,3 +127,5 @@ Both default accounts remain outside product ownership. Routing never changes th
 The repository keeps current and legacy-sensitive state patterns in `.gitignore` and doctor leak checks. It also checks for tracked credential-shaped paths and sensitive text.
 
 Tests and examples use synthetic values and dummy paths. Upstream attribution to `olliecrow/multicodex` is not a runtime compatibility reference.
+
+No real person's email address or name belongs in this repository. Test and example identities use reserved domains, currently `example.com`, `example.net`, `example.org`, and any `.test`, `.example`, `.invalid`, or `.localhost` name, with synthetic local parts. The sensitive-text policy rejects any other email domain in changed files, commit messages, patches, and pull request text, and redacts the address in its own output. Real names cannot be detected automatically and remain a review responsibility.

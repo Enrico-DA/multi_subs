@@ -19,6 +19,7 @@
 - Keep each managed Claude account inside its derived profile-local `CLAUDE_CONFIG_DIR`.
 - Never change, copy, restore, back up, symlink, or otherwise manage either shared default auth account. Each default account participates normally in routing while remaining outside product ownership. An official app-server usage probe may write non-credential logs, caches, and database files in the default Codex home, but it must not change default credentials.
 - Never print raw credentials or raw subprocess failure output that could contain credentials. Tests and examples must use synthetic state and dummy paths.
+- Never commit a real person's email address or name. Test and example identities use reserved domains such as `example.com` or `example.test`, with synthetic local parts. The sensitive-text policy enforces the domain rule on changed files, commit messages, patches, and pull request text; the name rule relies on review.
 - Preserve resource reconciliation's no-clobber behavior: regular profile guidance, config, and skill entries are user overrides; only documented multisubs-owned symlinks may be changed. Runtime-managed `.system` skills remain profile-local.
 - Keep Codex usage and routing weekly-only. Prefer declared 10,080-minute windows and retain only the existing narrow compatibility fallback for older provider responses.
 - Keep Claude routing based on fresh official session, weekly all-model, and Fable usage without reading credential contents.

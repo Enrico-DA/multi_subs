@@ -17,6 +17,8 @@ allowed_path_placeholder_regex='(/Users/(YOU|USER|username)|/home/(user|USER|use
 secret_assignment_regex='([Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_./+=-]{12,}'
 json_secret_regex='["'"'"']([Aa][Cc][Cc][Ee][Ss][Ss]_[Tt][Oo][Kk][Ee][Nn]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Ii][Dd]_[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Oo][Pp][Ee][Nn][Aa][Ii]_[Aa][Pp][Ii]_[Kk][Ee][Yy])["'"'"'][[:space:]]*:[[:space:]]*["'"'"'][A-Za-z0-9_./+=-]{20,}["'"'"']'
 known_token_regex='((ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,})'
+email_regex='[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'
+reserved_email_regex='[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+\.)*([Ee][Xx][Aa][Mm][Pp][Ll][Ee]\.([Cc][Oo][Mm]|[Nn][Ee][Tt]|[Oo][Rr][Gg])|[Tt][Ee][Ss][Tt]|[Ee][Xx][Aa][Mm][Pp][Ll][Ee]|[Ii][Nn][Vv][Aa][Ll][Ii][Dd]|[Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt])'
 
 search_pattern() {
   local pattern="$1"
@@ -38,12 +40,23 @@ filter_allowed_path_placeholders() {
   done
 }
 
+filter_reserved_emails() {
+  local line redacted
+  while IFS= read -r line; do
+    redacted="$(printf '%s\n' "$line" | sed -E "s#${reserved_email_regex}#<reserved-email>#g")"
+    if [[ "$redacted" =~ $email_regex ]]; then
+      printf '%s\n' "$line"
+    fi
+  done
+}
+
 redact_matches() {
   sed -E \
     -e "s#${local_path_regex}#<redacted-local-path>#g" \
     -e "s#${json_secret_regex}#<redacted-json-secret>#g" \
     -e "s#${known_token_regex}#<redacted-token>#g" \
-    -e "s#([Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])[[:space:]]*[:=][[:space:]]*[\"']?[^[:space:]\"']+#\\1=<redacted-secret>#g"
+    -e "s#([Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])[[:space:]]*[:=][[:space:]]*[\"']?[^[:space:]\"']+#\\1=<redacted-secret>#g" \
+    -e "s#${email_regex}#<redacted-email>#g"
 }
 
 failed=0
@@ -61,7 +74,15 @@ for target in "$@"; do
   json_secret_matches="$(search_pattern "$json_secret_regex" "$target")"
   known_token_matches="$(search_pattern "$known_token_regex" "$target")"
 
-  matches="$(printf '%s\n%s\n%s\n%s\n' "$path_matches" "$secret_assignment_matches" "$json_secret_matches" "$known_token_matches" | sed '/^$/d' | sort -u)"
+  email_matches=""
+  if [[ "$(basename "$target")" != "go.mod" && "$(basename "$target")" != "go.sum" ]]; then
+    email_matches="$(search_pattern "$email_regex" "$target")"
+    if [[ -n "$email_matches" ]]; then
+      email_matches="$(printf '%s\n' "$email_matches" | filter_reserved_emails)"
+    fi
+  fi
+
+  matches="$(printf '%s\n%s\n%s\n%s\n%s\n' "$path_matches" "$secret_assignment_matches" "$json_secret_matches" "$known_token_matches" "$email_matches" | sed '/^$/d' | sort -u)"
   if [[ -n "$matches" ]]; then
     echo "policy violation in ${context}: ${target}" >&2
     printf '%s\n' "$matches" | redact_matches >&2
@@ -74,6 +95,7 @@ if [[ "$failed" -ne 0 ]]; then
 Blocked by sensitive-text policy.
 - Remove or redact secrets and credential-like values.
 - Replace local absolute paths with repo-relative paths or placeholders like /path/to/project.
+- Use only reserved email domains, such as example.com or example.test, and synthetic local parts.
 EOF
 fi
 
