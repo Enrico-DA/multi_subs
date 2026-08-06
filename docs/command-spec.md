@@ -172,6 +172,8 @@ Nested topics:
 
 The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. Default and active homes follow their explicit inclusion rules. It remains the live Codex view; `multisubs usage` is the separate quick snapshot.
 
+`multisubs codex monitor doctor --json` keeps `name`, `ok`, and the human `details` sentence for every check. A successful usage-fetch check also includes `plan_type`, `source`, and the numeric `weekly_used_percent`. Each structured value is omitted when it is unavailable. In particular, unavailable weekly usage omits `weekly_used_percent` while `details` still says `weekly=unavailable`. Failed fetch checks keep the safe error in `details` and omit all three structured usage fields. The new fields add no session windows, provider account identifiers, paths, or raw provider payloads.
+
 `MULTISUBS_MONITOR_ACCOUNTS_FILE` may point to an explicit monitor account file.
 
 ### `multisubs codex doctor [--json] [--timeout 8s]`
