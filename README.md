@@ -1,6 +1,6 @@
 # multisubs
 
-`multisubs` is a local-first Go command-line tool for isolated Codex and Claude subscription profiles. It keeps each managed account in its own provider directory, routes work by current provider usage, and leaves both normal default accounts outside product ownership.
+`multisubs` is a local-first Go command-line tool for isolated Codex and Claude subscription profiles. It keeps each managed account in its own provider directory, routes work by current provider usage, and leaves both normal default accounts outside product ownership. Managed Claude profiles require Claude Max; managed Codex profiles have no plan requirement.
 
 This is a deliberate breaking rename for one local user. There is no old executable alias, state fallback, environment fallback, or compatibility command.
 
@@ -43,7 +43,7 @@ multisubs codex cli personal
 multisubs codex exec -s read-only "Summarize this repository."
 ```
 
-Add and use a Claude profile:
+Add and use a Claude profile. Managed Claude profiles currently require a Claude Max subscription with first-party `claude.ai` login; other plans, including Pro, fail login verification and are never routed to. Claude usage reporting still works for any logged-in account.
 
 ```bash
 multisubs claude add personal
