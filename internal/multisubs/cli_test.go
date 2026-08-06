@@ -288,3 +288,39 @@ func assertNeutralCodexHelpInvocation(t *testing.T, logPath, helpFlag string, in
 		}
 	}
 }
+
+func TestRejectedProfileNameCreatesNoProductState(t *testing.T) {
+	dispatches := []struct {
+		name string
+		run  func(*App) error
+	}{
+		{name: "codex cli", run: func(app *App) error { return app.cmdCLI([]string{"typo"}) }},
+		{name: "codex login", run: func(app *App) error { return app.cmdLogin([]string{"typo"}) }},
+	}
+
+	for _, dispatch := range dispatches {
+		t.Run(dispatch.name, func(t *testing.T) {
+			root := t.TempDir()
+			multisubsHome := filepath.Join(root, "multisubs")
+			t.Setenv("MULTISUBS_HOME", multisubsHome)
+			t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "default-codex"))
+
+			app, err := NewApp()
+			if err != nil {
+				t.Fatalf("NewApp: %v", err)
+			}
+
+			err = dispatch.run(app)
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+				t.Fatalf("expected exit code 2 for an unknown profile, got %T (%v)", err, err)
+			}
+			if exitErr.Message != "unknown profile: typo" {
+				t.Fatalf("unexpected rejection message: %q", exitErr.Message)
+			}
+			if _, statErr := os.Stat(multisubsHome); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("rejected profile name created product state: %v", statErr)
+			}
+		})
+	}
+}

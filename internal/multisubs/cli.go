@@ -17,7 +17,10 @@ func (a *App) cmdCLI(args []string) error {
 	}
 
 	name := args[0]
-	cfg, err := a.loadOrInitConfig()
+	// A rejected profile name must not create product state, so the registry
+	// is read without initializing it. A profile can only exist in a saved
+	// registry, so a missing one is always an unknown name.
+	cfg, err := a.loadConfigIfExists()
 	if err != nil {
 		return err
 	}
