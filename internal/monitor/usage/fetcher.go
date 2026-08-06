@@ -503,6 +503,7 @@ func (f *Fetcher) refreshAccounts(now time.Time, force bool) {
 	f.accountsLastRefreshedAt = now
 	if err != nil {
 		f.initializationNote = err.Error()
+		f.replaceAccountFetchers(nil)
 		return
 	}
 

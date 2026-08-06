@@ -38,6 +38,7 @@ type WindowSummary struct {
 	WindowDurationMins *int       `json:"window_duration_mins,omitempty"`
 	ResetsAt           *time.Time `json:"resets_at,omitempty"`
 	SecondsUntilReset  *int64     `json:"seconds_until_reset,omitempty"`
+	exhausted          bool
 }
 
 type AccountSummary struct {

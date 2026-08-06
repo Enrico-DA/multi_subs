@@ -129,18 +129,10 @@ func (s *OAuthSource) fetchRequest(req *http.Request) (*Summary, error) {
 	snapshot := rateLimitSnapshotRaw{
 		LimitID:  "codex",
 		PlanType: payload.PlanType,
-		Primary: &rateLimitWindowRaw{
-			UsedPercent:        payload.RateLimit.PrimaryWindow.UsedPercent,
-			WindowDurationMins: toMins(payload.RateLimit.PrimaryWindow.LimitWindowSeconds),
-			ResetsAt:           toInt64Ptr(payload.RateLimit.PrimaryWindow.ResetAt),
-		},
+		Primary:  oauthRateLimitWindow(payload.RateLimit, payload.RateLimit.PrimaryWindow),
 	}
 	if payload.RateLimit.SecondaryWindow != nil {
-		snapshot.Secondary = &rateLimitWindowRaw{
-			UsedPercent:        payload.RateLimit.SecondaryWindow.UsedPercent,
-			WindowDurationMins: toMins(payload.RateLimit.SecondaryWindow.LimitWindowSeconds),
-			ResetsAt:           toInt64Ptr(payload.RateLimit.SecondaryWindow.ResetAt),
-		}
+		snapshot.Secondary = oauthRateLimitWindow(payload.RateLimit, payload.RateLimit.SecondaryWindow)
 	}
 	rateLimitsByLimitID := map[string]rateLimitSnapshotRaw{
 		snapshot.LimitID: snapshot,
@@ -182,8 +174,8 @@ type oauthAdditionalRateLimit struct {
 }
 
 type oauthRateLimitDetails struct {
-	Allowed         bool                 `json:"allowed"`
-	LimitReached    bool                 `json:"limit_reached"`
+	Allowed         *bool                `json:"allowed"`
+	LimitReached    *bool                `json:"limit_reached"`
 	PrimaryWindow   *oauthWindowSnapshot `json:"primary_window"`
 	SecondaryWindow *oauthWindowSnapshot `json:"secondary_window"`
 }
@@ -279,6 +271,22 @@ func toInt64Ptr(v int) *int64 {
 	return &out
 }
 
+func oauthRateLimitWindow(details *oauthRateLimitDetails, window *oauthWindowSnapshot) *rateLimitWindowRaw {
+	if details == nil || window == nil {
+		return nil
+	}
+	usedPercent := window.UsedPercent
+	if details.Allowed != nil && !*details.Allowed {
+		usedPercent = unavailableUsedPercent
+	}
+	return &rateLimitWindowRaw{
+		UsedPercent:        usedPercent,
+		WindowDurationMins: toMins(window.LimitWindowSeconds),
+		ResetsAt:           toInt64Ptr(window.ResetAt),
+		exhausted:          details.LimitReached != nil && *details.LimitReached,
+	}
+}
+
 func buildRateLimitWindowsFromOAuthAdditionalLimits(additionalLimits []oauthAdditionalRateLimit) map[string]rateLimitSnapshotRaw {
 	if len(additionalLimits) == 0 {
 		return nil
@@ -297,19 +305,11 @@ func buildRateLimitWindowsFromOAuthAdditionalLimits(additionalLimits []oauthAddi
 		windowByLimit[limitName] = rateLimitSnapshotRaw{
 			LimitID:   limitName,
 			LimitName: &additional.LimitName,
-			Primary: &rateLimitWindowRaw{
-				UsedPercent:        additional.RateLimit.PrimaryWindow.UsedPercent,
-				WindowDurationMins: toMins(additional.RateLimit.PrimaryWindow.LimitWindowSeconds),
-				ResetsAt:           toInt64Ptr(additional.RateLimit.PrimaryWindow.ResetAt),
-			},
+			Primary:   oauthRateLimitWindow(additional.RateLimit, additional.RateLimit.PrimaryWindow),
 		}
 		if additional.RateLimit.SecondaryWindow != nil {
 			window := windowByLimit[limitName]
-			window.Secondary = &rateLimitWindowRaw{
-				UsedPercent:        additional.RateLimit.SecondaryWindow.UsedPercent,
-				WindowDurationMins: toMins(additional.RateLimit.SecondaryWindow.LimitWindowSeconds),
-				ResetsAt:           toInt64Ptr(additional.RateLimit.SecondaryWindow.ResetAt),
-			}
+			window.Secondary = oauthRateLimitWindow(additional.RateLimit, additional.RateLimit.SecondaryWindow)
 			windowByLimit[limitName] = window
 		}
 	}

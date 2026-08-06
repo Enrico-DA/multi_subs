@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	"github.com/Enrico-DA/multi_subs/internal/processprobe"
 )
 
 type DoctorReport struct {
@@ -91,7 +93,14 @@ func (r DoctorReport) Status() string {
 func checkCodexBinary(ctx context.Context) DoctorCheck {
 	cmd := exec.CommandContext(ctx, "codex", "--version")
 	cmd.Env = withoutCodexProfileEnv(os.Environ())
-	out, err := cmd.CombinedOutput()
+	out, truncated, err := processprobe.CombinedOutput(cmd)
+	if truncated {
+		return DoctorCheck{
+			Name:    "codex binary",
+			OK:      false,
+			Details: "codex --version output exceeded safe limit",
+		}
+	}
 	if err != nil {
 		return DoctorCheck{
 			Name:    "codex binary",

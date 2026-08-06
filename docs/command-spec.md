@@ -12,6 +12,8 @@ Unknown commands and rejected arguments must not create product state.
 
 Provider-wrapper failures identify the provider command or multisubs operation without repeating caller-supplied argument values.
 
+Codex and Claude account registry writes wait at most five seconds for their private configuration lock. A timeout fails the command without running the locked operation.
+
 ## Managed Codex config contract
 
 Every managed Codex `config.toml` must be either:
@@ -119,6 +121,7 @@ Runs official `codex exec` after weekly-only account selection.
 - The default account and managed profiles have equal selection priority.
 - Fetched physical targets are reconciled by official Codex account identity before selection. Successful duplicates must agree on requested-bucket presence, weekly availability, exhaustion, used percentage, and reset meaning. When both snapshots carry an absolute reset timestamp, those timestamps must match exactly even if their countdowns differ. Only when both snapshots lack an absolute timestamp may relative countdowns differ, and then by at most five seconds to cover concurrent-fetch drift. Known and unknown resets, mixed absolute and relative-only resets, and larger drift disagree. Disagreement excludes the whole logical group. A deterministic physical home is chosen only after agreement. One failed duplicate can fall back to a consistent success only when protected official email identity safely joins them. Missing or conflicting fallback identity contributes no separate capacity.
 - Accounts with unavailable or exhausted weekly usage are skipped.
+- OAuth `allowed: false` makes that rate-limit bucket unavailable, and `limit_reached: true` makes it exhausted. Omitted eligibility flags keep the existing older-response behavior; they do not add a new fallback.
 - Known weekly resets are tried soonest first.
 - A requested Spark model requires that account's Spark weekly bucket.
 - Effective model routing recognizes Codex `--model`/`-m` flags and exact root `model` values passed through `-c`/`--config`; the dedicated model flag has Codex's higher precedence.
@@ -178,11 +181,15 @@ Nested topics:
 
 The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. An included default home follows the same OAuth-or-unmanaged-app-server rule as routing and the usage report. A requested monitor-doctor app-server probe may therefore start the official process against the default home, where it can write non-credential logs, caches, database files, and database write-ahead files without changing credentials. Active homes follow their explicit inclusion rules. It remains the live Codex view; `multisubs usage` is the separate quick snapshot.
 
+The live monitor reloads its account set on the polling schedule. A failed reload closes and clears the current targets before the next fetch, reports the reload error through the existing fetch-error state, and retries later. The monitor loop stays open so a repaired registry can recover without a restart. A reload that can still verify a safe target set replaces the old set and excludes every rejected target.
+
 `multisubs codex monitor doctor --json` keeps `name`, `ok`, and the human `details` sentence for every check. A successful usage-fetch check also includes `plan_type`, `source`, and the numeric `weekly_used_percent`. Each structured value is omitted when it is unavailable. In particular, unavailable weekly usage omits `weekly_used_percent` while `details` still says `weekly=unavailable`. Failed fetch checks keep the safe error in `details` and omit all three structured usage fields. The new fields add no session windows, provider account identifiers, paths, or raw provider payloads.
 
 Any failed monitor-doctor check makes the human summary `FAIL` and exits with code 1. A successful fetch does not hide another fetch or setup failure.
 
 `MULTISUBS_MONITOR_ACCOUNTS_FILE` may point to an explicit monitor account file.
+
+Timed provider checks that capture output keep at most 1,000,000 bytes and stop waiting on inherited output pipes after a 500 ms drain bound. Truncated output fails strict classification and is never shown or parsed as a complete provider response.
 
 ### `multisubs codex doctor [--json] [--timeout 8s]`
 

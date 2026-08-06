@@ -5,8 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Enrico-DA/multi_subs/internal/processprobe"
 )
 
 func TestClaudeDefaultEnvRemovesConfigAndCredentialOverrides(t *testing.T) {
@@ -180,6 +184,55 @@ func TestClaudeProbeFailureUsesDeterministicCategories(t *testing.T) {
 				t.Fatalf("failure category exposed synthetic secret: %q", got)
 			}
 		})
+	}
+}
+
+func TestClaudeCaptureRejectsOversizedOutputWithinBound(t *testing.T) {
+	binDir := t.TempDir()
+	script := "#!/bin/sh\nhead -c " + strconv.Itoa(processprobe.OutputLimit*4) + " /dev/zero\n"
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake Claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+":/usr/bin:/bin")
+
+	start := time.Now()
+	stdout, stderr, err := (osClaudeCommandRunner{}).Capture(
+		context.Background(),
+		[]string{"synthetic-probe"},
+		[]string{"PATH=" + os.Getenv("PATH")},
+	)
+	if !errors.Is(err, processprobe.ErrOutputLimit) {
+		t.Fatalf("expected oversized-output failure, got %v", err)
+	}
+	if stdout != nil || stderr != nil {
+		t.Fatalf("truncated provider output was returned: stdout=%d stderr=%d", len(stdout), len(stderr))
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("oversized provider output exceeded return bound: %s", elapsed)
+	}
+}
+
+func TestClaudeCaptureTimeoutDoesNotWaitForInheritedPipe(t *testing.T) {
+	binDir := t.TempDir()
+	script := "#!/bin/sh\n(sleep 3) &\nsleep 3\n"
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake Claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+":/usr/bin:/bin")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, _, err := (osClaudeCommandRunner{}).Capture(
+		ctx,
+		[]string{"synthetic-probe"},
+		[]string{"PATH=" + os.Getenv("PATH")},
+	)
+	if err == nil {
+		t.Fatal("expected timed provider probe to fail")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("timed provider probe waited on inherited pipe: %s", elapsed)
 	}
 }
 

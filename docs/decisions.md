@@ -70,6 +70,14 @@ Why: Symlinks, hard links, broad permissions, or paths outside product state can
 
 Enforcement: State and profile paths are private. Sensitive files and locks reject unsafe links. Selected-profile metadata and heartbeat lock overrides stay below `MULTISUBS_HOME`.
 
+## Keep the live monitor recoverable without stale targets
+
+Decision: A failed scheduled account reload stops the current monitor targets, but not the monitor loop. The loop reports the fetch error and retries the account reload on its normal schedule.
+
+Why: Continuing to fetch an old target set could spend or expose the wrong account after registry state changed. Exiting the whole interface would also require a manual restart after a short read failure. Keeping only the loop alive fails closed for provider access while allowing a later verified registry to recover.
+
+Enforcement: A loader error closes and clears all current account fetchers before `Fetch` returns the existing no-accounts error. A reload that returns a verified safe set replaces the previous set, including with an empty set when every target was rejected.
+
 ## Preserve no-clobber resource reconciliation
 
 Decision: Regular profile guidance, config, and skill entries are user overrides.

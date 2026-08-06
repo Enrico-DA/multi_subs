@@ -40,6 +40,7 @@ The Codex and Claude registries remain separate. Their auth and routing stores a
 Product state directories, profile directories, provider config directories, locks, routing metadata, and sensitive files must be private regular filesystem entries.
 
 - Unsafe symlinks and hard links fail closed.
+- Codex and Claude account configuration locks have a five-second acquisition deadline and never proceed unlocked.
 - Product-controlled runtime paths stay below `MULTISUBS_HOME`.
 - Resource reconciliation does not overwrite regular user guidance, config, or skill entries.
 - Only documented product-owned links may be created, changed, or removed.
@@ -101,6 +102,10 @@ Usage reports create no multisubs product state and do not change credentials. T
 
 Codex routing and monitoring use weekly usage only. Before automatic routing selection, fetched physical Codex targets are reconciled into logical subscriptions. All successful duplicates must agree on the requested bucket, availability, exhaustion, used percentage, and reset meaning or the whole group is skipped. A deterministic physical home is chosen only after agreement. A failed duplicate may use a consistent success only when protected official email identity safely groups them. The default account and managed profiles use the same weekly, model, and reset policy once usable usage is available. The default account uses OAuth directly when a private regular `auth.json` contains `tokens.access_token`; no app-server process starts in that case. Without a usable file, the official app server runs against the default home in unmanaged mode. The app-server source does not read or fingerprint credential material and does not add the managed file-store override. It must return real weekly data. Other unavailable, exhausted, model-ineligible, identity-unverified, or conflicting fallback targets are skipped during scoring. Duplicate homes cannot add routing probability or capacity. The existing narrow fallback for older official responses remains limited to weekly-compatible data.
 
+OAuth eligibility is authoritative when present. An explicit `allowed: false` makes that rate-limit bucket unavailable, and an explicit `limit_reached: true` makes it exhausted. Omitted flags preserve the older-response compatibility path without creating a guessed eligibility signal.
+
+The live monitor never keeps fetching a target set after its scheduled reload fails. It closes and clears that set, exposes the reload problem through the normal fetch-error state, and keeps only the monitor loop alive so a later verified reload can recover. If a reload can verify some safe targets, it replaces the old set and excludes rejected targets.
+
 The selected default account has a separate launch gate after scoring. Only an explicit logged-in result from the official Codex CLI passes. Multisubs tries twice, with a short pause between attempts. If login is still not confirmed and another candidate exists, it prints a prominent stderr warning that names default, states a fixed safe cause, gives the exact fix `codex login`, excludes default for that command, and selects once more from the remaining candidates. This makes every quota redirect visible. When no other candidate exists, or replacement selection fails, it exits with code 1 and one blocked message carrying the same cause and fix. Neither message exposes raw subprocess output or raw selection failures.
 
 The unified usage report reads exactly the managed profiles in the two provider registries plus both normal default accounts. Shared typed target enumeration keeps the Codex default present exactly once even when a stored managed home is unsafe; that unsafe managed entry fails only its own row. Claude usage derives its targets from the same target owner as the other Claude commands. It does not read monitor account files, active-home overrides, discovered accounts, or observed-token estimates. It does not create multisubs directories or persist identity in config. The official unmanaged default Codex app server may write non-credential logs, caches, database files, and database write-ahead files in the default home.
@@ -122,6 +127,8 @@ To classify a candidate, routing inspects only `model`, `fallbackModel`, `env.AN
 The default and managed user settings roots stay separate. Selected project and local settings, explicit `--settings`, and local macOS managed files are merged for the candidate without reading credentials or executing policy helpers. Server-managed, account, organization, or operating-system policy values that cannot be proved locally stay uncertain at field level. A conclusive higher-precedence CLI value can make an unknown lower value irrelevant.
 
 Usage probe failure excludes only the affected candidate. Organization deduplication and reservation locking apply to every candidate. The tool does not infer usage from credential contents.
+
+Timed Codex and Claude probes cap captured output at 1,000,000 bytes and bound output-pipe draining after cancellation. Truncated output is treated as incomplete, is not parsed or reported as provider content, and cannot establish routing or authentication state.
 
 Both default accounts remain outside product ownership. Routing never changes their credentials or configuration. The official default Codex app server may write only its normal non-credential operational state while reporting usage.
 

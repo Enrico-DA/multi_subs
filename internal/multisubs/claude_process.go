@@ -1,13 +1,14 @@
 package multisubs
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/Enrico-DA/multi_subs/internal/processprobe"
 )
 
 type claudeCommandRunner interface {
@@ -23,12 +24,11 @@ func (osClaudeCommandRunner) Capture(ctx context.Context, args, env []string) ([
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Env = env
 	cmd.Dir = "/"
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return stdout.Bytes(), stderr.Bytes(), err
+	stdout, stderr, truncated, err := processprobe.SeparateOutput(cmd)
+	if truncated {
+		return nil, nil, processprobe.ErrOutputLimit
+	}
+	return stdout, stderr, err
 }
 
 func (osClaudeCommandRunner) Run(ctx context.Context, args, env []string) error {

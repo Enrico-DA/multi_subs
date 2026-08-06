@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 )
@@ -38,11 +39,12 @@ func DefaultConfig() *Config {
 
 // Store persists config and manages profile filesystem state.
 type Store struct {
-	paths Paths
+	paths             Paths
+	configLockTimeout time.Duration
 }
 
 func NewStore(paths Paths) *Store {
-	return &Store{paths: paths}
+	return &Store{paths: paths, configLockTimeout: defaultAccountConfigLockTimeout}
 }
 
 func (s *Store) EnsureBaseDirs() error {
@@ -93,7 +95,11 @@ func (s *Store) WithConfigLock(fn func() error) error {
 	if fileHasMultipleLinks(info) {
 		return fmt.Errorf("multisubs config lock has multiple hard links: %s", lockPath)
 	}
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+	lockTimeout := accountConfigLockTimeout(s.configLockTimeout)
+	if err := lockFileWithTimeout(lockFile, lockTimeout); err != nil {
+		if errors.Is(err, errFileLockTimeout) {
+			return fmt.Errorf("config lock timed out after %s", lockTimeout)
+		}
 		return fmt.Errorf("lock config: %w", err)
 	}
 	defer func() { _ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) }()
