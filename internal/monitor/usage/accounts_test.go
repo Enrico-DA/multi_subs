@@ -1014,37 +1014,48 @@ func linkMonitorTestFileOrSkipUnsupported(t *testing.T, oldPath, newPath string)
 }
 
 func TestLoadAccountsFromMultisubsConfigRejectsInvalidProfileName(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
-
-	configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
-	profileName := "Work"
-	profileHome := filepath.Join(configDir, "profiles", profileName, "codex-home")
-	if err := os.MkdirAll(profileHome, 0o700); err != nil {
-		t.Fatalf("mkdir profile home: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(profileHome, "auth.json"), []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
-		t.Fatalf("write auth file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(profileHome, "config.toml"), []byte("cli_auth_credentials_store = \"file\"\n"), 0o600); err != nil {
-		t.Fatalf("write profile config: %v", err)
-	}
-	configPath := filepath.Join(configDir, "config.json")
-	configBody := `{"version":1,"profiles":{"` + profileName + `":{"name":"` + profileName + `","codex_home":"` + profileHome + `"}}}`
-	if err := os.WriteFile(configPath, []byte(configBody), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
+	tests := []struct {
+		name        string
+		profileName string
+	}{
+		{name: "uppercase", profileName: "Work"},
+		{name: "path traversal", profileName: "../shared"},
 	}
 
-	accounts, warning, err := loadAccountsFromMultisubsConfig()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(accounts) != 0 {
-		t.Fatalf("expected invalid profile to be skipped, got %#v", accounts)
-	}
-	if !strings.Contains(warning, "invalid profile name") {
-		t.Fatalf("expected invalid-name warning, got %q", warning)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("HOME", tmp)
+			t.Setenv(multisubsHomeEnvVar, filepath.Join(tmp, defaultMultisubsHomeDirName))
+
+			configDir := filepath.Join(tmp, defaultMultisubsHomeDirName)
+			profileHome := filepath.Join(configDir, "profiles", test.profileName, "codex-home")
+			if err := os.MkdirAll(profileHome, 0o700); err != nil {
+				t.Fatalf("mkdir profile home: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(profileHome, "auth.json"), []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
+				t.Fatalf("write auth file: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(profileHome, "config.toml"), []byte("cli_auth_credentials_store = \"file\"\n"), 0o600); err != nil {
+				t.Fatalf("write profile config: %v", err)
+			}
+			configPath := filepath.Join(configDir, "config.json")
+			configBody := `{"version":1,"profiles":{"` + test.profileName + `":{"name":"` + test.profileName + `","codex_home":"` + profileHome + `"}}}`
+			if err := os.WriteFile(configPath, []byte(configBody), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			accounts, warning, err := loadAccountsFromMultisubsConfig()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(accounts) != 0 {
+				t.Fatalf("expected invalid profile to be skipped, got %#v", accounts)
+			}
+			if !strings.Contains(warning, "invalid profile name") {
+				t.Fatalf("expected invalid-name warning, got %q", warning)
+			}
+		})
 	}
 }
 

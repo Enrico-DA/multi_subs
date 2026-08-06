@@ -811,8 +811,8 @@ func TestCmdExecFailsClosedWhenDefaultAccountIsLoggedOut(t *testing.T) {
 
 	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
 	var exitErr *ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
-		t.Fatalf("expected exit code 2 for logged-out default, got %T (%v)", err, err)
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("expected exit code 1 for logged-out default, got %T (%v)", err, err)
 	}
 	if !strings.Contains(exitErr.Message, "default Codex account is not logged in") {
 		t.Fatalf("unexpected logged-out error: %q", exitErr.Message)
@@ -832,10 +832,11 @@ func TestCmdExecFailsClosedWhenDefaultLoginStatusIsUnavailable(t *testing.T) {
 	defer func() { defaultExecAccountSelector = originalSelector }()
 
 	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
-	if err == nil {
-		t.Fatal("expected unavailable default login status to fail")
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("expected exit code 1 for unavailable default login status, got %T (%v)", err, err)
 	}
-	if !strings.Contains(err.Error(), "login status unavailable") || !strings.Contains(err.Error(), "exit code 7") {
+	if !strings.Contains(exitErr.Message, "login status could not be confirmed") || !strings.Contains(exitErr.Message, "exit code 7") {
 		t.Fatalf("expected safe login-status error, got %v", err)
 	}
 	if strings.Contains(err.Error(), "opaque-provider-diagnostic") {
@@ -860,7 +861,8 @@ func TestCmdExecFailsClosedWhenDefaultLoginStatusTimesOut(t *testing.T) {
 
 	start := time.Now()
 	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
-	if err == nil || !strings.Contains(err.Error(), "login status timed out") {
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 || !strings.Contains(exitErr.Message, "login status timed out") {
 		t.Fatalf("expected bounded default login-status timeout, got %v", err)
 	}
 	if time.Since(start) > 2*time.Second {
@@ -902,7 +904,7 @@ func TestCmdExecFailsClosedWhenProfileUsageUnavailableAndDefaultLoggedOut(t *tes
 
 	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
 	var exitErr *ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("expected logged-out default to fail closed, got %T (%v)", err, err)
 	}
 	if !strings.Contains(exitErr.Message, "default Codex account is not logged in") {
@@ -910,6 +912,86 @@ func TestCmdExecFailsClosedWhenProfileUsageUnavailableAndDefaultLoggedOut(t *tes
 	}
 	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected codex exec not to run, stat err=%v", statErr)
+	}
+}
+
+func TestCmdExecFailsClosedWhenDefaultLoginStatusIsUnrecognized(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	t.Setenv("FAKE_CODEX_LOGIN_STATE", "unrecognized")
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("expected unrecognized login status to fail with exit code 1, got %T (%v)", err, err)
+	}
+	if !strings.Contains(exitErr.Message, "login status could not be confirmed") {
+		t.Fatalf("unexpected unconfirmed-status error: %q", exitErr.Message)
+	}
+	if strings.Contains(exitErr.Message, "opaque-unrecognized-status") {
+		t.Fatalf("unrecognized subprocess output leaked into error: %q", exitErr.Message)
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected codex exec not to run, stat err=%v", statErr)
+	}
+}
+
+func TestCmdExecTreatsAffirmativeLoginWithUnauthEmailAsLoggedIn(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	t.Setenv("FAKE_CODEX_LOGIN_STATE", "logged-in-unauth-email")
+
+	originalSelector := defaultExecAccountSelector
+	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
+	defer func() { defaultExecAccountSelector = originalSelector }()
+
+	if err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"}); err != nil {
+		t.Fatalf("affirmative default login status failed: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read exec log: %v", err)
+	}
+	if !strings.Contains(string(data), "args=exec --skip-git-repo-check hello") {
+		t.Fatalf("expected codex exec to launch after affirmative login, got %q", data)
+	}
+}
+
+func TestDefaultExecLoginProbeUsesSanitizedEnvironment(t *testing.T) {
+	app, _ := newExecTestApp(t)
+	envLogPath := filepath.Join(t.TempDir(), "login-status.env")
+	t.Setenv("FAKE_CODEX_LOGIN_ENV_LOG", envLogPath)
+	t.Setenv("MULTISUBS_TEST_INHERITED", "synthetic")
+	legacyTestPrefix := strings.Join([]string{"MULTI", "CODEX"}, "")
+	t.Setenv(legacyTestPrefix+"_TEST_INHERITED", "synthetic")
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "stale-codex-home"))
+
+	if err := ensureDefaultExecAccountReady(app.store.paths.DefaultCodexHome); err != nil {
+		t.Fatalf("default login probe failed: %v", err)
+	}
+	data, err := os.ReadFile(envLogPath)
+	if err != nil {
+		t.Fatalf("read default login environment: %v", err)
+	}
+	wantCodexHome := normalizeExecCodexHome(app.store.paths.DefaultCodexHome)
+	seenCodexHome := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if value, ok := strings.CutPrefix(line, "CODEX_HOME="); ok {
+			seenCodexHome = true
+			if normalizeExecCodexHome(value) != wantCodexHome {
+				t.Fatalf("default login CODEX_HOME: got %q want %q", value, wantCodexHome)
+			}
+		}
+		if name, ok := strings.CutPrefix(line, "product_variable="); ok {
+			t.Fatalf("default login probe inherited product variable %q", name)
+		}
+	}
+	if !seenCodexHome {
+		t.Fatal("default login probe did not receive CODEX_HOME")
 	}
 }
 
@@ -1467,10 +1549,35 @@ func TestWriteSelectedProfileMetadataRejectsPathOutsideMultisubsHome(t *testing.
 	}
 }
 
-const fakeExecLoginStatusScript = `if [[ "${1:-}" == "login" && "${2:-}" == "status" ]]; then
+var fakeExecLoginStatusScript = strings.ReplaceAll(`if [[ "${1:-}" == "login" && "${2:-}" == "status" ]]; then
+  if (( $# != 2 )); then
+    for arg in "${@:3}"; do
+      if [[ "$arg" == "-c" || "$arg" == "--config" || "$arg" == 'cli_auth_credentials_store="file"' ]]; then
+        echo "unexpected managed auth override in default login-status probe" >&2
+        exit 64
+      fi
+    done
+    echo "unexpected extra arguments in default login-status probe" >&2
+    exit 64
+  fi
+  if [[ -n "${FAKE_CODEX_LOGIN_ENV_LOG:-}" ]]; then
+    {
+      printf 'CODEX_HOME=%s\n' "${CODEX_HOME:-}"
+      while IFS= read -r name; do
+        printf 'product_variable=%s\n' "$name"
+      done < <(compgen -A variable MULTISUBS_ || true)
+      while IFS= read -r name; do
+        printf 'product_variable=%s\n' "$name"
+      done < <(compgen -A variable {LEGACY}_ || true)
+    } > "${FAKE_CODEX_LOGIN_ENV_LOG}"
+  fi
   case "${FAKE_CODEX_LOGIN_STATE:-logged-in}" in
     logged-in)
       echo "Logged in using ChatGPT"
+      exit 0
+      ;;
+    logged-in-unauth-email)
+      echo "Logged in as unauth@example.test"
       exit 0
       ;;
     logged-out)
@@ -1486,9 +1593,17 @@ const fakeExecLoginStatusScript = `if [[ "${1:-}" == "login" && "${2:-}" == "sta
       echo "Logged in using ChatGPT"
       exit 0
       ;;
+    unrecognized)
+      echo "opaque-unrecognized-status"
+      exit 0
+      ;;
+    *)
+      echo "unexpected fake login state" >&2
+      exit 65
+      ;;
   esac
 fi
-`
+`, "{LEGACY}", strings.Join([]string{"MULTI", "CODEX"}, ""))
 
 func newExecTestApp(t *testing.T) (*App, string) {
 	t.Helper()

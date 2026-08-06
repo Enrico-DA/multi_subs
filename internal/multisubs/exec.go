@@ -271,14 +271,18 @@ func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model
 }
 
 func ensureDefaultExecAccountReady(codexHome string) error {
-	state, _, detail := defaultCodexLoginStatus(codexHome)
+	state, detail := defaultCodexLoginState(codexHome)
 	switch state {
-	case "logged-in", "ok":
+	case "logged-in":
 		return nil
 	case "logged-out":
-		return &ExitError{Code: 2, Message: "default Codex account is not logged in. run: codex login"}
+		return &ExitError{Code: 1, Message: "default Codex account is not logged in. run: codex login"}
 	default:
-		return fmt.Errorf("default Codex login status unavailable: %s", detail)
+		message := "default Codex login status could not be confirmed"
+		if state == "error" {
+			message += ": " + detail
+		}
+		return &ExitError{Code: 1, Message: message}
 	}
 }
 
