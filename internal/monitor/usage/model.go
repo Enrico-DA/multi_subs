@@ -149,7 +149,10 @@ func isSparkLimitBucket(limitID, limitName string) bool {
 }
 
 type DoctorCheck struct {
-	Name    string `json:"name"`
-	OK      bool   `json:"ok"`
-	Details string `json:"details"`
+	Name              string `json:"name"`
+	OK                bool   `json:"ok"`
+	Details           string `json:"details"`
+	PlanType          string `json:"plan_type,omitempty"`
+	Source            string `json:"source,omitempty"`
+	WeeklyUsedPercent *int   `json:"weekly_used_percent,omitempty"`
 }
