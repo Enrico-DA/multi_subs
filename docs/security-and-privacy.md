@@ -33,6 +33,7 @@ The Codex and Claude registries remain separate. Their auth and routing stores a
 - Managed Codex profiles require file-backed auth so each profile has an isolated `auth.json`.
 - The product does not read, copy, or write Claude credential contents.
 - Output must not include raw credentials or raw provider failure text.
+- Provider-wrapper failures must not repeat caller-supplied argument values.
 
 ## Filesystem rules
 
@@ -47,6 +48,8 @@ Product state directories, profile directories, provider config directories, loc
 A managed Codex `config.toml` is allowed only as a regular non-symlink with a verifiable hard-link count of one, or as a symlink whose resolved path exactly matches the resolved default Codex config and whose target is regular. One shared filesystem-only validator enforces this before any managed caller reads TOML. Hard-linked configs are rejected without automatic repair. Raw symlink targets may be shown in safe doctor diagnostics, but config contents are not exposed.
 
 The default Codex account and its config remain unmanaged. This managed-config boundary does not copy, rewrite, or take ownership of default-account state.
+
+Doctor treats group- or world-readable managed Codex credentials as a failed check and does not start that profile's dependent login-status probe. Other doctor checks continue. The finding does not expose the credential path, permission bits, or contents.
 
 ## Environment rules
 
