@@ -257,6 +257,9 @@ func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model
 		return execSelection{Name: target.Account.Label, CodexHome: profile.CodexHome, IsProfile: true, Profile: profile, Metadata: metadata}, nil
 	}
 	if target.Kind == codexRoutingTargetDefault {
+		if err := ensureDefaultExecAccountReady(target.Account.CodexHome); err != nil {
+			return execSelection{}, err
+		}
 		metadata := execSelectionMetadata{
 			Profile:           defaultExecAccountLabel,
 			SelectionSource:   "usage_selector_default",
@@ -265,6 +268,22 @@ func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model
 		return execSelection{Name: defaultExecAccountLabel, CodexHome: target.Account.CodexHome, Metadata: metadata}, nil
 	}
 	return execSelection{}, fmt.Errorf("selected account %q is not an exec candidate", selected.Account.Label)
+}
+
+func ensureDefaultExecAccountReady(codexHome string) error {
+	state, detail := defaultCodexLoginState(codexHome)
+	switch state {
+	case "logged-in":
+		return nil
+	case "logged-out":
+		return &ExitError{Code: 1, Message: "default Codex account is not logged in. run: codex login"}
+	default:
+		message := "default Codex login status could not be confirmed"
+		if state == "error" {
+			message += ": " + detail
+		}
+		return &ExitError{Code: 1, Message: message}
+	}
 }
 
 func codexRoutingTargets(cfg *Config, defaultHome string) []codexRoutingTarget {

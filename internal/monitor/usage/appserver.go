@@ -60,11 +60,6 @@ type AppServerSource struct {
 	authFingerprintFn func() (string, error)
 }
 
-func NewAppServerSource() *AppServerSource {
-	home, _ := defaultCodexHome()
-	return NewAppServerSourceForHome(home)
-}
-
 func NewAppServerSourceForHome(codexHome string) *AppServerSource {
 	return newAppServerSourceForHome(codexHome, false)
 }

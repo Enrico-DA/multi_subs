@@ -107,7 +107,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"codex exec": {
 		Usage:       "multisubs codex exec [codex exec args]",
-		Description: "Run `codex exec` after selecting the default account or a managed profile by weekly usage.",
+		Description: "Run `codex exec` after selecting the default account or a managed profile by weekly usage. The default account is launched only after the official Codex CLI confirms its login.",
 	},
 	"codex status": {
 		Usage:       "multisubs codex status",
