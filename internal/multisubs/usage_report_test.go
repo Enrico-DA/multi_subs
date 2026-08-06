@@ -195,8 +195,8 @@ func TestCollapseCodexUsageCollectionsMergesDefaultWithManagedSubscription(t *te
 		"alpha@example.com",
 		25,
 	)
-	egcom := codexUsageCollectionFixture(
-		"egcom",
+	personal := codexUsageCollectionFixture(
+		"personal",
 		codexRoutingTargetManaged,
 		"shared-account",
 		"owner@example.com",
@@ -212,7 +212,7 @@ func TestCollapseCodexUsageCollectionsMergesDefaultWithManagedSubscription(t *te
 
 	accounts := collapseCodexUsageCollections([]codexUsageCollection{
 		alpha,
-		egcom,
+		personal,
 		defaultAccount,
 	})
 	if len(accounts) != 2 {
@@ -222,7 +222,7 @@ func TestCollapseCodexUsageCollectionsMergesDefaultWithManagedSubscription(t *te
 		t.Fatalf("independent account: %+v", accounts[0])
 	}
 	duplicate := accounts[1]
-	if duplicate.Name != "egcom (also default)" ||
+	if duplicate.Name != "personal (also default)" ||
 		duplicate.Identity != "owner@example.com" ||
 		duplicate.Failure != "" {
 		t.Fatalf("default duplicate row: %+v", duplicate)
@@ -609,7 +609,7 @@ func TestPrintUsageReportCombinedGolden(t *testing.T) {
 			{
 				Name: "Codex",
 				Accounts: []usageAccountReport{{
-					Name:     "egcom",
+					Name:     "personal",
 					Identity: "personal@example.com",
 					Windows: []usageWindowReport{
 						{Label: "Session (5h)", UsedPercent: testFloat64Ptr(24), ResetAt: &sessionReset},
@@ -621,7 +621,7 @@ func TestPrintUsageReportCombinedGolden(t *testing.T) {
 			{
 				Name: "Claude",
 				Accounts: []usageAccountReport{{
-					Name:     "gmail",
+					Name:     "work",
 					Identity: "owner@example.com",
 					Windows: []usageWindowReport{
 						{Label: "Session (~5h)", UsedPercent: testFloat64Ptr(18), ResetText: "Resets in 1 hour"},
@@ -640,13 +640,13 @@ func TestPrintUsageReportCombinedGolden(t *testing.T) {
 		"Updated: Thu 23 Jul 2026 22:15 CEST\n" +
 		"\n" +
 		"Codex\n" +
-		"  egcom · personal@example.com\n" +
+		"  personal · personal@example.com\n" +
 		"    Session (5h)  24% used · resets in 2h 14m (Fri 24 Jul 00:29 CEST)\n" +
 		"    Weekly        61% used · resets in 3d 10h (Mon 27 Jul 09:00 CEST)\n" +
 		"    Spark weekly  not reported\n" +
 		"\n" +
 		"Claude\n" +
-		"  gmail · owner@example.com\n" +
+		"  work · owner@example.com\n" +
 		"    Session (~5h)      18% used · Resets in 1 hour\n" +
 		"    Weekly all models  37% used · Resets Monday at 9:00 AM\n" +
 		"    Fable weekly       52% used · Resets Tuesday at 10:00 AM\n" +
@@ -885,7 +885,7 @@ func TestClaudeUsageCollectorIsolatesManagedProfilePathFailure(t *testing.T) {
 
 func TestClaudeUsageCollectsIdentityWithBoundedProbesAndCollapsesOrganization(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
-	profile := createClaudeProfiles(t, app, "egcom")["egcom"]
+	profile := createClaudeProfiles(t, app, "personal")["personal"]
 	var authCalls atomic.Int32
 	var usageCalls atomic.Int32
 	var deadlineLock sync.Mutex
@@ -945,7 +945,7 @@ func TestClaudeUsageCollectsIdentityWithBoundedProbesAndCollapsesOrganization(t 
 		t.Fatalf("organization account count: got %d want 1", len(report.Accounts))
 	}
 	account := report.Accounts[0]
-	if account.Name != "egcom (also default)" ||
+	if account.Name != "personal (also default)" ||
 		account.Identity != "owner@example.com" ||
 		account.Failure != "" {
 		t.Fatalf("organization row: %+v", account)
@@ -1217,7 +1217,7 @@ func TestCmdClaudeUsageCollapsesManagedAndDefaultWithExactOutput(t *testing.T) {
 		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
 		"\n" +
 		"Claude\n" +
-		"  egcom (also default) · person@example.com\n" +
+		"  personal (also default) · person@example.com\n" +
 		"    Session (~5h)      30% used · Resets in 2 hours\n" +
 		"    Weekly all models  70% used · Resets Monday at 09:00\n" +
 		"    Fable weekly       not reported\n" +
@@ -1239,7 +1239,7 @@ func TestCmdClaudeUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
 		"\n" +
 		"Claude\n" +
-		"  egcom (also default) · person@example.com\n" +
+		"  personal (also default) · person@example.com\n" +
 		"    Session (~5h)      30% used · Resets in 2 hours\n" +
 		"    Weekly all models  70% used · Resets Monday at 09:00\n" +
 		"    Fable weekly       not reported\n" +
@@ -1262,7 +1262,7 @@ func TestCmdClaudeUsageIdentityChangeRetainsQuotaWithoutGrouping(t *testing.T) {
 		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
 		"\n" +
 		"Claude\n" +
-		"  egcom · identity unavailable\n" +
+		"  personal · identity unavailable\n" +
 		"    Session (~5h)      30% used · Resets in 2 hours\n" +
 		"    Weekly all models  70% used · Resets Monday at 09:00\n" +
 		"    Fable weekly       not reported\n" +
@@ -1332,7 +1332,7 @@ type claudeUsageCommandScenario struct {
 func newClaudeDuplicateUsageCommandApp(t *testing.T, scenario claudeUsageCommandScenario) *App {
 	t.Helper()
 	app, runner, _ := newClaudeTestApp(t)
-	profile := createClaudeProfiles(t, app, "egcom")["egcom"]
+	profile := createClaudeProfiles(t, app, "personal")["personal"]
 	var authLock sync.Mutex
 	authCalls := make(map[string]int)
 	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {

@@ -131,6 +131,20 @@ jobs:
             exit 1
           fi
 
+      - name: Self-test email domain policy
+        run: |
+          set -euo pipefail
+          tmp_ok="$(mktemp)"
+          tmp_bad="$(mktemp)"
+          printf 'reserved: %s@%s and %s@%s\n' \
+            "person" "example.com" "other" "sub.example.test" > "${tmp_ok}"
+          printf 'real: %s@%s\n' "person" "mailprovider.co" > "${tmp_bad}"
+          bash scripts/security/check-sensitive-text.sh --context=email-selftest "${tmp_ok}"
+          if bash scripts/security/check-sensitive-text.sh --context=email-selftest "${tmp_bad}"; then
+            echo "expected email policy self-test failure did not occur" >&2
+            exit 1
+          fi
+
       - name: Self-test sensitive text policy without ripgrep
         run: |
           set -euo pipefail
