@@ -2,6 +2,8 @@ package multisubs
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -60,6 +62,33 @@ func TestProfileCodexEnvSetsProfileAndStripsAccountOverrides(t *testing.T) {
 	}
 	if productVariables != 1 {
 		t.Fatalf("managed Codex env product variable count: got %d want 1; env=%q", productVariables, env)
+	}
+}
+
+func TestRunInteractiveCodexWithProfileDoesNotRepeatArgumentsOnFailure(t *testing.T) {
+	oldInteractive := isInteractiveTerminalAttached
+	t.Cleanup(func() {
+		isInteractiveTerminalAttached = oldInteractive
+	})
+	isInteractiveTerminalAttached = func() bool { return false }
+
+	binDir := t.TempDir()
+	codexPath := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexPath, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	const privateArgument = "private prompt text"
+	err := RunInteractiveCodexWithProfile(t.TempDir(), "work", []string{privateArgument})
+	if err == nil {
+		t.Fatal("expected command failure")
+	}
+	if strings.Contains(err.Error(), privateArgument) {
+		t.Fatalf("failure repeated Codex arguments: %v", err)
+	}
+	if err.Error() != "codex command failed" {
+		t.Fatalf("unexpected safe failure text: %v", err)
 	}
 }
 

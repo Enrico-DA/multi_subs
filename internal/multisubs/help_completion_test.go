@@ -67,6 +67,19 @@ func TestProviderAndNestedHelpTopics(t *testing.T) {
 	}
 }
 
+func TestHelpCodexExecDescribesDefaultLoginCheck(t *testing.T) {
+	app := newTestAppForCLI(t)
+	out, err := captureStdout(t, func() error {
+		return app.Run([]string{"help", "codex", "exec"})
+	})
+	if err != nil {
+		t.Fatalf("help codex exec failed: %v", err)
+	}
+	if !strings.Contains(out, "official Codex CLI confirms its login") {
+		t.Fatalf("expected default login check in codex exec help: %s", out)
+	}
+}
+
 func TestAllUsageHelpTopicsDiscloseValidatedFullLocalEmailOutput(t *testing.T) {
 	app := newTestAppForCLI(t)
 	for _, args := range [][]string{

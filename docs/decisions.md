@@ -104,6 +104,16 @@ Claude settings inspection is data-minimizing. It reads only routing fields from
 
 Claude then puts every valid default or managed target in one score-sorted, organization-deduplicated, reservation-locked candidate set. Claude reads usage through the official CLI without reading credential contents.
 
+## Verify default Codex login before exec
+
+Decision: Before launching a selected default Codex account, `multisubs codex exec` requires an explicit logged-in result from the official Codex CLI.
+
+Why: The default account is unmanaged. The official login check honors the credential store configured for the Codex CLI and does not treat `auth.json` presence or absence as account state. This prevents a launch when the default is logged out or its status cannot be confirmed.
+
+Trade-offs: Default routing still needs file-backed usage data, so a default account with no readable `auth.json` is skipped during scoring today. Selecting the default adds one bounded, state-only login-status subprocess. The launch gate does not read `auth.json` to enrich account identity. An unknown zero-exit result is not enough. A logged-out or unconfirmed result fails closed with exit code 1, without launching the prompt or falling back to another account, even when underlying credentials might recover later.
+
+Enforcement: `internal/multisubs/exec.go` owns the strict fail-closed gate. `internal/multisubs/status.go` keeps account enrichment for status and doctor but gives exec a state-only probe. Tests require exact default probe arguments, a sanitized environment, precise login phrases, exit code 1, and no launch for logged-out or unconfirmed results. `README.md`, `docs/command-spec.md`, and `docs/security-and-privacy.md` state the routing and launch distinction.
+
 ## Prefer plain English
 
 Decision: Use short, direct language in output, docs, comments, tests, reviews, and change records.

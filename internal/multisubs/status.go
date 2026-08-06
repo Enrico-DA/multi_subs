@@ -140,17 +140,46 @@ func parallelWorkers(total int) int {
 }
 
 func codexLoginStatus(codexHome string) (state, account, detail string) {
-	return codexLoginStatusWithTimeout(codexHome, codexLoginStatusTimeout)
+	return codexLoginStatusWithTimeout(codexHome, codexLoginStatusTimeout, true)
 }
 
-func codexLoginStatusWithTimeout(codexHome string, timeout time.Duration) (state, account, detail string) {
+func defaultCodexLoginState(codexHome string) (state, detail string) {
+	state, _, detail = probeCodexLoginStatusWithTimeout(codexHome, codexLoginStatusTimeout, false)
+	return state, detail
+}
+
+func codexLoginStatusWithTimeout(codexHome string, timeout time.Duration, managed bool) (state, account, detail string) {
+	state, account, detail = probeCodexLoginStatusWithTimeout(codexHome, timeout, managed)
+	if account != "" {
+		return state, account, detail
+	}
+
+	email, err := emailFromAuthFile(filepath.Join(codexHome, "auth.json"))
+	if err == nil && email != "" {
+		account = email
+	} else {
+		account = "-"
+	}
+	return state, account, detail
+}
+
+func probeCodexLoginStatusWithTimeout(codexHome string, timeout time.Duration, managed bool) (state, account, detail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	args := codexstate.WithManagedAuthOverride([]string{"login", "status"})
+	args := []string{"login", "status"}
+	if managed {
+		args = codexstate.WithManagedAuthOverride(args)
+	}
 	cmd := codexLoginStatusCommandContext(ctx, "codex", args...)
 	cmd.WaitDelay = 500 * time.Millisecond
-	cmd.Env = profileCodexEnv(os.Environ(), codexHome, "")
+	var env []string
+	if managed {
+		env = profileCodexEnv(os.Environ(), codexHome, "")
+	} else {
+		env = sanitizedCodexEnv(os.Environ(), codexHome)
+	}
+	cmd.Env = env
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -160,20 +189,12 @@ func codexLoginStatusWithTimeout(codexHome string, timeout time.Duration) (state
 	lower := strings.ToLower(all)
 
 	account = emailRe.FindString(all)
-	if account == "" {
-		email, err := emailFromAuthFile(filepath.Join(codexHome, "auth.json"))
-		if err == nil && email != "" {
-			account = email
-		} else {
-			account = "-"
-		}
-	}
 
 	if err == nil {
 		if loginStatusTextIndicatesLoggedOut(lower) {
 			return "logged-out", account, firstLineOrDash(all)
 		}
-		if strings.Contains(lower, "logged") || strings.Contains(lower, "active") || strings.Contains(lower, "authenticated") {
+		if loginStatusTextIndicatesLoggedIn(lower) {
 			return "logged-in", account, firstLineOrDash(all)
 		}
 		return "ok", account, firstLineOrDash(all)
@@ -196,19 +217,71 @@ func codexLoginStatusWithTimeout(codexHome string, timeout time.Duration) (state
 
 func loginStatusTextIndicatesLoggedOut(lower string) bool {
 	for _, phrase := range []string{
-		"not logged",
+		"not logged in",
+		"not signed in",
 		"logged out",
-		"not authenticated",
-		"unauth",
-		"log in",
-		"sign in",
 		"signed out",
+		"not authenticated",
+		"unauthenticated",
+		"unauthorized",
+		"no active account",
+		"please log in",
+		"please sign in",
 	} {
-		if strings.Contains(lower, phrase) {
+		if loginStatusTextHasWholePhrase(lower, phrase) {
 			return true
 		}
 	}
 	return false
+}
+
+func loginStatusTextIndicatesLoggedIn(lower string) bool {
+	for _, line := range strings.Split(lower, "\n") {
+		line = strings.TrimRight(strings.TrimSpace(line), ".!,;")
+		switch line {
+		case "logged in", "signed in", "you are logged in", "you are signed in":
+			return true
+		}
+		for _, prefix := range []string{
+			"logged in using ",
+			"logged in as ",
+			"signed in as ",
+			"authenticated as ",
+			"you are logged in using ",
+			"you are logged in as ",
+			"you are signed in as ",
+		} {
+			if strings.HasPrefix(line, prefix) && strings.TrimSpace(strings.TrimPrefix(line, prefix)) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func loginStatusTextHasWholePhrase(text, phrase string) bool {
+	for searchFrom := 0; searchFrom <= len(text)-len(phrase); {
+		relativeStart := strings.Index(text[searchFrom:], phrase)
+		if relativeStart < 0 {
+			return false
+		}
+		start := searchFrom + relativeStart
+		end := start + len(phrase)
+		beforePhrase := start == 0 || loginStatusPhraseBoundary(text[start-1])
+		afterPhrase := end == len(text) || loginStatusPhraseBoundary(text[end])
+		if beforePhrase && afterPhrase {
+			return true
+		}
+		searchFrom = start + 1
+	}
+	return false
+}
+
+// loginStatusPhraseBoundary reports whether a byte ends a word, so a phrase is
+// only matched as whole words. Sentence punctuation counts as a boundary, which
+// keeps "not logged in." readable as a logged-out message.
+func loginStatusPhraseBoundary(char byte) bool {
+	return !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9')
 }
 
 func firstLineOrDash(s string) string {
