@@ -23,6 +23,19 @@ type fakeSource struct {
 	closeErr   error
 }
 
+type closeSequenceSource struct {
+	fakeSource
+	closeErrors []error
+}
+
+func (s *closeSequenceSource) Close() error {
+	s.closeCount++
+	if s.closeCount <= len(s.closeErrors) {
+		return s.closeErrors[s.closeCount-1]
+	}
+	return nil
+}
+
 func (f *fakeSource) Name() string { return f.name }
 func (f *fakeSource) Fetch(context.Context) (*Summary, error) {
 	f.fetches++
@@ -621,7 +634,7 @@ func TestReplaceAccountFetchersClosesRemovedHomes(t *testing.T) {
 func TestReplaceAccountFetchersUsesAppServerWithOAuthFallbackForVerifiedAccounts(t *testing.T) {
 	f := &Fetcher{}
 	f.replaceAccountFetchers([]MonitorAccount{
-		{Label: "alpha", CodexHome: "/alpha", UseAppServer: true},
+		{Label: "alpha", CodexHome: "/alpha", SourceMode: SourceModeManagedAppServer},
 	})
 
 	if len(f.accounts) != 1 {
@@ -653,6 +666,28 @@ func TestReplaceAccountFetchersUsesOAuthOnlyForUnverifiedAccounts(t *testing.T) 
 	}
 	if f.accounts[0].fallback != nil {
 		t.Fatalf("expected no fallback source for unverified account, got %#v", f.accounts[0].fallback)
+	}
+}
+
+func TestReplaceAccountFetchersUsesTypedDefaultSourceWithoutOuterFallback(t *testing.T) {
+	f := &Fetcher{}
+	f.replaceAccountFetchers([]MonitorAccount{
+		{Label: "global", CodexHome: "/default", SourceMode: SourceModeDefaultAccount},
+	})
+
+	if len(f.accounts) != 1 {
+		t.Fatalf("expected one account fetcher")
+	}
+	defaultSource, ok := f.accounts[0].primary.(*DefaultAccountSource)
+	if !ok {
+		t.Fatalf("expected typed default source, got %T", f.accounts[0].primary)
+	}
+	appServer, ok := defaultSource.appServer.(*AppServerSource)
+	if !ok || appServer.managedProfile {
+		t.Fatalf("expected unmanaged default app-server, got %#v", defaultSource.appServer)
+	}
+	if f.accounts[0].fallback != nil {
+		t.Fatalf("default source received an unsafe generic fallback: %#v", f.accounts[0].fallback)
 	}
 }
 
@@ -717,7 +752,7 @@ func TestReplaceAccountFetchersRebuildsSourcesWhenAppServerEligibilityChanges(t 
 	}
 
 	f.replaceAccountFetchers([]MonitorAccount{
-		{Label: "alpha", CodexHome: "/alpha", UseAppServer: true},
+		{Label: "alpha", CodexHome: "/alpha", SourceMode: SourceModeManagedAppServer},
 	})
 
 	if oldPrimary.closeCount != 1 || oldFallback.closeCount != 1 {
@@ -737,7 +772,7 @@ func TestReplaceAccountFetchersRebuildsSourcesWhenAppServerEligibilityChanges(t 
 	oldFallback = &fakeSource{name: "old-fallback-2"}
 	f.accounts = []accountFetcher{
 		{
-			account:  MonitorAccount{Label: "alpha", CodexHome: "/alpha", UseAppServer: true},
+			account:  MonitorAccount{Label: "alpha", CodexHome: "/alpha", SourceMode: SourceModeManagedAppServer},
 			primary:  oldPrimary,
 			fallback: oldFallback,
 		},

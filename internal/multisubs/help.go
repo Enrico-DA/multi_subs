@@ -57,7 +57,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"usage": {
 		Usage:       "multisubs usage",
-		Description: "Show a read-only Codex and Claude quota snapshot with validated full local account emails for managed profiles and both default accounts. Partial account failures exit 1. JSON output is not available yet.",
+		Description: "Show a Codex and Claude quota snapshot with validated full local account emails for managed profiles and both default accounts. The default Codex app-server fallback may write non-credential operational state. Partial account failures exit 1. JSON output is not available yet.",
 	},
 	"completion": {
 		Usage:       "multisubs completion <bash|zsh|fish>",
@@ -107,7 +107,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"codex exec": {
 		Usage:       "multisubs codex exec [codex exec args]",
-		Description: "Run `codex exec` after selecting the default account or a managed profile by weekly usage. The default account is launched only after the official Codex CLI confirms its login.",
+		Description: "Run `codex exec` after selecting the default account or a managed profile by weekly usage. Default login gets two bounded checks. If neither confirms login, multisubs warns on stderr, excludes default, and selects once more from the remaining accounts.",
 	},
 	"codex status": {
 		Usage:       "multisubs codex status",
@@ -217,7 +217,7 @@ func printHelp() {
 	fmt.Println("Notes:")
 	fmt.Println("  - Codex commands live under `multisubs codex`.")
 	fmt.Println("  - Claude commands live under `multisubs claude`.")
-	fmt.Println("  - Usage snapshots are read-only; JSON output is not available yet.")
+	fmt.Println("  - Usage snapshots do not change credentials; the default Codex app-server fallback may write non-credential operational state. JSON output is not available yet.")
 }
 
 func printCodexHelp() {

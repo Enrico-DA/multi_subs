@@ -35,11 +35,19 @@ type accountItem struct {
 }
 
 type MonitorAccount struct {
-	Label             string `json:"label"`
-	CodexHome         string `json:"codex_home"`
-	SelectionPriority int    `json:"-"`
-	UseAppServer      bool   `json:"-"`
+	Label             string     `json:"label"`
+	CodexHome         string     `json:"codex_home"`
+	SelectionPriority int        `json:"-"`
+	SourceMode        SourceMode `json:"-"`
 }
+
+type SourceMode uint8
+
+const (
+	SourceModeOAuth SourceMode = iota
+	SourceModeManagedAppServer
+	SourceModeDefaultAccount
+)
 
 type MonitorAccountOptions struct {
 	IncludeDefault bool
@@ -67,7 +75,7 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 		if err != nil {
 			return nil, "", err
 		}
-		collector.add("global", defaultHome, 50, false, false)
+		collector.add("global", defaultHome, 50, false, SourceModeDefaultAccount)
 	}
 
 	if options.IncludeActive {
@@ -79,7 +87,7 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 			if expandErr != nil {
 				collector.warnf("could not resolve CODEX_HOME: %v", expandErr)
 			} else {
-				collector.add("active", expanded, 40, true, false)
+				collector.add("active", expanded, 40, true, SourceModeOAuth)
 			}
 		}
 	}
@@ -95,7 +103,7 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 			collector.reject(home)
 		}
 		for _, account := range profileAccounts {
-			collector.add(account.Label, account.CodexHome, 90, false, true)
+			collector.add(account.Label, account.CodexHome, 90, false, SourceModeManagedAppServer)
 		}
 	}
 
@@ -107,7 +115,7 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 			collector.warnf("%s", fileWarning)
 		}
 		for _, account := range fileAccounts {
-			collector.add(account.Label, account.CodexHome, 100, true, false)
+			collector.add(account.Label, account.CodexHome, 100, true, SourceModeOAuth)
 		}
 	}
 
@@ -123,7 +131,7 @@ func loadMonitorAccountsWithOptions(options MonitorAccountOptions) ([]MonitorAcc
 				if isMultisubsProfileHome(account.CodexHome) {
 					continue
 				}
-				collector.add(account.Label, account.CodexHome, 30, false, false)
+				collector.add(account.Label, account.CodexHome, 30, false, SourceModeOAuth)
 			}
 		}
 	}
@@ -634,7 +642,7 @@ func newAccountCollector() *accountCollector {
 	}
 }
 
-func (c *accountCollector) add(label, codexHome string, priority int, allowWithoutSignals bool, useAppServer bool) {
+func (c *accountCollector) add(label, codexHome string, priority int, allowWithoutSignals bool, sourceMode SourceMode) {
 	normalized := normalizeHome(codexHome)
 	if normalized == "" {
 		return
@@ -647,22 +655,33 @@ func (c *accountCollector) add(label, codexHome string, priority int, allowWitho
 	}
 	if existing, ok := c.byHome[normalized]; ok {
 		if existing.priority >= priority {
-			if useAppServer && !existing.account.UseAppServer {
-				existing.account.UseAppServer = true
+			mergedMode := mergeSourceModes(existing.account.SourceMode, sourceMode)
+			if mergedMode != existing.account.SourceMode {
+				existing.account.SourceMode = mergedMode
 				c.byHome[normalized] = existing
 			}
 			return
 		}
-		useAppServer = useAppServer || existing.account.UseAppServer
+		sourceMode = mergeSourceModes(sourceMode, existing.account.SourceMode)
 	}
 	c.byHome[normalized] = accountCandidate{
 		account: MonitorAccount{
-			Label:        safeLabel(label),
-			CodexHome:    normalized,
-			UseAppServer: useAppServer,
+			Label:      safeLabel(label),
+			CodexHome:  normalized,
+			SourceMode: sourceMode,
 		},
 		priority: priority,
 	}
+}
+
+func mergeSourceModes(first, second SourceMode) SourceMode {
+	if first == SourceModeManagedAppServer || second == SourceModeManagedAppServer {
+		return SourceModeManagedAppServer
+	}
+	if first == SourceModeDefaultAccount || second == SourceModeDefaultAccount {
+		return SourceModeDefaultAccount
+	}
+	return SourceModeOAuth
 }
 
 func (c *accountCollector) reject(codexHome string) {

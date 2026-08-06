@@ -99,8 +99,8 @@ func TestCmdExecRunsCodexExecWithDefaultAccountAtManagedPriority(t *testing.T) {
 		if profileAccount.CodexHome == "" {
 			t.Fatalf("expected configured profile account in selector candidates, got %#v", accounts)
 		}
-		if !profileAccount.UseAppServer {
-			t.Fatalf("expected validated exec profile to use app-server, got %#v", profileAccount)
+		if profileAccount.SourceMode != usage.SourceModeManagedAppServer {
+			t.Fatalf("expected validated exec profile to use managed app-server mode, got %#v", profileAccount)
 		}
 		if defaultAccount.CodexHome == "" {
 			t.Fatalf("expected default account in selector candidates, got %#v", accounts)
@@ -108,8 +108,8 @@ func TestCmdExecRunsCodexExecWithDefaultAccountAtManagedPriority(t *testing.T) {
 		if defaultAccount.SelectionPriority != profileAccount.SelectionPriority {
 			t.Fatalf("default and managed accounts must have equal selection priority: default=%#v managed=%#v", defaultAccount, profileAccount)
 		}
-		if defaultAccount.UseAppServer {
-			t.Fatalf("expected unmanaged default account not to use app-server without profile validation, got %#v", defaultAccount)
+		if defaultAccount.SourceMode != usage.SourceModeDefaultAccount {
+			t.Fatalf("expected typed default-account usage mode, got %#v", defaultAccount)
 		}
 		return usage.SelectedAccount{
 			Account:           defaultAccount,
@@ -761,6 +761,39 @@ func TestCmdExecDefaultAccountWinsBySoonerWeeklyReset(t *testing.T) {
 	}
 }
 
+func TestCmdExecMeasuresDefaultWithoutAuthThroughUnmanagedAppServer(t *testing.T) {
+	app, logPath, root := newExecSelectionTestApp(t)
+	createExecProfiles(t, app, "alpha")
+	writeExecSelectionProfileData(t, root, "alpha", 80, 80, time.Hour)
+	writeExecSelectionDefaultUsage(t, app, 11, 30*time.Minute)
+	appServerLog := filepath.Join(root, "unmanaged-app-server.log")
+	t.Setenv("TEST_UNMANAGED_APP_SERVER_LOG", appServerLog)
+	t.Setenv("CODEX_HOME", filepath.Join(root, "stale-home"))
+	t.Setenv("OPENAI_API_KEY", "synthetic-stale-key")
+	t.Setenv("CODEX_AUTH_TOKEN", "synthetic-stale-token")
+	t.Setenv("MULTISUBS_ACTIVE_PROFILE", "synthetic-stale-profile")
+
+	if err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"}); err != nil {
+		t.Fatalf("default exec without auth.json failed: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read exec log: %v", err)
+	}
+	if !strings.Contains(string(data), "profile=\n") {
+		t.Fatalf("unmanaged default usage was not routed: %q", data)
+	}
+	appServerData, err := os.ReadFile(appServerLog)
+	if err != nil {
+		t.Fatalf("read unmanaged app-server log: %v", err)
+	}
+	want := "args=-s read-only -a untrusted app-server\nCODEX_HOME=" + normalizeExecCodexHome(app.store.paths.DefaultCodexHome) + "\n"
+	if string(appServerData) != want {
+		t.Fatalf("unmanaged app-server invocation:\n--- got ---\n%s--- want ---\n%s", appServerData, want)
+	}
+}
+
 func TestCmdExecSkipsUnavailableDefaultAccount(t *testing.T) {
 	app, logPath, root := newExecSelectionTestApp(t)
 	createExecProfiles(t, app, "alpha")
@@ -794,60 +827,184 @@ func TestCmdExecDoesNotFallBackToExhaustedDefaultAccount(t *testing.T) {
 	}
 }
 
-func TestCmdExecFailsClosedWhenDefaultAccountIsLoggedOut(t *testing.T) {
+func TestCmdExecRetriesDefaultLoginThenWarnsAndRunsManagedFallback(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
-	t.Setenv("FAKE_CODEX_LOGIN_STATE", "logged-out")
-	if err := os.MkdirAll(app.store.paths.DefaultCodexHome, 0o700); err != nil {
-		t.Fatalf("mkdir default Codex home: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(app.store.paths.DefaultCodexHome, "auth.json"), []byte(`{"stale":true}`), 0o600); err != nil {
-		t.Fatalf("write stale default auth: %v", err)
-	}
 
 	originalSelector := defaultExecAccountSelector
-	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
+	selectorCalls := 0
+	defaultExecAccountSelector = func(_ context.Context, accounts []usage.MonitorAccount, _ string) (usage.SelectedAccount, error) {
+		selectorCalls++
+		if selectorCalls == 1 {
+			for _, account := range accounts {
+				if account.SourceMode == usage.SourceModeDefaultAccount {
+					return usage.SelectedAccount{Account: account}, nil
+				}
+			}
+			t.Fatal("first selection did not include default account")
+		}
+		for _, account := range accounts {
+			if account.SourceMode == usage.SourceModeDefaultAccount {
+				t.Fatalf("fallback selection still included default account: %#v", accounts)
+			}
+			if account.Label == "alpha" {
+				return usage.SelectedAccount{Account: account, WeeklyUsedPercent: 19}, nil
+			}
+		}
+		return usage.SelectedAccount{}, errors.New("managed fallback missing")
+	}
 	defer func() { defaultExecAccountSelector = originalSelector }()
+	skipDefaultExecLoginRetryDelay(t)
+	originalProbe := defaultExecLoginStateProbe
+	probeCalls := 0
+	defaultExecLoginStateProbe = func(string) (string, string) {
+		probeCalls++
+		return "logged-out", "synthetic private detail"
+	}
+	defer func() { defaultExecLoginStateProbe = originalProbe }()
 
-	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
-	var exitErr *ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
-		t.Fatalf("expected exit code 1 for logged-out default, got %T (%v)", err, err)
+	stderr, err := captureStderr(t, func() error {
+		return app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	})
+	if err != nil {
+		t.Fatalf("managed fallback exec failed: %v", err)
 	}
-	if !strings.Contains(exitErr.Message, "default Codex account is not logged in") {
-		t.Fatalf("unexpected logged-out error: %q", exitErr.Message)
+	wantWarning := defaultExecLoginSkipWarning("it reported that it is not logged in") + "\n"
+	if stderr != wantWarning {
+		t.Fatalf("default fallback warning: got %q want %q", stderr, wantWarning)
 	}
-	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("expected codex exec not to run, stat err=%v", statErr)
+	if !strings.Contains(stderr, "codex login") {
+		t.Fatalf("fallback warning omitted the fix instruction: %q", stderr)
+	}
+	if strings.Contains(stderr, "synthetic private detail") {
+		t.Fatalf("fallback warning leaked probe detail: %q", stderr)
+	}
+	if probeCalls != defaultExecLoginAttempts {
+		t.Fatalf("default login probes: got %d want %d", probeCalls, defaultExecLoginAttempts)
+	}
+	if selectorCalls != 2 {
+		t.Fatalf("selector calls: got %d want 2", selectorCalls)
+	}
+	data, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("read managed fallback exec log: %v", readErr)
+	}
+	if !strings.Contains(string(data), "profile=alpha") {
+		t.Fatalf("warning fallback did not run managed profile: %q", data)
 	}
 }
 
-func TestCmdExecFailsClosedWhenDefaultLoginStatusIsUnavailable(t *testing.T) {
+func TestCmdExecNoUsableAccountAfterDefaultLoginFailureExitsOneWithWarning(t *testing.T) {
 	app, logPath := newExecTestApp(t)
-	createExecProfiles(t, app, "alpha")
-	t.Setenv("FAKE_CODEX_LOGIN_STATE", "error")
 
 	originalSelector := defaultExecAccountSelector
-	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
+	selectorCalls := 0
+	defaultExecAccountSelector = func(_ context.Context, accounts []usage.MonitorAccount, _ string) (usage.SelectedAccount, error) {
+		selectorCalls++
+		if selectorCalls == 1 {
+			for _, account := range accounts {
+				if account.SourceMode == usage.SourceModeDefaultAccount {
+					return usage.SelectedAccount{Account: account}, nil
+				}
+			}
+			return usage.SelectedAccount{}, errors.New("default account missing")
+		}
+		t.Fatalf("selector was called again with no candidate left: %#v", accounts)
+		return usage.SelectedAccount{}, errors.New("unreachable")
+	}
 	defer func() { defaultExecAccountSelector = originalSelector }()
+	skipDefaultExecLoginRetryDelay(t)
+	originalProbe := defaultExecLoginStateProbe
+	probeCalls := 0
+	defaultExecLoginStateProbe = func(string) (string, string) {
+		probeCalls++
+		return "error", "opaque-provider-diagnostic"
+	}
+	defer func() { defaultExecLoginStateProbe = originalProbe }()
 
-	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	stderr, err := captureStderr(t, func() error {
+		return app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	})
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
-		t.Fatalf("expected exit code 1 for unavailable default login status, got %T (%v)", err, err)
+		t.Fatalf("expected exit code 1 with no remaining account, got %T (%v)", err, err)
 	}
-	if !strings.Contains(exitErr.Message, "login status could not be confirmed") || !strings.Contains(exitErr.Message, "exit code 7") {
-		t.Fatalf("expected safe login-status error, got %v", err)
+	wantBlocked := defaultExecLoginBlockedMessage("the login check could not complete")
+	if exitErr.Message != wantBlocked {
+		t.Fatalf("actionable default error mismatch: got %q want %q", exitErr.Message, wantBlocked)
+	}
+	if !strings.Contains(exitErr.Message, "codex login") {
+		t.Fatalf("blocked message omitted the fix instruction: %q", exitErr.Message)
+	}
+	// No candidate remains, so no reroute happens and no reroute warning may
+	// claim one. The single fatal message carries the cause and the fix.
+	if stderr != "" {
+		t.Fatalf("blocked default printed a reroute warning: %q", stderr)
 	}
 	if strings.Contains(err.Error(), "opaque-provider-diagnostic") {
 		t.Fatalf("default login-status error exposed subprocess output: %v", err)
 	}
+	if probeCalls != defaultExecLoginAttempts {
+		t.Fatalf("default login probes: got %d want %d", probeCalls, defaultExecLoginAttempts)
+	}
+	if selectorCalls != 1 {
+		t.Fatalf("selector calls: got %d want 1", selectorCalls)
+	}
 	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected codex exec not to run, stat err=%v", statErr)
 	}
 }
 
-func TestCmdExecFailsClosedWhenDefaultLoginStatusTimesOut(t *testing.T) {
+func TestCmdExecNoUsableManagedFallbackKeepsSelectionFailurePrivate(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+
+	originalSelector := defaultExecAccountSelector
+	selectorCalls := 0
+	defaultExecAccountSelector = func(_ context.Context, accounts []usage.MonitorAccount, _ string) (usage.SelectedAccount, error) {
+		selectorCalls++
+		if selectorCalls == 1 {
+			for _, account := range accounts {
+				if account.SourceMode == usage.SourceModeDefaultAccount {
+					return usage.SelectedAccount{Account: account}, nil
+				}
+			}
+			return usage.SelectedAccount{}, errors.New("default account missing")
+		}
+		return usage.SelectedAccount{}, errors.New("opaque selector failure at /synthetic/private/path with token-shaped text")
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+	skipDefaultExecLoginRetryDelay(t)
+	originalProbe := defaultExecLoginStateProbe
+	defaultExecLoginStateProbe = func(string) (string, string) {
+		return "error", "opaque provider output"
+	}
+	defer func() { defaultExecLoginStateProbe = originalProbe }()
+
+	stderr, err := captureStderr(t, func() error {
+		return app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("expected exit code 1 after unusable managed fallback, got %T (%v)", err, err)
+	}
+	if selectorCalls != 2 {
+		t.Fatalf("selector calls: got %d want 2", selectorCalls)
+	}
+	for _, output := range []string{stderr, exitErr.Message} {
+		if strings.Contains(output, "opaque") || strings.Contains(output, "/synthetic/private/path") || strings.Contains(output, "token-shaped") {
+			t.Fatalf("fallback output exposed a private selection failure: %q", output)
+		}
+		if !strings.Contains(output, "Run: codex login") {
+			t.Fatalf("fallback output omitted the exact fix: %q", output)
+		}
+	}
+	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unusable fallback started Codex: %v", statErr)
+	}
+}
+
+func TestCmdExecDefaultLoginRetriesStayBoundedWhenStatusTimesOut(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
 	t.Setenv("FAKE_CODEX_LOGIN_STATE", "timeout")
@@ -862,10 +1019,14 @@ func TestCmdExecFailsClosedWhenDefaultLoginStatusTimesOut(t *testing.T) {
 	start := time.Now()
 	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
 	var exitErr *ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != 1 || !strings.Contains(exitErr.Message, "login status timed out") {
-		t.Fatalf("expected bounded default login-status timeout, got %v", err)
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("expected bounded default login-status timeout, got %T (%v)", err, err)
 	}
-	if time.Since(start) > 2*time.Second {
+	if !strings.Contains(exitErr.Message, "could not confirm the default Codex account login") ||
+		!strings.Contains(exitErr.Message, "codex login") {
+		t.Fatalf("timeout message was not actionable: %q", exitErr.Message)
+	}
+	if time.Since(start) > 3*time.Second {
 		t.Fatalf("default login-status check exceeded bounded failure time")
 	}
 	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
@@ -896,18 +1057,20 @@ func TestCmdExecDoesNotCheckDefaultLoginWhenProfileSelected(t *testing.T) {
 	}
 }
 
-func TestCmdExecFailsClosedWhenProfileUsageUnavailableAndDefaultLoggedOut(t *testing.T) {
+func TestCmdExecExitsOneWhenManagedUsageIsUnavailableAndDefaultLoginFails(t *testing.T) {
 	app, logPath, _ := newExecSelectionTestApp(t)
 	createExecProfiles(t, app, "alpha")
 	writeExecSelectionDefaultData(t, app, 20, 20, 30*time.Minute)
 	t.Setenv("FAKE_CODEX_LOGIN_STATE", "logged-out")
+	skipDefaultExecLoginRetryDelay(t)
 
 	err := app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("expected logged-out default to fail closed, got %T (%v)", err, err)
 	}
-	if !strings.Contains(exitErr.Message, "default Codex account is not logged in") {
+	if !strings.Contains(exitErr.Message, "it reported that it is not logged in") ||
+		!strings.Contains(exitErr.Message, "codex login") {
 		t.Fatalf("unexpected logged-out default error: %q", exitErr.Message)
 	}
 	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
@@ -915,10 +1078,11 @@ func TestCmdExecFailsClosedWhenProfileUsageUnavailableAndDefaultLoggedOut(t *tes
 	}
 }
 
-func TestCmdExecFailsClosedWhenDefaultLoginStatusIsUnrecognized(t *testing.T) {
+func TestCmdExecUnrecognizedDefaultLoginStatusReturnsSafeWarning(t *testing.T) {
 	app, logPath := newExecTestApp(t)
 	createExecProfiles(t, app, "alpha")
 	t.Setenv("FAKE_CODEX_LOGIN_STATE", "unrecognized")
+	skipDefaultExecLoginRetryDelay(t)
 
 	originalSelector := defaultExecAccountSelector
 	defaultExecAccountSelector = selectDefaultExecAccountForTest(t)
@@ -929,7 +1093,8 @@ func TestCmdExecFailsClosedWhenDefaultLoginStatusIsUnrecognized(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("expected unrecognized login status to fail with exit code 1, got %T (%v)", err, err)
 	}
-	if !strings.Contains(exitErr.Message, "login status could not be confirmed") {
+	if !strings.Contains(exitErr.Message, "its login state could not be recognized") ||
+		!strings.Contains(exitErr.Message, "codex login") {
 		t.Fatalf("unexpected unconfirmed-status error: %q", exitErr.Message)
 	}
 	if strings.Contains(exitErr.Message, "opaque-unrecognized-status") {
@@ -961,6 +1126,55 @@ func TestCmdExecTreatsAffirmativeLoginWithUnauthEmailAsLoggedIn(t *testing.T) {
 	}
 }
 
+func TestCmdExecRetriesDefaultLoginThenSucceedsWithoutWarning(t *testing.T) {
+	app, logPath := newExecTestApp(t)
+	createExecProfiles(t, app, "alpha")
+
+	originalSelector := defaultExecAccountSelector
+	selectorCalls := 0
+	defaultExecAccountSelector = func(_ context.Context, accounts []usage.MonitorAccount, _ string) (usage.SelectedAccount, error) {
+		selectorCalls++
+		for _, account := range accounts {
+			if account.SourceMode == usage.SourceModeDefaultAccount {
+				return usage.SelectedAccount{Account: account}, nil
+			}
+		}
+		return usage.SelectedAccount{}, errors.New("default account missing")
+	}
+	defer func() { defaultExecAccountSelector = originalSelector }()
+	skipDefaultExecLoginRetryDelay(t)
+	originalProbe := defaultExecLoginStateProbe
+	probeCalls := 0
+	defaultExecLoginStateProbe = func(string) (string, string) {
+		probeCalls++
+		if probeCalls == defaultExecLoginAttempts {
+			return "logged-in", ""
+		}
+		return "error", "synthetic private detail"
+	}
+	defer func() { defaultExecLoginStateProbe = originalProbe }()
+
+	stderr, err := captureStderr(t, func() error {
+		return app.Run([]string{"codex", "exec", "--skip-git-repo-check", "hello"})
+	})
+	if err != nil {
+		t.Fatalf("default exec after retry failed: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("successful retry printed warning: %q", stderr)
+	}
+	if probeCalls != defaultExecLoginAttempts || selectorCalls != 1 {
+		t.Fatalf("retry counts: probes=%d selections=%d", probeCalls, selectorCalls)
+	}
+	data, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("read default exec log: %v", readErr)
+	}
+	if !strings.Contains(string(data), "profile=\n") {
+		t.Fatalf("successful retry did not run default account: %q", data)
+	}
+}
+
 func TestDefaultExecLoginProbeUsesSanitizedEnvironment(t *testing.T) {
 	app, _ := newExecTestApp(t)
 	envLogPath := filepath.Join(t.TempDir(), "login-status.env")
@@ -970,8 +1184,8 @@ func TestDefaultExecLoginProbeUsesSanitizedEnvironment(t *testing.T) {
 	t.Setenv(legacyTestPrefix+"_TEST_INHERITED", "synthetic")
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "stale-codex-home"))
 
-	if err := ensureDefaultExecAccountReady(app.store.paths.DefaultCodexHome); err != nil {
-		t.Fatalf("default login probe failed: %v", err)
+	if reason := defaultExecAccountLoginFailure(app.store.paths.DefaultCodexHome); reason != "" {
+		t.Fatalf("default login probe failed: %s", reason)
 	}
 	data, err := os.ReadFile(envLogPath)
 	if err != nil {
@@ -993,6 +1207,16 @@ func TestDefaultExecLoginProbeUsesSanitizedEnvironment(t *testing.T) {
 	if !seenCodexHome {
 		t.Fatal("default login probe did not receive CODEX_HOME")
 	}
+}
+
+// skipDefaultExecLoginRetryDelay removes the production pause between login
+// probes, so tests that exercise a failing probe stay fast. Tests that assert
+// the bounded failure time keep the real delay.
+func skipDefaultExecLoginRetryDelay(t *testing.T) {
+	t.Helper()
+	original := defaultExecLoginRetryDelay
+	defaultExecLoginRetryDelay = 0
+	t.Cleanup(func() { defaultExecLoginRetryDelay = original })
 }
 
 func selectDefaultExecAccountForTest(t *testing.T) execAccountSelector {
@@ -1654,6 +1878,17 @@ if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}
   : "${TEST_EXEC_SELECTION_BINARY:?TEST_EXEC_SELECTION_BINARY must be set}"
   TEST_EXEC_SELECTION_APP_SERVER_HELPER=1 exec "${TEST_EXEC_SELECTION_BINARY}" -test.run '^TestExecSelectionAppServerHelper$'
 fi
+if [[ "${1:-}" == "-s" && "${2:-}" == "read-only" && "${3:-}" == "-a" && "${4:-}" == "untrusted" && "${5:-}" == "app-server" && $# == 5 ]]; then
+  if [[ -n "${OPENAI_API_KEY:-}" || -n "${CODEX_AUTH_TOKEN:-}" || -n "${MULTISUBS_ACTIVE_PROFILE:-}" ]]; then
+    echo "unmanaged app-server inherited a denied environment variable" >&2
+    exit 64
+  fi
+  if [[ -n "${TEST_UNMANAGED_APP_SERVER_LOG:-}" ]]; then
+    printf 'args=%s\nCODEX_HOME=%s\n' "$*" "${CODEX_HOME:-}" > "${TEST_UNMANAGED_APP_SERVER_LOG}"
+  fi
+  : "${TEST_EXEC_SELECTION_BINARY:?TEST_EXEC_SELECTION_BINARY must be set}"
+  TEST_EXEC_SELECTION_APP_SERVER_HELPER=1 exec "${TEST_EXEC_SELECTION_BINARY}" -test.run '^TestExecSelectionAppServerHelper$'
+fi
 if [[ "${1:-}" == "exec" ]]; then
   : "${TEST_FAKE_CODEX_LOG:?TEST_FAKE_CODEX_LOG must be set}"
   {
@@ -1886,6 +2121,16 @@ func writeExecSelectionDefaultData(t *testing.T, app *App, _ int, weeklyUsed int
 	if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(`{"tokens":{"access_token":"token-default"}}`), 0o600); err != nil {
 		t.Fatalf("write default auth: %v", err)
 	}
+	writeExecSelectionDefaultUsage(t, app, weeklyUsed, weeklyResetIn)
+}
+
+func writeExecSelectionDefaultUsage(t *testing.T, app *App, weeklyUsed int, weeklyResetIn time.Duration) {
+	t.Helper()
+
+	home := app.store.paths.DefaultCodexHome
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir default Codex home: %v", err)
+	}
 	now := time.Now().UTC()
 	usageJSON := fmt.Sprintf(
 		`{"weekly_used_percent": %d, "email": "default@example.com", "primary_resets_at": %d, "secondary_resets_at": %d}`,
@@ -1896,4 +2141,28 @@ func writeExecSelectionDefaultData(t *testing.T, app *App, _ int, weeklyUsed int
 	if err := os.WriteFile(filepath.Join(home, "usage.json"), []byte(usageJSON), 0o600); err != nil {
 		t.Fatalf("write default usage: %v", err)
 	}
+}
+
+func captureStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stderr pipe: %v", err)
+	}
+	original := os.Stderr
+	os.Stderr = writer
+	runErr := fn()
+	if err := writer.Close(); err != nil {
+		os.Stderr = original
+		_ = reader.Close()
+		t.Fatalf("close stderr writer: %v", err)
+	}
+	os.Stderr = original
+	data, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	if readErr != nil {
+		t.Fatalf("read stderr: %v", readErr)
+	}
+	return string(data), runErr
 }

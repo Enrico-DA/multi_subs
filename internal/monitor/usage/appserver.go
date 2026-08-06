@@ -84,12 +84,14 @@ func (s *AppServerSource) Fetch(ctx context.Context) (*Summary, error) {
 	defer s.reqMu.Unlock()
 
 	var warnings []string
-	warning, authErr := s.refreshAuthState()
-	if authErr != nil {
-		return nil, authErr
-	}
-	if warning != "" {
-		warnings = append(warnings, warning)
+	if s.managedProfile {
+		warning, authErr := s.refreshAuthState()
+		if authErr != nil {
+			return nil, authErr
+		}
+		if warning != "" {
+			warnings = append(warnings, warning)
+		}
 	}
 
 	session, err := s.ensureSession(ctx)

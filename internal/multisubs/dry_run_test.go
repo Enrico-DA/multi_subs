@@ -20,7 +20,7 @@ func TestRenderDryRunOverview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderDryRun: %v", err)
 	}
-	for _, want := range []string{"multisubs codex dry-run", "profile resources: omitted", "no guidance changes", "planned sequence:", "confirms default-account login before launching it", "without persisting Codex sessions", "dry-run only:"} {
+	for _, want := range []string{"multisubs codex dry-run", "profile resources: omitted", "no guidance changes", "planned sequence:", "checks default-account login twice", "selects once more without default", "without persisting Codex sessions", "dry-run only:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in output", want)
 		}
