@@ -46,16 +46,20 @@ func TestUsageAccountScopeAndOrderIsManagedThenDefault(t *testing.T) {
 	codexConfig.Profiles["alpha"] = Profile{Name: "alpha", CodexHome: "/profiles/alpha/codex-home"}
 	codexTargets := codexUsageTargets(codexConfig, "/default-codex")
 	var codexNames []string
-	var managedModes []bool
+	var sourceModes []monitorusage.SourceMode
 	for _, target := range codexTargets {
 		codexNames = append(codexNames, target.Account.Label)
-		managedModes = append(managedModes, target.Account.UseAppServer)
+		sourceModes = append(sourceModes, target.Account.SourceMode)
 	}
 	if !reflect.DeepEqual(codexNames, []string{"alpha", "zeta", "default"}) {
 		t.Fatalf("Codex usage order: got %q", codexNames)
 	}
-	if !reflect.DeepEqual(managedModes, []bool{true, true, false}) {
-		t.Fatalf("Codex source modes: got %v", managedModes)
+	if !reflect.DeepEqual(sourceModes, []monitorusage.SourceMode{
+		monitorusage.SourceModeManagedAppServer,
+		monitorusage.SourceModeManagedAppServer,
+		monitorusage.SourceModeDefaultAccount,
+	}) {
+		t.Fatalf("Codex source modes: got %v", sourceModes)
 	}
 
 	claudeConfig := defaultClaudeConfig()
@@ -68,6 +72,57 @@ func TestUsageAccountScopeAndOrderIsManagedThenDefault(t *testing.T) {
 	}
 	if !reflect.DeepEqual(claudeNames, []string{"alpha", "zeta", "default"}) {
 		t.Fatalf("Claude usage order: got %q", claudeNames)
+	}
+}
+
+func TestCmdCodexUsageMeasuresDefaultWithoutAuthThroughUnmanagedAppServer(t *testing.T) {
+	app, _, root := newExecSelectionTestApp(t)
+	writeExecSelectionDefaultUsage(t, app, 27, time.Hour)
+	appServerLog := filepath.Join(root, "unmanaged-usage-app-server.log")
+	t.Setenv("TEST_UNMANAGED_APP_SERVER_LOG", appServerLog)
+	t.Setenv("OPENAI_API_KEY", "synthetic-denied-value")
+	t.Setenv("CODEX_AUTH_TOKEN", "synthetic-denied-value")
+	t.Setenv("MULTISUBS_ACTIVE_PROFILE", "synthetic-denied-value")
+
+	output, err := captureStdout(t, func() error {
+		return app.cmdUsage(nil, usageProviderCodex)
+	})
+	if err != nil {
+		t.Fatalf("Codex usage through unmanaged app-server: %v", err)
+	}
+	if !strings.Contains(output, "default · default@example.com") || !strings.Contains(output, "Weekly        27% used") {
+		t.Fatalf("unmanaged default usage output:\n%s", output)
+	}
+	data, err := os.ReadFile(appServerLog)
+	if err != nil {
+		t.Fatalf("read unmanaged app-server log: %v", err)
+	}
+	log := string(data)
+	if !strings.Contains(log, "args=-s read-only -a untrusted app-server") {
+		t.Fatalf("unmanaged app-server arguments: %q", log)
+	}
+	if strings.Contains(log, managedCodexAuthConfig) {
+		t.Fatalf("unmanaged app-server received managed auth override: %q", log)
+	}
+}
+
+func TestCmdCodexUsageMeasuresDefaultWithAuthThroughOAuthOnly(t *testing.T) {
+	app, _, root := newExecSelectionTestApp(t)
+	writeExecSelectionDefaultData(t, app, 0, 31, time.Hour)
+	appServerLog := filepath.Join(root, "unexpected-usage-app-server.log")
+	t.Setenv("TEST_UNMANAGED_APP_SERVER_LOG", appServerLog)
+
+	output, err := captureStdout(t, func() error {
+		return app.cmdUsage(nil, usageProviderCodex)
+	})
+	if err != nil {
+		t.Fatalf("Codex usage through OAuth: %v", err)
+	}
+	if !strings.Contains(output, "default · default@example.com") || !strings.Contains(output, "Weekly        31% used") {
+		t.Fatalf("OAuth default usage output:\n%s", output)
+	}
+	if _, err := os.Lstat(appServerLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("OAuth default usage started app-server: %v", err)
 	}
 }
 
@@ -349,7 +404,7 @@ func TestRecoverCodexUsageIdentityFillsEmailBesideStrongAccountID(t *testing.T) 
 		Summary: &monitorusage.Summary{AccountID: "strong-account-id"},
 	}
 
-	recoverCodexUsageCollectionIdentity(&collected)
+	recoverCodexUsageCollectionIdentity(&collected, nil)
 	if collected.Summary.AccountEmail != "person@example.com" {
 		t.Fatalf("strong account ID blocked safe display-email recovery: %+v", collected.Summary)
 	}
@@ -1319,7 +1374,7 @@ func requireExitCode(t *testing.T, err error, want int) {
 	}
 }
 
-func TestCodexUsageCommandIsReadOnlyAndReturnsPartialExit(t *testing.T) {
+func TestCodexUsageCommandDoesNotCreateProductStateAndReturnsPartialExit(t *testing.T) {
 	root := t.TempDir()
 	multisubsHome := filepath.Join(root, "missing-multisubs")
 	app := &App{

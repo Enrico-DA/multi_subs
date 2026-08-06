@@ -177,7 +177,7 @@ func (a *App) collectCodexUsageCollection(target codexUsageTarget) codexUsageCol
 	if source == nil {
 		account.Failure = "usage source unavailable"
 		collected.Account = account
-		recoverCodexUsageCollectionIdentity(&collected)
+		recoverCodexUsageCollectionIdentity(&collected, nil)
 		return collected
 	}
 
@@ -189,7 +189,7 @@ func (a *App) collectCodexUsageCollection(target codexUsageTarget) codexUsageCol
 		account.Failure = "usage cleanup failed"
 		collected.Account = account
 		collected.Summary = summary
-		recoverCodexUsageCollectionIdentity(&collected)
+		recoverCodexUsageCollectionIdentity(&collected, source)
 		return collected
 	}
 	if err != nil {
@@ -198,18 +198,18 @@ func (a *App) collectCodexUsageCollection(target codexUsageTarget) codexUsageCol
 			account.Failure = "weekly usage unavailable"
 			collected.Account = account
 			collected.Summary = summary
-			recoverCodexUsageCollectionIdentity(&collected)
+			recoverCodexUsageCollectionIdentity(&collected, source)
 			return collected
 		}
 		account.Failure = safeCodexUsageFailure(ctx, err)
 		collected.Account = account
-		recoverCodexUsageCollectionIdentity(&collected)
+		recoverCodexUsageCollectionIdentity(&collected, source)
 		return collected
 	}
 	if summary == nil {
 		account.Failure = "usage response unavailable"
 		collected.Account = account
-		recoverCodexUsageCollectionIdentity(&collected)
+		recoverCodexUsageCollectionIdentity(&collected, source)
 		return collected
 	}
 	account = adaptCodexUsageAccount(displayName, summary)
@@ -218,12 +218,15 @@ func (a *App) collectCodexUsageCollection(target codexUsageTarget) codexUsageCol
 	}
 	collected.Account = account
 	collected.Summary = summary
-	recoverCodexUsageCollectionIdentity(&collected)
+	recoverCodexUsageCollectionIdentity(&collected, source)
 	return collected
 }
 
-func recoverCodexUsageCollectionIdentity(collected *codexUsageCollection) {
+func recoverCodexUsageCollectionIdentity(collected *codexUsageCollection, source monitorusage.Source) {
 	if collected == nil {
+		return
+	}
+	if !monitorusage.SourceAllowsAuthFileIdentityFallback(source) {
 		return
 	}
 	if collected.Summary != nil &&

@@ -529,7 +529,7 @@ func (f *Fetcher) replaceAccountFetchers(accounts []MonitorAccount) {
 		}
 		account.CodexHome = home
 		if existing, ok := existingByHome[home]; ok {
-			if existing.account.UseAppServer != account.UseAppServer {
+			if existing.account.SourceMode != account.SourceMode {
 				closeAccountFetcher(existing)
 				next = append(next, newAccountFetcher(account))
 				usedHomes[home] = struct{}{}
@@ -568,9 +568,12 @@ func newAccountFetcher(account MonitorAccount) accountFetcher {
 		account: account,
 		primary: NewOAuthSourceForHome(account.CodexHome),
 	}
-	if account.UseAppServer {
+	switch account.SourceMode {
+	case SourceModeManagedAppServer:
 		fetcher.primary = newManagedAppServerSourceForHome(account.CodexHome)
 		fetcher.fallback = NewOAuthSourceForHome(account.CodexHome)
+	case SourceModeDefaultAccount:
+		fetcher.primary = NewUsageSourceForHome(account.CodexHome)
 	}
 	return fetcher
 }
@@ -775,8 +778,10 @@ func (f *Fetcher) fetchAccountResult(ctx context.Context, account accountFetcher
 	snapshot, fetchErr := fetchWithFallback(ctx, account.primary, account.fallback)
 	if fetchErr != nil {
 		result.fetchErr = fetchErr
-		if email, err := AccountEmailFromAuthFileForHome(account.account.CodexHome); err == nil {
-			result.account.AccountEmail = email
+		if SourceAllowsAuthFileIdentityFallback(account.primary) {
+			if email, err := AccountEmailFromAuthFileForHome(account.account.CodexHome); err == nil {
+				result.account.AccountEmail = email
+			}
 		}
 		result.account.Error = fetchErr.Error()
 	} else {
