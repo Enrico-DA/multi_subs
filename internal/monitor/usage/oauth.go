@@ -20,6 +20,24 @@ const (
 	chatGPTOAuthUsageEndpoint = "https://chatgpt.com/backend-api/wham/usage"
 )
 
+var errOAuthAuthFileUnavailable = errors.New("oauth auth file unavailable")
+
+type oauthAuthFileUnavailableError struct {
+	err error
+}
+
+func (e *oauthAuthFileUnavailableError) Error() string {
+	return e.err.Error()
+}
+
+func (e *oauthAuthFileUnavailableError) Unwrap() error {
+	return e.err
+}
+
+func (e *oauthAuthFileUnavailableError) Is(target error) bool {
+	return target == errOAuthAuthFileUnavailable || errors.Is(e.err, target)
+}
+
 type OAuthSource struct {
 	httpClient *http.Client
 	codexHome  string
@@ -37,23 +55,51 @@ func (s *OAuthSource) Name() string {
 }
 
 func (s *OAuthSource) Fetch(ctx context.Context) (*Summary, error) {
-	authPath, err := findAuthJSONPathForHome(s.codexHome)
+	token, err := s.accessTokenFromAuthFile()
 	if err != nil {
 		return nil, err
+	}
+	req, err := newOAuthUsageRequest(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", clientName+"/"+buildinfo.Version)
+	return s.fetchRequest(req)
+}
+
+func (s *OAuthSource) accessTokenFromAuthFile() (string, error) {
+	authPath, err := findAuthJSONPathForHome(s.codexHome)
+	if err != nil {
+		return "", &oauthAuthFileUnavailableError{err: err}
 	}
 	token, err := readAccessToken(authPath)
 	if err != nil {
+		return "", &oauthAuthFileUnavailableError{err: err}
+	}
+	return token, nil
+}
+
+func (s *OAuthSource) fetchWithAccessToken(ctx context.Context, token string) (*Summary, error) {
+	req, err := newOAuthUsageRequest(ctx, token)
+	if err != nil {
 		return nil, err
 	}
+	userAgent := clientName + "/" + buildinfo.Version
+	req.Header.Set("User-Agent", userAgent)
+	return s.fetchRequest(req)
+}
 
+func newOAuthUsageRequest(ctx context.Context, token string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, chatGPTOAuthUsageEndpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build oauth request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", clientName+"/"+buildinfo.Version)
+	return req, nil
+}
 
+func (s *OAuthSource) fetchRequest(req *http.Request) (*Summary, error) {
 	res, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("oauth request failed: %w", err)

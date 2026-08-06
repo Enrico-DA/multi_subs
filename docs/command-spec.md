@@ -42,14 +42,14 @@ After valid argument parsing, all three sections are emitted even when the Codex
 
 ### `multisubs usage`
 
-Prints one read-only quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter.
+Prints one quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter.
 
 The physical target set is exact:
 
 1. every managed Codex profile in name order, then the normal default Codex account;
 2. every managed Claude profile in name order, then the normal default Claude account.
 
-Monitor-only account-file entries, active-home overrides, and filesystem-discovered accounts are excluded. No usage command creates or changes product or provider state or persists identity in config.
+Monitor-only account-file entries, active-home overrides, and filesystem-discovered accounts are excluded. No usage command creates multisubs product state, changes provider credentials, or persists identity in config. If the default Codex account has no usable `auth.json`, its official app-server probe may write non-credential logs, caches, database files, and database write-ahead files in the default Codex home. It does not change credentials.
 
 The physical targets are reconciled into logical subscriptions before output. A duplicate group has one row, one availability count, sorted managed aliases, and one deterministic successful quota snapshot; quota is never averaged. A failed Codex probe may still join a successful duplicate when its protected local auth file supplies the same strictly validated official email. The failed member keeps the logical row partial. A group that contains the default account ends with `(also default)` and stays in the provider's final position.
 
@@ -122,9 +122,12 @@ Runs official `codex exec` after weekly-only account selection.
 - Without an explicit model or profile selector, all candidate `config.toml` files must declare the same root model or all omit it. Conflicts exit with code 2 and require `--model`.
 - `--profile`/`-p` without an explicit model exits with code 2 because the selected Codex config can change the model.
 - Managed profile children receive file-backed-auth isolation.
-- Routing the default account currently needs file-backed default usage data. A default account with no readable `auth.json` is usage-unavailable and is not selected for routing today.
-- Default-account execution uses the default Codex home without a managed file-auth override or product mutation. After selection, exec runs a bounded `codex login status` in that home. The official check honors the credential store configured for the Codex CLI and does not treat a missing `auth.json` as proof of logout.
-- The launch check accepts only an explicit logged-in result. A logged-out or unconfirmed result is an operational failure with exit code 1. It returns a safe error without launching `codex exec` or falling back to another account.
+- Routing and the unified usage report use the same default-account source rule. A private regular `auth.json` with `tokens.access_token` uses OAuth directly and starts no app-server process. When that file is not usable, the official app server runs against the default home in unmanaged mode. It receives a sanitized environment, no managed file-store override, and no credential read or fingerprint from the app-server source. The official process may write non-credential logs, caches, database files, and database write-ahead files in the default home. It does not change credentials.
+- The unmanaged fallback must return real weekly data. It does not invent a percentage or create an unmeasured routing tier. The default account then follows the same identity reconciliation, weekly scoring, reset, and Spark rules as managed accounts.
+- Default-account execution uses the default Codex home without a managed file-auth override or default-credential mutation. After selection, exec makes two bounded `codex login status` attempts in that home, separated by a short pause so a momentarily busy home is not read as a login failure. The official check honors the credential store configured for the Codex CLI and does not treat a missing `auth.json` as proof of logout.
+- Only an explicit logged-in result passes the launch check. If neither attempt confirms login and another candidate exists, exec prints a prominent stderr warning that names the default account, states the cause, says `Run: codex login`, and says that default is being skipped. It excludes default and selects exactly once more from the remaining candidates. A redirected job always has this warning.
+- The stated cause is one of a fixed set of phrases selected by observed state: not logged in, check could not complete, or state not recognized. Raw `codex login status` output never appears.
+- When no other candidate exists, no reroute warning is printed, because no reroute can happen. Exec exits with code 1 and one blocked message carrying the same cause and the same `Run: codex login` fix. Replacement selection that then fails returns that same blocked message. Raw selection or provider failure output never appears in it.
 - Exact provider help requests pass through without config or state creation.
 - Optional selected-profile metadata is confined to `MULTISUBS_HOME/run`.
 
@@ -136,7 +139,7 @@ Shows safe, profile-local authentication state. It is read-only and accepts no e
 
 Prints the Codex-only view of the shared usage report. It shows `Session (5h)` for a declared 300-minute window. If there is no declared five-hour window, one unambiguous declared non-weekly window is labeled with its actual duration. Missing durations are not guessed by position, and several ambiguous non-weekly durations leave session usage unreported.
 
-The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Only fixed product-owned extra-limit labels are reported; the current known label is `Spark weekly`. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses the unmanaged source. Duplicate logical subscriptions use one deterministic successful snapshot. The command does not use the TUI or observed-token estimates.
+The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Only fixed product-owned extra-limit labels are reported; the current known label is `Spark weekly`. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses OAuth when its usable protected auth file has an access token, and otherwise uses the official app server in unmanaged mode. Routing uses the same typed default source. Duplicate logical subscriptions use one deterministic successful snapshot. The command does not use the TUI or observed-token estimates.
 
 Codex account and model scoring remains weekly-only. Identity reconciliation happens before that existing scoring. No arguments are accepted.
 
@@ -170,7 +173,7 @@ Nested topics:
 
 `multisubs codex monitor help` accepts no arguments and is a completion leaf.
 
-The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. Default and active homes follow their explicit inclusion rules. It remains the live Codex view; `multisubs usage` is the separate quick snapshot.
+The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. An included default home follows the same OAuth-or-unmanaged-app-server rule as routing and the usage report. A requested monitor-doctor app-server probe may therefore start the official process against the default home, where it can write non-credential logs, caches, database files, and database write-ahead files without changing credentials. Active homes follow their explicit inclusion rules. It remains the live Codex view; `multisubs usage` is the separate quick snapshot.
 
 `multisubs codex monitor doctor --json` keeps `name`, `ok`, and the human `details` sentence for every check. A successful usage-fetch check also includes `plan_type`, `source`, and the numeric `weekly_used_percent`. Each structured value is omitted when it is unavailable. In particular, unavailable weekly usage omits `weekly_used_percent` while `details` still says `weekly=unavailable`. Failed fetch checks keep the safe error in `details` and omit all three structured usage fields. The new fields add no session windows, provider account identifiers, paths, or raw provider payloads.
 

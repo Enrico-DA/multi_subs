@@ -60,6 +60,9 @@ func TestLoadMonitorAccountsIncludesOnlyGlobalHomeByDefault(t *testing.T) {
 	if accounts[0].Label != "global" || accounts[0].CodexHome != normalizeHome(defaultHome) {
 		t.Fatalf("expected global account for %q, got %#v", normalizeHome(defaultHome), accounts[0])
 	}
+	if accounts[0].SourceMode != SourceModeDefaultAccount {
+		t.Fatalf("expected typed default source mode, got %#v", accounts[0])
+	}
 }
 
 func TestLoadMonitorAccountsUsesConfiguredDefaultCodexHome(t *testing.T) {
@@ -232,7 +235,7 @@ func TestLoadMonitorAccountsFromFileWithDedup(t *testing.T) {
 		t.Fatalf("expected second label work, got %q", accounts[1].Label)
 	}
 	for _, account := range accounts {
-		if account.UseAppServer {
+		if account.SourceMode != SourceModeOAuth {
 			t.Fatalf("expected unverified account-file entry not to use app-server: %#v", account)
 		}
 	}
@@ -508,8 +511,8 @@ func TestAccountCollectorDeduplicatesSymlinkAndRealHomes(t *testing.T) {
 	}
 
 	collector := newAccountCollector()
-	collector.add("real", realHome, 50, false, false)
-	collector.add("link", symlinkHome, 60, false, false)
+	collector.add("real", realHome, 50, false, SourceModeOAuth)
+	collector.add("link", symlinkHome, 60, false, SourceModeOAuth)
 
 	accounts := collector.toAccounts()
 	if len(accounts) != 1 {
@@ -600,7 +603,7 @@ func TestLoadMonitorAccountsPrefersMultisubsProfiles(t *testing.T) {
 	for _, account := range accounts {
 		if account.Label == "personal" && account.CodexHome == normalizeHome(profileHome) {
 			found = true
-			if !account.UseAppServer {
+			if account.SourceMode != SourceModeManagedAppServer {
 				t.Fatalf("expected validated multisubs profile to use app-server")
 			}
 		}
@@ -649,8 +652,8 @@ func TestAccountCollectorPreservesVerifiedAppServerUseAcrossHigherPriorityAlias(
 	}
 
 	collector := newAccountCollector()
-	collector.add("profile", home, 90, false, true)
-	collector.add("alias", home, 100, true, false)
+	collector.add("profile", home, 90, false, SourceModeManagedAppServer)
+	collector.add("alias", home, 100, true, SourceModeOAuth)
 
 	accounts := collector.toAccounts()
 	if len(accounts) != 1 {
@@ -659,7 +662,7 @@ func TestAccountCollectorPreservesVerifiedAppServerUseAcrossHigherPriorityAlias(
 	if accounts[0].Label != "alias" {
 		t.Fatalf("expected higher-priority label, got %q", accounts[0].Label)
 	}
-	if !accounts[0].UseAppServer {
+	if accounts[0].SourceMode != SourceModeManagedAppServer {
 		t.Fatalf("expected verified app-server use to survive higher-priority alias")
 	}
 }

@@ -75,7 +75,7 @@ func TestHelpCodexExecDescribesDefaultLoginCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help codex exec failed: %v", err)
 	}
-	if !strings.Contains(out, "official Codex CLI confirms its login") {
+	if !strings.Contains(out, "warns on stderr, excludes default, and selects once more") {
 		t.Fatalf("expected default login check in codex exec help: %s", out)
 	}
 }

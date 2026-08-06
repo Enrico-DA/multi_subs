@@ -17,7 +17,7 @@
 
 - Keep each profile's auth, sessions, threads, `/goal`, and other Codex state inside its profile-local `CODEX_HOME`.
 - Keep each managed Claude account inside its derived profile-local `CLAUDE_CONFIG_DIR`.
-- Never change, copy, restore, back up, symlink, or otherwise manage either shared default auth account. Each default account participates normally in routing while remaining outside product ownership; the default Codex home is also a read-only monitor source.
+- Never change, copy, restore, back up, symlink, or otherwise manage either shared default auth account. Each default account participates normally in routing while remaining outside product ownership. An official app-server usage probe may write non-credential logs, caches, and database files in the default Codex home, but it must not change default credentials.
 - Never print raw credentials or raw subprocess failure output that could contain credentials. Tests and examples must use synthetic state and dummy paths.
 - Preserve resource reconciliation's no-clobber behavior: regular profile guidance, config, and skill entries are user overrides; only documented multisubs-owned symlinks may be changed. Runtime-managed `.system` skills remain profile-local.
 - Keep Codex usage and routing weekly-only. Prefer declared 10,080-minute windows and retain only the existing narrow compatibility fallback for older provider responses.
@@ -33,8 +33,8 @@
 
 ## Change discipline
 
-- Make small, evidence-backed changes and fail closed when routing, auth, or local state cannot be verified safely.
-- Keep one clear current path. Do not add speculative fallbacks that hide failures or spend account quota unexpectedly.
+- Make small, evidence-backed changes and fail closed when routing, auth, or local state cannot be verified safely, except for the documented retry-warn-and-reselect Codex default-login path.
+- Keep one clear current path. Do not add speculative fallbacks. Any documented account fallback must keep the failure visible and warn before it can spend another account's quota.
 - Treat user docs, command contracts, and security contracts as behavior.
 - Verify close to the change first, then run the broader repository checks.
 
