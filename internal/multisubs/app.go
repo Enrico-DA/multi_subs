@@ -115,10 +115,7 @@ func RunCLI(args []string) error {
 		return app.cmdCompleteClaudeProfiles()
 	}
 	if bareCodexCommand(args[0]) {
-		return &ExitError{
-			Code:    2,
-			Message: fmt.Sprintf("bare Codex command %q was removed; run \"multisubs codex %s\" instead", args[0], strings.Join(args, " ")),
-		}
+		return bareCodexCommandError(args[0])
 	}
 	return &ExitError{Code: 2, Message: fmt.Sprintf("unknown command: %s\nrun \"multisubs help\" for available commands", args[0])}
 }
@@ -223,7 +220,7 @@ func (a *App) Run(args []string) error {
 		return a.cmdClaude(args[1:])
 	default:
 		if bareCodexCommand(args[0]) {
-			return &ExitError{Code: 2, Message: fmt.Sprintf("bare Codex command %q was removed; run \"multisubs codex %s\" instead", args[0], strings.Join(args, " "))}
+			return bareCodexCommandError(args[0])
 		}
 		return &ExitError{Code: 2, Message: fmt.Sprintf("unknown command: %s\nrun \"multisubs help\" for available commands", args[0])}
 	}
@@ -343,6 +340,13 @@ func bareCodexCommand(command string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func bareCodexCommandError(command string) error {
+	return &ExitError{
+		Code:    2,
+		Message: fmt.Sprintf("bare Codex command %q was removed; run \"multisubs codex %s\" instead", command, command),
 	}
 }
 

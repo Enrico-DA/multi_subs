@@ -63,7 +63,7 @@ var defaultExecLoginStateProbe = defaultCodexLoginState
 
 func (a *App) cmdExec(args []string) error {
 	if execArgsAreHelpRequest(args) {
-		return runCommandWithEnv("codex", append([]string{"exec"}, args...), neutralCodexEnv(os.Environ()), fmt.Sprintf("command failed: %s", strings.Join(append([]string{"codex", "exec"}, args...), " ")))
+		return runCommandWithEnv("codex", append([]string{"exec"}, args...), neutralCodexEnv(os.Environ()), "Codex exec help command failed")
 	}
 	routingArgs, err := parseExecRoutingArgs(args)
 	if err != nil {

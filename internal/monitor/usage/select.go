@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	cryptorand "crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 	"sort"
@@ -266,10 +267,10 @@ func selectBestAccountFromResultsForModel(results []accountFetchResult, model st
 		return selected, nil
 	}
 	if modelIsSpark && !hadModelWindow {
-		return SelectedAccount{}, fmt.Errorf("no model-specific weekly limit available for requested model %q", model)
+		return SelectedAccount{}, errors.New("no model-specific weekly limit available for the requested model")
 	}
 	if modelIsSpark {
-		return SelectedAccount{}, fmt.Errorf("no model-eligible accounts available for requested model %q", model)
+		return SelectedAccount{}, errors.New("no model-eligible accounts available for the requested model")
 	}
 	if hadWeeklyWindow {
 		return SelectedAccount{}, fmt.Errorf("no accounts with remaining weekly usage")

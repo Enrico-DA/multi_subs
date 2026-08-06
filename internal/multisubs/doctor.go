@@ -637,6 +637,9 @@ func checkAuthFile(name, path string) DoctorCheck {
 	if fileHasMultipleLinks(info) {
 		return DoctorCheck{Name: name, Status: "fail", Details: "auth.json has multiple hard links; expected profile-local file"}
 	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return DoctorCheck{Name: name, Status: "fail", Details: "auth.json has group or world permissions; expected a private file"}
+	}
 
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -654,10 +657,7 @@ func checkAuthFile(name, path string) DoctorCheck {
 		hasAPIKey = true
 	}
 
-	warnings := make([]string, 0, 4)
-	if info.Mode().Perm()&0o077 != 0 {
-		warnings = append(warnings, fmt.Sprintf("permissions are %o, recommend 600", info.Mode().Perm()))
-	}
+	warnings := make([]string, 0, 3)
 
 	if !ok {
 		if hasAPIKey {

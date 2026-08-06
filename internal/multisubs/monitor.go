@@ -83,10 +83,14 @@ func (a *App) runMonitorDoctor(args []string) error {
 	} else {
 		printMonitorDoctorHuman(report)
 	}
-	if !report.Healthy() {
-		return &ExitError{Code: 1, Message: "monitor doctor checks failed"}
+	return monitorDoctorResult(report)
+}
+
+func monitorDoctorResult(report usage.DoctorReport) error {
+	if report.Healthy() {
+		return nil
 	}
-	return nil
+	return &ExitError{Code: 1, Message: "monitor doctor checks failed"}
 }
 
 func (a *App) runMonitorCompletion(args []string) error {
@@ -175,7 +179,7 @@ func printMonitorDoctorHumanTo(w io.Writer, report usage.DoctorReport) {
 	case "healthy":
 		fmt.Fprintln(w, "monitor doctor result: PASS")
 	case "degraded":
-		fmt.Fprintln(w, "monitor doctor result: PASS (degraded: at least one check failed)")
+		fmt.Fprintln(w, "monitor doctor result: FAIL (degraded: at least one check failed)")
 	default:
 		fmt.Fprintln(w, "monitor doctor result: FAIL")
 	}
