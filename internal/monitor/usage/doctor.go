@@ -120,11 +120,23 @@ func checkSourceFetch(ctx context.Context, account MonitorAccount, source Source
 			Details: err.Error(),
 		}
 	}
+	weeklyUsedPercent := availableDoctorUsedPercent(summary.WeeklyWindow)
 	return DoctorCheck{
-		Name:    name,
-		OK:      true,
-		Details: fmt.Sprintf("plan=%s weekly=%s source=%s", summary.PlanType, formatDoctorWeeklyUsage(summary.WeeklyWindow), summary.Source),
+		Name:              name,
+		OK:                true,
+		Details:           fmt.Sprintf("plan=%s weekly=%s source=%s", summary.PlanType, formatDoctorWeeklyUsage(summary.WeeklyWindow), summary.Source),
+		PlanType:          summary.PlanType,
+		Source:            summary.Source,
+		WeeklyUsedPercent: weeklyUsedPercent,
 	}
+}
+
+func availableDoctorUsedPercent(window WindowSummary) *int {
+	if window.UsedPercent < 0 {
+		return nil
+	}
+	usedPercent := window.UsedPercent
+	return &usedPercent
 }
 
 func formatDoctorWeeklyUsage(window WindowSummary) string {
