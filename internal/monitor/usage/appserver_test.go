@@ -183,6 +183,7 @@ func TestRefreshAuthStateFirstErrorReturnsError(t *testing.T) {
 
 func TestFetchBlocksAuthStateErrorBeforeStartingSession(t *testing.T) {
 	s := &AppServerSource{
+		managedProfile: true,
 		authFingerprintFn: func() (string, error) {
 			return "", errors.New("unsafe auth")
 		},
@@ -197,6 +198,24 @@ func TestFetchBlocksAuthStateErrorBeforeStartingSession(t *testing.T) {
 	}
 	if s.session != nil {
 		t.Fatalf("expected app-server session not to start")
+	}
+}
+
+func TestUnmanagedFetchDoesNotFingerprintAuth(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	fingerprintCalls := 0
+	s := NewAppServerSourceForHome(t.TempDir())
+	s.authFingerprintFn = func() (string, error) {
+		fingerprintCalls++
+		return "unexpected", nil
+	}
+
+	_, err := s.Fetch(context.Background())
+	if err == nil {
+		t.Fatal("expected missing synthetic codex binary to fail")
+	}
+	if fingerprintCalls != 0 {
+		t.Fatalf("unmanaged app-server fingerprinted auth %d time(s)", fingerprintCalls)
 	}
 }
 

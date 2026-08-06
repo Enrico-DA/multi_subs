@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -71,6 +72,23 @@ func TestOAuthSourceFetchLeavesNonWeeklyPrimaryOnlyWindowUnknown(t *testing.T) {
 	}
 	if codexWindow.SessionWindow.UsedPercent != 12 {
 		t.Fatalf("expected per-limit OAuth session window, got %+v", codexWindow.SessionWindow)
+	}
+}
+
+func TestOAuthSourceMissingAuthKeepsExistingSafeErrorText(t *testing.T) {
+	codexHome := t.TempDir()
+	source := NewOAuthSourceForHome(codexHome)
+
+	_, err := source.Fetch(context.Background())
+	if err == nil {
+		t.Fatal("expected missing auth error")
+	}
+	want := "auth.json not found in " + codexHome + "/auth.json"
+	if err.Error() != want {
+		t.Fatalf("missing auth error: got %q want %q", err, want)
+	}
+	if !errors.Is(err, errOAuthAuthFileUnavailable) {
+		t.Fatalf("missing auth error was not classified for default fallback: %v", err)
 	}
 }
 

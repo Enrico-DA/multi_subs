@@ -15,10 +15,16 @@ import (
 )
 
 const (
-	execSelectionTimeout    = 10 * time.Second
-	envSelectedProfilePath  = "MULTISUBS_SELECTED_PROFILE_PATH"
-	defaultExecAccountLabel = codexDefaultAccountName
+	execSelectionTimeout     = 10 * time.Second
+	defaultExecLoginAttempts = 2
+	envSelectedProfilePath   = "MULTISUBS_SELECTED_PROFILE_PATH"
+	defaultExecAccountLabel  = codexDefaultAccountName
+	defaultExecLoginFixHint  = "Run: codex login"
 )
+
+// defaultExecLoginRetryDelay spaces the login probes apart, so a momentarily
+// busy default home is not reported as a login failure. Tests set it to zero.
+var defaultExecLoginRetryDelay = 400 * time.Millisecond
 
 type execAccountSelector func(context.Context, []usage.MonitorAccount, string) (usage.SelectedAccount, error)
 
@@ -52,6 +58,8 @@ type execSelection struct {
 var defaultExecAccountSelector execAccountSelector = func(ctx context.Context, accounts []usage.MonitorAccount, model string) (usage.SelectedAccount, error) {
 	return usage.SelectBestAccountForModel(ctx, accounts, model)
 }
+
+var defaultExecLoginStateProbe = defaultCodexLoginState
 
 func (a *App) cmdExec(args []string) error {
 	if execArgsAreHelpRequest(args) {
@@ -227,25 +235,29 @@ func execArgsAreHelpRequest(args []string) bool {
 
 func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model string) (execSelection, error) {
 	targets := codexRoutingTargets(cfg, a.store.paths.DefaultCodexHome)
-	accounts := make([]usage.MonitorAccount, 0, len(targets))
-	for _, target := range targets {
-		accounts = append(accounts, target.Account)
-	}
-
 	if selector == nil {
 		return execSelection{}, fmt.Errorf("missing exec account selector")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), execSelectionTimeout)
-	defer cancel()
-
-	selected, err := selector(ctx, accounts, model)
+	selected, target, err := selectCodexRoutingTarget(targets, selector, model)
 	if err != nil {
 		return execSelection{}, err
 	}
-	target, ok := lookupSelectedCodexRoutingTarget(targets, selected)
-	if !ok {
-		return execSelection{}, fmt.Errorf("selected account %q is not an exec candidate", selected.Account.Label)
+	if target.Kind == codexRoutingTargetDefault {
+		if reason := defaultExecAccountLoginFailure(target.Account.CodexHome); reason != "" {
+			remaining := routingTargetsWithoutDefault(targets)
+			if len(remaining) == 0 {
+				return execSelection{}, &ExitError{Code: 1, Message: defaultExecLoginBlockedMessage(reason)}
+			}
+			fmt.Fprintln(os.Stderr, defaultExecLoginSkipWarning(reason))
+			targets = remaining
+			selected, target, err = selectCodexRoutingTarget(targets, selector, model)
+			if err != nil {
+				// The selection failure itself stays private: it can carry a
+				// local path or token-shaped text.
+				return execSelection{}, &ExitError{Code: 1, Message: defaultExecLoginBlockedMessage(reason)}
+			}
+		}
 	}
 	if target.Kind == codexRoutingTargetManaged && target.Profile != nil {
 		profile := *target.Profile
@@ -257,9 +269,6 @@ func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model
 		return execSelection{Name: target.Account.Label, CodexHome: profile.CodexHome, IsProfile: true, Profile: profile, Metadata: metadata}, nil
 	}
 	if target.Kind == codexRoutingTargetDefault {
-		if err := ensureDefaultExecAccountReady(target.Account.CodexHome); err != nil {
-			return execSelection{}, err
-		}
 		metadata := execSelectionMetadata{
 			Profile:           defaultExecAccountLabel,
 			SelectionSource:   "usage_selector_default",
@@ -270,20 +279,73 @@ func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model
 	return execSelection{}, fmt.Errorf("selected account %q is not an exec candidate", selected.Account.Label)
 }
 
-func ensureDefaultExecAccountReady(codexHome string) error {
-	state, detail := defaultCodexLoginState(codexHome)
-	switch state {
-	case "logged-in":
-		return nil
-	case "logged-out":
-		return &ExitError{Code: 1, Message: "default Codex account is not logged in. run: codex login"}
-	default:
-		message := "default Codex login status could not be confirmed"
-		if state == "error" {
-			message += ": " + detail
-		}
-		return &ExitError{Code: 1, Message: message}
+func selectCodexRoutingTarget(targets []codexRoutingTarget, selector execAccountSelector, model string) (usage.SelectedAccount, codexRoutingTarget, error) {
+	accounts := make([]usage.MonitorAccount, 0, len(targets))
+	for _, target := range targets {
+		accounts = append(accounts, target.Account)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), execSelectionTimeout)
+	defer cancel()
+	selected, err := selector(ctx, accounts, model)
+	if err != nil {
+		return usage.SelectedAccount{}, codexRoutingTarget{}, err
+	}
+	target, ok := lookupSelectedCodexRoutingTarget(targets, selected)
+	if !ok {
+		return usage.SelectedAccount{}, codexRoutingTarget{}, fmt.Errorf("selected account %q is not an exec candidate", selected.Account.Label)
+	}
+	return selected, target, nil
+}
+
+func routingTargetsWithoutDefault(targets []codexRoutingTarget) []codexRoutingTarget {
+	remaining := make([]codexRoutingTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.Kind != codexRoutingTargetDefault {
+			remaining = append(remaining, target)
+		}
+	}
+	return remaining
+}
+
+// defaultExecAccountLoginFailure reports why the default Codex account cannot
+// be used for this command, or an empty string when it is logged in. The probe
+// is retried because it shells out against shared local state.
+func defaultExecAccountLoginFailure(codexHome string) string {
+	reason := ""
+	for attempt := 0; attempt < defaultExecLoginAttempts; attempt++ {
+		if attempt > 0 && defaultExecLoginRetryDelay > 0 {
+			time.Sleep(defaultExecLoginRetryDelay)
+		}
+		state, _ := defaultExecLoginStateProbe(codexHome)
+		if state == "logged-in" {
+			return ""
+		}
+		reason = defaultExecLoginFailureReason(state)
+	}
+	return reason
+}
+
+// defaultExecLoginFailureReason keeps the wording fixed per state. The probe's
+// detail is deliberately discarded: it is provider output that can carry an
+// account identity or a local path.
+func defaultExecLoginFailureReason(state string) string {
+	switch state {
+	case "logged-out":
+		return "it reported that it is not logged in"
+	case "error":
+		return "the login check could not complete"
+	default:
+		return "its login state could not be recognized"
+	}
+}
+
+func defaultExecLoginSkipWarning(reason string) string {
+	return fmt.Sprintf("WARNING: multisubs could not confirm the default Codex account login after %d attempts, because %s. Skipping that account for this command and routing to another one. %s", defaultExecLoginAttempts, reason, defaultExecLoginFixHint)
+}
+
+func defaultExecLoginBlockedMessage(reason string) string {
+	return fmt.Sprintf("could not confirm the default Codex account login after %d attempts, because %s, and no other account could be used to run this command. %s", defaultExecLoginAttempts, reason, defaultExecLoginFixHint)
 }
 
 func codexRoutingTargets(cfg *Config, defaultHome string) []codexRoutingTarget {
@@ -295,9 +357,9 @@ func codexRoutingTargets(cfg *Config, defaultHome string) []codexRoutingTarget {
 		targets = append(targets, codexRoutingTarget{
 			Kind: codexRoutingTargetManaged,
 			Account: usage.MonitorAccount{
-				Label:        name,
-				CodexHome:    profile.CodexHome,
-				UseAppServer: true,
+				Label:      name,
+				CodexHome:  profile.CodexHome,
+				SourceMode: usage.SourceModeManagedAppServer,
 			},
 			Profile: &profileCopy,
 		})
@@ -305,8 +367,9 @@ func codexRoutingTargets(cfg *Config, defaultHome string) []codexRoutingTarget {
 	return append(targets, codexRoutingTarget{
 		Kind: codexRoutingTargetDefault,
 		Account: usage.MonitorAccount{
-			Label:     defaultExecAccountLabel,
-			CodexHome: normalizeExecCodexHome(defaultHome),
+			Label:      defaultExecAccountLabel,
+			CodexHome:  normalizeExecCodexHome(defaultHome),
+			SourceMode: usage.SourceModeDefaultAccount,
 		},
 	})
 }
