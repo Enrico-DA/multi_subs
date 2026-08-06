@@ -207,6 +207,8 @@ The name `default` is reserved for the built-in default Claude account and canno
 
 Runs official `claude auth login --claudeai` with the managed profile's derived `CLAUDE_CONFIG_DIR`. It verifies subscription auth and rejects duplicate organizations.
 
+Verification requires all of: logged-in status, `claude.ai` auth method, first-party API provider, a `max` subscription, and a non-empty organization ID. Any other subscription plan, including Pro, fails verification, so managed Claude profiles currently require Claude Max. The same rule decides which accounts `multisubs claude exec` may route to, and it makes a target's Claude doctor check warn. Claude usage reporting is deliberately exempt: it shows quota for any logged-in account.
+
 Exact `multisubs claude login <name> --help` and `multisubs claude login <name> -h` requests instead run neutral official help as `claude auth login --claudeai <flag>`. The named profile need not exist. These forms do not load provider config, create product state, set `CLAUDE_CONFIG_DIR`, inspect auth or usage, or run post-login verification. Any help flag mixed with extra login arguments exits with code 2 before state access.
 
 ### `multisubs claude cli <name|default> [claude args...]`
