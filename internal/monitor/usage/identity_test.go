@@ -93,13 +93,13 @@ func TestReconcileCodexIdentitiesNeverUsesUserIDOrMalformedEmail(t *testing.T) {
 
 func TestNormalizeAccountEmailIsStrict(t *testing.T) {
 	for input, want := range map[string]string{
-		" Enrico.Varano+work@Example.COM ": "enrico.varano+work@example.com",
-		"not-an-email":                     "",
-		"name@example":                     "",
-		"name@example..com":                "",
-		"name @example.com":                "",
-		"name@example.com/path":            "",
-		"name\u0085@example.com":           "",
+		" Given.Family+work@Example.COM ": "given.family+work@example.com",
+		"not-an-email":                    "",
+		"name@example":                    "",
+		"name@example..com":               "",
+		"name @example.com":               "",
+		"name@example.com/path":           "",
+		"name\u0085@example.com":          "",
 	} {
 		if got := NormalizeAccountEmail(input); got != want {
 			t.Fatalf("NormalizeAccountEmail(%q): got %q want %q", input, got, want)
