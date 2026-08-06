@@ -135,3 +135,148 @@ func TestBuildRateLimitWindowsFromOAuthAdditionalLimitsKeepsPrimaryOnlyLimit(t *
 		t.Fatalf("expected missing secondary window to stay nil for normalizer fallback, got %#v", window.Secondary)
 	}
 }
+
+func TestOAuthExplicitMainQuotaSignalsAreNotRoutable(t *testing.T) {
+	tests := []struct {
+		name        string
+		eligibility string
+	}{
+		{name: "not allowed", eligibility: `"allowed": false`},
+		{name: "limit reached", eligibility: `"limit_reached": true`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			summary := fetchOAuthSummary(t, `{
+				"plan_type": "pro",
+				"rate_limit": {
+					`+test.eligibility+`,
+					"primary_window": {
+						"used_percent": 1,
+						"limit_window_seconds": 604800
+					}
+				}
+			}`)
+
+			provider := accountFetchResult{
+				codexHome: "/provider",
+				account: AccountSummary{
+					Label:            "provider",
+					WeeklyWindow:     summary.WeeklyWindow,
+					RateLimitWindows: summary.RateLimitWindows,
+				},
+				snapshot: summary,
+			}
+			selected, err := selectBestAccountFromResultsForModel([]accountFetchResult{
+				provider,
+				selectionResult("measured", 0, 90, -1),
+			}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if selected.Account.Label != "measured" {
+				t.Fatalf("explicit OAuth quota signal was scored: %+v", selected)
+			}
+		})
+	}
+}
+
+func TestOAuthExplicitAdditionalQuotaUnavailableIsNotRoutable(t *testing.T) {
+	summary := fetchOAuthSummary(t, `{
+		"plan_type": "pro",
+		"rate_limit": {
+			"allowed": true,
+			"primary_window": {
+				"used_percent": 10,
+				"limit_window_seconds": 604800
+			}
+		},
+		"additional_rate_limits": [{
+			"limit_name": "codex_bengalfox",
+			"rate_limit": {
+				"allowed": false,
+				"primary_window": {
+					"used_percent": 1,
+					"limit_window_seconds": 604800
+				}
+			}
+		}]
+	}`)
+	provider := accountFetchResult{
+		codexHome: "/provider",
+		account: AccountSummary{
+			Label:            "provider",
+			WeeklyWindow:     summary.WeeklyWindow,
+			RateLimitWindows: summary.RateLimitWindows,
+		},
+		snapshot: summary,
+	}
+	measured := selectionResult("measured", 0, 90, -1)
+	measured.account.RateLimitWindows = map[string]RateLimitWindow{
+		"codex_bengalfox": {
+			LimitID:      "codex_bengalfox",
+			LimitName:    "Spark",
+			WeeklyWindow: weeklyWindow(90, -1),
+		},
+	}
+
+	selected, err := selectBestAccountFromResultsForModel(
+		[]accountFetchResult{provider, measured},
+		"gpt-5.3-codex-spark",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Account.Label != "measured" {
+		t.Fatalf("explicit additional OAuth quota unavailability was scored: %+v", selected)
+	}
+}
+
+func TestOAuthOmittedEligibilityFieldsKeepOlderResponseCompatibility(t *testing.T) {
+	summary := fetchOAuthSummary(t, `{
+		"plan_type": "pro",
+		"rate_limit": {
+			"primary_window": {
+				"used_percent": 23,
+				"limit_window_seconds": 604800
+			}
+		}
+	}`)
+	result := accountFetchResult{
+		codexHome: "/provider",
+		account: AccountSummary{
+			Label:            "provider",
+			WeeklyWindow:     summary.WeeklyWindow,
+			RateLimitWindows: summary.RateLimitWindows,
+		},
+		snapshot: summary,
+	}
+
+	selected, err := selectBestAccountFromResultsForModel([]accountFetchResult{result}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Account.Label != "provider" || selected.WeeklyUsedPercent != 23 {
+		t.Fatalf("older OAuth response lost weekly compatibility: %+v", selected)
+	}
+}
+
+func fetchOAuthSummary(t *testing.T, body string) *Summary {
+	t.Helper()
+	codexHome := t.TempDir()
+	if err := os.WriteFile(codexHome+"/auth.json", []byte(`{"tokens":{"access_token":"test-token"}}`), 0o600); err != nil {
+		t.Fatalf("write auth.json: %v", err)
+	}
+	source := NewOAuthSourceForHome(codexHome)
+	source.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	summary, err := source.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	return summary
+}

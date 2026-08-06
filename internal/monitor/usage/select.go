@@ -349,7 +349,7 @@ func usageWindowAvailable(weekly WindowSummary) bool {
 }
 
 func usageWindowIsKnownExhausted(win WindowSummary) bool {
-	return win.UsedPercent != unavailableUsedPercent && win.UsedPercent >= 100
+	return win.UsedPercent != unavailableUsedPercent && (win.exhausted || win.UsedPercent >= 100)
 }
 
 func chooseSelectedAccount(results []accountFetchResult, candidates []accountWindowCandidate) (SelectedAccount, bool) {

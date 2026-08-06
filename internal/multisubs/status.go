@@ -1,7 +1,6 @@
 package multisubs
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Enrico-DA/multi_subs/internal/codexstate"
+	"github.com/Enrico-DA/multi_subs/internal/processprobe"
 )
 
 type profileStatus struct {
@@ -172,7 +172,6 @@ func probeCodexLoginStatusWithTimeout(codexHome string, timeout time.Duration, m
 		args = codexstate.WithManagedAuthOverride(args)
 	}
 	cmd := codexLoginStatusCommandContext(ctx, "codex", args...)
-	cmd.WaitDelay = 500 * time.Millisecond
 	var env []string
 	if managed {
 		env = profileCodexEnv(os.Environ(), codexHome, "")
@@ -180,12 +179,11 @@ func probeCodexLoginStatusWithTimeout(codexHome string, timeout time.Duration, m
 		env = sanitizedCodexEnv(os.Environ(), codexHome)
 	}
 	cmd.Env = env
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-
-	err := cmd.Run()
-	all := strings.TrimSpace(out.String())
+	out, truncated, err := processprobe.CombinedOutput(cmd)
+	if truncated {
+		return "error", "", "codex login status output exceeded safe limit"
+	}
+	all := strings.TrimSpace(string(out))
 	lower := strings.ToLower(all)
 
 	account = emailRe.FindString(all)

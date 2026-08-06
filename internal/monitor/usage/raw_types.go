@@ -14,6 +14,7 @@ type rateLimitWindowRaw struct {
 	UsedPercent        int    `json:"usedPercent"`
 	WindowDurationMins *int   `json:"windowDurationMins"`
 	ResetsAt           *int64 `json:"resetsAt"`
+	exhausted          bool
 }
 
 type creditsSnapshotRaw struct {
@@ -241,6 +242,7 @@ func toWindowSummary(win *rateLimitWindowRaw) WindowSummary {
 	out := WindowSummary{
 		UsedPercent:        win.UsedPercent,
 		WindowDurationMins: win.WindowDurationMins,
+		exhausted:          win.exhausted,
 	}
 	if win.ResetsAt != nil {
 		reset := time.Unix(*win.ResetsAt, 0).UTC()
