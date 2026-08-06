@@ -13,8 +13,12 @@ import (
 func TestRawAndDefaultAppServerArgsDoNotForceManagedAuth(t *testing.T) {
 	t.Parallel()
 
+	defaultHome, err := defaultCodexHome()
+	if err != nil {
+		t.Fatalf("resolve default codex home: %v", err)
+	}
 	for name, source := range map[string]*AppServerSource{
-		"default": NewAppServerSource(),
+		"default": NewAppServerSourceForHome(defaultHome),
 		"raw":     NewAppServerSourceForHome("/raw"),
 	} {
 		source := source

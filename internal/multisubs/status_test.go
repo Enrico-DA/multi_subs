@@ -158,6 +158,47 @@ func TestCodexLoginStatusTreatsZeroExitNegativeOutputAsLoggedOut(t *testing.T) {
 	}
 }
 
+func TestLoginStatusTextUsesWholeAffirmativeAndNegativePhrases(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		state string
+	}{
+		{name: "official affirmative", text: "Logged in using ChatGPT", state: "logged-in"},
+		{name: "signed in", text: "Signed in", state: "logged-in"},
+		{name: "authenticated identity", text: "Authenticated as synthetic-user", state: "logged-in"},
+		{name: "negative wins", text: "Not logged in", state: "logged-out"},
+		{name: "signed-in negation wins", text: "Not signed in", state: "logged-out"},
+		{name: "no active account", text: "No active account", state: "logged-out"},
+		{name: "bare active is unknown", text: "Account is active", state: "ok"},
+		{name: "uncertain text is unknown", text: "Could not determine whether logged in", state: "ok"},
+		{name: "false suffix is unknown", text: "Logged in: false", state: "ok"},
+		{name: "question suffix is unknown", text: "Logged in? unknown", state: "ok"},
+		{name: "status suffix is unknown", text: "Logged in status could not be determined", state: "ok"},
+		{name: "email token is not negative", text: "Logged in as unauth@example.test", state: "logged-in"},
+		{name: "negative with trailing period", text: "Not logged in.", state: "logged-out"},
+		{name: "negative sentence with trailing period", text: "You are not logged in.", state: "logged-out"},
+		{name: "affirmative with trailing period", text: "Logged in.", state: "logged-in"},
+		{name: "affirmative signed in with trailing period", text: "Signed in.", state: "logged-in"},
+		{name: "official affirmative with trailing period", text: "Logged in using ChatGPT.", state: "logged-in"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			lower := strings.ToLower(test.text)
+			state := "ok"
+			if loginStatusTextIndicatesLoggedOut(lower) {
+				state = "logged-out"
+			} else if loginStatusTextIndicatesLoggedIn(lower) {
+				state = "logged-in"
+			}
+			if state != test.state {
+				t.Fatalf("classification for %q: got %q want %q", test.text, state, test.state)
+			}
+		})
+	}
+}
+
 func TestCodexLoginStatusRedactsFailureOutput(t *testing.T) {
 	root := t.TempDir()
 	fakeBin := filepath.Join(root, "bin")

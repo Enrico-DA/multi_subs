@@ -122,7 +122,9 @@ Runs official `codex exec` after weekly-only account selection.
 - Without an explicit model or profile selector, all candidate `config.toml` files must declare the same root model or all omit it. Conflicts exit with code 2 and require `--model`.
 - `--profile`/`-p` without an explicit model exits with code 2 because the selected Codex config can change the model.
 - Managed profile children receive file-backed-auth isolation.
-- Default-account execution uses the default Codex home without a managed file-auth override or product mutation.
+- Routing the default account currently needs file-backed default usage data. A default account with no readable `auth.json` is usage-unavailable and is not selected for routing today.
+- Default-account execution uses the default Codex home without a managed file-auth override or product mutation. After selection, exec runs a bounded `codex login status` in that home. The official check honors the credential store configured for the Codex CLI and does not treat a missing `auth.json` as proof of logout.
+- The launch check accepts only an explicit logged-in result. A logged-out or unconfirmed result is an operational failure with exit code 1. It returns a safe error without launching `codex exec` or falling back to another account.
 - Exact provider help requests pass through without config or state creation.
 - Optional selected-profile metadata is confined to `MULTISUBS_HOME/run`.
 
