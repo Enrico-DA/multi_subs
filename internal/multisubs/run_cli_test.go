@@ -13,6 +13,7 @@ func TestRunCLIHelpNamespacesDoNotCreateState(t *testing.T) {
 		{"help"},
 		{"codex", "help"},
 		{"claude", "help"},
+		{"help", "status"},
 		{"help", "usage"},
 		{"help", "codex", "usage"},
 		{"help", "codex", "exec"},
@@ -72,7 +73,6 @@ func TestRunCLIRejectsBareCodexCommandsWithoutStateMutation(t *testing.T) {
 		"login-all",
 		"cli",
 		"exec",
-		"status",
 		"reconcile",
 		"heartbeat",
 		"monitor",
@@ -191,6 +191,7 @@ func TestRunCLIRejectsUndocumentedArgumentsBeforeCreatingState(t *testing.T) {
 		{"claude", "usage", "--json"},
 		{"claude", "doctor", "unexpected"},
 		{"usage", "--json"},
+		{"status", "--json"},
 	}
 
 	for _, args := range commands {
@@ -224,6 +225,28 @@ func TestRunCLICodexStatusDoesNotCreateState(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "multisubs")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("codex status created state: %v", err)
+	}
+}
+
+func TestRunCLIRejectsTopLevelStatusArgumentsWithoutStateMutation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MULTISUBS_HOME", "")
+	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", "")
+
+	err := RunCLI([]string{"status", "--json"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
+		t.Fatalf("expected status usage error, got %T (%v)", err, err)
+	}
+	if exitErr.Message != "usage: multisubs status" {
+		t.Fatalf("unexpected status error: %q", exitErr.Message)
+	}
+	if strings.Contains(exitErr.Message, "bare Codex command") {
+		t.Fatalf("top-level status was treated as a removed Codex command: %q", exitErr.Message)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "multisubs")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("invalid top-level status created state: %v", statErr)
 	}
 }
 

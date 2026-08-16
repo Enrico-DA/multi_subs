@@ -14,7 +14,7 @@ When bringing in upstream changes, translate product-owned identity as follows:
 | `package multicodex` | `package multisubs` |
 | `~/multicodex` active state | `~/multisubs` |
 | `MULTICODEX_*` active controls | `MULTISUBS_*` |
-| bare Codex commands | `multisubs codex ...` |
+| bare Codex commands | `multisubs codex ...`; product-wide `status` stays a top-level snapshot |
 | Claude provider commands | `multisubs claude ...` |
 
 Do not translate:

@@ -34,12 +34,6 @@ var codexLoginStatusCommandContext = exec.CommandContext
 var profileCheckWorkerLimit = 6
 
 func PrintStatus(store *Store, cfg *Config) error {
-	if len(cfg.Profiles) == 0 {
-		fmt.Println("no profiles configured")
-		fmt.Println("add a profile with: multisubs codex add <name>")
-		return nil
-	}
-
 	names := make([]string, 0, len(cfg.Profiles))
 	for name := range cfg.Profiles {
 		names = append(names, name)
@@ -47,6 +41,7 @@ func PrintStatus(store *Store, cfg *Config) error {
 	sort.Strings(names)
 
 	rows := collectProfileRows(store, cfg, names)
+	rows = append(rows, buildDefaultProfileRow(store.paths.DefaultCodexHome))
 
 	fmt.Println("multisubs codex status")
 	fmt.Println("profile-local auth status")
@@ -59,7 +54,50 @@ func PrintStatus(store *Store, cfg *Config) error {
 		}
 		fmt.Printf("%-16s %-10s %-10s %-30s %s\n", row.Name, auth, row.State, truncate(row.Account, 30), truncate(row.Detail, 80))
 	}
+	if len(cfg.Profiles) == 0 {
+		fmt.Println()
+		fmt.Println("no managed profiles configured")
+		fmt.Println("add a profile with: multisubs codex add <name>")
+	}
+	printNextSteps(os.Stdout, profileStatusNextSteps("Codex", rows))
 	return nil
+}
+
+func buildDefaultProfileRow(codexHome string) profileStatus {
+	row := profileStatus{Name: defaultExecAccountLabel}
+	if strings.TrimSpace(codexHome) == "" {
+		row.State = "missing"
+		row.Detail = "default Codex home not found"
+		return row
+	}
+	info, err := os.Stat(codexHome)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			row.State = "missing"
+			row.Detail = "default Codex home not found"
+			return row
+		}
+		row.State = "error"
+		row.Detail = "default Codex home unavailable"
+		return row
+	}
+	if !info.IsDir() {
+		row.State = "error"
+		row.Detail = "default Codex home unavailable"
+		return row
+	}
+	_, hasAuth, err := ensureProfileAuthPathSafe(codexHome)
+	if err != nil {
+		row.State = "error"
+		row.Detail = "default Codex auth unavailable"
+		return row
+	}
+	row.AuthFile = hasAuth
+	state, account, detail := codexLoginStatusWithTimeout(codexHome, codexLoginStatusTimeout, false)
+	row.State = state
+	row.Account = account
+	row.Detail = detail
+	return row
 }
 
 func collectProfileRows(store *Store, cfg *Config, names []string) []profileStatus {

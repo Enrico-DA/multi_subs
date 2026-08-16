@@ -276,13 +276,18 @@ func (a *App) cmdClaudeStatus(args []string) error {
 		return err
 	}
 	targets := claudeTargets(cfg)
+	rows := make([]profileStatus, 0, len(targets))
 	fmt.Println("multisubs claude status")
 	fmt.Println()
 	fmt.Printf("%-16s %-9s %-12s %-30s %s\n", "target", "kind", "state", "identity", "auth")
 	for _, target := range targets {
+		row := profileStatus{Name: target.Name}
 		if target.Profile != nil {
 			if err := store.EnsureProfileReady(*target.Profile); err != nil {
-				fmt.Printf("%-16s %-9s %-12s %-30s %s\n", target.Name, target.Kind, "error", "-", truncate(err.Error(), 80))
+				row.State = "error"
+				row.Detail = "profile state unavailable"
+				fmt.Printf("%-16s %-9s %-12s %-30s %s\n", target.Name, target.Kind, row.State, "-", truncate(row.Detail, 80))
+				rows = append(rows, row)
 				continue
 			}
 		}
@@ -290,17 +295,24 @@ func (a *App) cmdClaudeStatus(args []string) error {
 		status, statusErr := fetchClaudeAuthStatus(ctx, a.claudeCommandRunner(), target.ConfigDir)
 		cancel()
 		if statusErr != nil {
-			fmt.Printf("%-16s %-9s %-12s %-30s %s\n", target.Name, target.Kind, "error", "-", truncate(statusErr.Error(), 80))
+			row.State = "error"
+			row.Detail = "status check failed"
+			fmt.Printf("%-16s %-9s %-12s %-30s %s\n", target.Name, target.Kind, row.State, "-", truncate(row.Detail, 80))
+			rows = append(rows, row)
 			continue
 		}
-		state := "logged-out"
+		row.State = "logged-out"
 		if status.LoggedIn {
-			state = "logged-in"
+			row.State = "logged-in"
 		}
 		identity := valueOrDash(status.Identity)
 		auth := compactClaudeAuthDescription(status)
-		fmt.Printf("%-16s %-9s %-12s %-30s %s\n", target.Name, target.Kind, state, truncate(identity, 30), truncate(auth, 80))
+		row.Account = identity
+		row.Detail = auth
+		fmt.Printf("%-16s %-9s %-12s %-30s %s\n", target.Name, target.Kind, row.State, truncate(identity, 30), truncate(auth, 80))
+		rows = append(rows, row)
 	}
+	printNextSteps(os.Stdout, profileStatusNextSteps("Claude", rows))
 	return nil
 }
 

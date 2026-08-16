@@ -24,7 +24,7 @@ Decision: Codex commands live under `multisubs codex`; Claude commands live unde
 
 Why: A symmetric tree makes provider ownership clear and leaves room for later product-wide commands.
 
-Enforcement: Bare Codex routes fail with code 2 before state access and point to the matching namespaced route. `multisubs init` remains the shared initializer, and `multisubs codex init` calls the same path.
+Enforcement: Bare Codex routes fail with code 2 before state access and point to the matching namespaced route. Product-wide commands are `init`, `doctor`, `status`, and `usage`. `multisubs init` remains the shared initializer, and `multisubs codex init` calls the same path. `multisubs status` prints the same quota snapshot as `multisubs usage` and adds a Next section when any account is not ready.
 
 ## Keep aggregate and focused doctors
 
