@@ -318,7 +318,7 @@ func TestClaudeCommandProbeFailuresDoNotExposeCapturedDiagnostics(t *testing.T) 
 		wantCategory string
 		run          func(*App) error
 	}{
-		{name: "status", wantCategory: "unknown failure", run: func(app *App) error { return app.cmdClaudeStatus(nil) }},
+		{name: "status", wantCategory: "status check failed", run: func(app *App) error { return app.cmdClaudeStatus(nil) }},
 		{name: "usage", wantCategory: "usage probe failed", run: func(app *App) error { return app.cmdClaudeUsage(nil) }},
 		{name: "doctor", wantCategory: "unknown failure", run: func(app *App) error { return app.cmdClaudeDoctor(nil) }},
 		{name: "exec", wantCategory: "no usable Claude account", run: func(app *App) error { return app.cmdClaudeExec([]string{"hello"}) }},

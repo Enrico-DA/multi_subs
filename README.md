@@ -53,9 +53,10 @@ multisubs claude usage
 multisubs claude exec "Review this change."
 ```
 
-Show one quota snapshot across both providers, or filter the same report by provider:
+Show one quota snapshot across both providers, or filter the same report by provider. When an account is not ready, the snapshot prints a Next section with the exact command to run:
 
 ```bash
+multisubs status
 multisubs usage
 multisubs codex usage
 multisubs claude usage
@@ -66,6 +67,7 @@ multisubs claude usage
 ```text
 multisubs init
 multisubs doctor
+multisubs status
 multisubs usage
 multisubs completion <shell>
 multisubs version
@@ -98,13 +100,13 @@ multisubs claude doctor
 
 The three usage commands share one report format. This local-only output includes each logical subscription's full, validated account email by default. The combined command prints Codex first, then Claude. Duplicate physical targets for one subscription collapse into one row and one availability count. Managed aliases sort by name. If a logical row also contains the normal default account, it ends with `(also default)` and stays last for that provider. Email-shaped profile names use unique aliases such as `[managed-1]`. Codex rows are `Session`, `Weekly`, and fixed product-known model limits; the only current extra label is `Spark weekly`, and unknown provider limit names are suppressed. Claude rows are `Session (~5h)`, `Weekly all models`, and `Fable weekly`; only an explicit parenthesized duration in the provider's session heading replaces the approximate label, and an absent optional Fable window is `not reported`. One deterministic successful quota snapshot represents a duplicate group; percentages are never averaged.
 
-Usage snapshots do not create multisubs product state, change provider credentials, or persist identity in config. They do not include monitor-only account files, inspect active-home overrides, discover filesystem accounts, or estimate observed tokens. When the default Codex account has no usable `auth.json`, its official app-server probe may write non-credential state in the default Codex home, including logs, caches, database files, and database write-ahead files. The probe does not change credentials. Account, user, and organization IDs stay internal and are never printed. If a validated email or unambiguous logical identity is unavailable while quota succeeds, the quota remains visible as a separate `identity unavailable` row, contributes one unavailable count because no safe collapse is proven, makes the report partial, and causes exit code 1. A Codex session may also be shown as partial when required weekly data is unavailable. Source cleanup failure is a fixed safe account failure. Invalid arguments, including `--json`, exit with code 2. JSON output is not available in this release.
+Usage snapshots do not create multisubs product state, change provider credentials, or persist identity in config. They do not include monitor-only account files, inspect active-home overrides, discover filesystem accounts, or estimate observed tokens. When the default Codex account has no usable `auth.json`, its official app-server probe may write non-credential state in the default Codex home, including logs, caches, database files, and database write-ahead files. The probe does not change credentials. Account, user, and organization IDs stay internal and are never printed. If a validated email or unambiguous logical identity is unavailable while quota succeeds, the quota remains visible as a separate `identity unavailable` row, contributes one unavailable count because no safe collapse is proven, makes the report partial, and causes exit code 1. A Codex session may also be shown as partial when required weekly data is unavailable. Source cleanup failure is a fixed safe account failure. Invalid arguments, including `--json`, exit with code 2. JSON output is not available in this release. When the result is not complete, a Next section prints the exact command for each failed account. Default Codex login is `codex login`. Default Claude login is `claude auth login`. Managed profiles use `multisubs codex login <name>` or `multisubs claude login <name>`. Other failures point at `multisubs doctor` or `multisubs init`. Those commands are a closed allow-list; profile names are validated before they are printed.
 
-Use `multisubs usage` for a quick point-in-time view. Use `multisubs codex monitor` for the live Codex terminal interface. The snapshot adds Codex session display but does not change the monitor or weekly-only Codex routing.
+Use `multisubs status` or `multisubs usage` for a quick point-in-time view. Use `multisubs codex monitor` for the live Codex terminal interface. The snapshot adds Codex session display but does not change the monitor or weekly-only Codex routing.
 
 The Codex monitor also accepts the nested topics `tui`, `doctor`, `completion`, and `help`. The argument-free `multisubs codex monitor help` path is a leaf, so completion does not offer anything after it. Use `multisubs help codex monitor doctor` for details.
 
-Bare Codex routes were removed. For example, `multisubs status` exits with code 2 and points to `multisubs codex status`.
+Bare Codex routes were removed. Product-wide `multisubs status` prints the quota snapshot and next commands. `multisubs login` and other old top-level Codex routes still exit with code 2 and point to `multisubs codex ...`.
 
 The profile name `default` is reserved for each provider's built-in default account and cannot be used for a managed profile.
 

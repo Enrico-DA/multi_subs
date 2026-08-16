@@ -18,6 +18,7 @@ var commandSummaries = []struct {
 }{
 	{Name: "init", Summary: "initialize shared multisubs state"},
 	{Name: "doctor [flags]", Summary: "run aggregate shared, Codex, and Claude checks"},
+	{Name: "status", Summary: "show quota and the next command when an account is not ready"},
 	{Name: "usage", Summary: "show one quota snapshot for every routed account"},
 	{Name: "codex <command>", Summary: "manage and route isolated Codex accounts"},
 	{Name: "claude <command>", Summary: "manage and route isolated Claude accounts"},
@@ -55,9 +56,13 @@ var commandHelpByName = map[string]commandHelp{
 		Usage:       "multisubs doctor [--json] [--timeout 8s]",
 		Description: "Run one read-only product check with shared/base, Codex, and Claude sections.",
 	},
+	"status": {
+		Usage:       "multisubs status",
+		Description: "Show the same Codex and Claude quota snapshot as `multisubs usage`. When any account is unavailable, print a Next section with the exact command to run. Partial account failures exit 1.",
+	},
 	"usage": {
 		Usage:       "multisubs usage",
-		Description: "Show a Codex and Claude quota snapshot with validated full local account emails for managed profiles and both default accounts. The default Codex app-server fallback may write non-credential operational state. Partial account failures exit 1. JSON output is not available yet.",
+		Description: "Show a Codex and Claude quota snapshot with validated full local account emails for managed profiles and both default accounts. When any account is unavailable, print a Next section with the exact command to run. The default Codex app-server fallback may write non-credential operational state. Partial account failures exit 1. JSON output is not available yet.",
 	},
 	"completion": {
 		Usage:       "multisubs completion <bash|zsh|fish>",
@@ -111,11 +116,11 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"codex status": {
 		Usage:       "multisubs codex status",
-		Description: "Show profile-local Codex login status and safe account hints.",
+		Description: "Show profile-local Codex login status for managed profiles and the default account. When a row is not logged in, print a Next section with the exact command to run.",
 	},
 	"codex usage": {
 		Usage:       "multisubs codex usage",
-		Description: "Show session, weekly, and reported model-specific Codex quota with validated full local account emails for managed profiles and the default account. This snapshot does not change weekly-only routing.",
+		Description: "Show session, weekly, and reported model-specific Codex quota with validated full local account emails for managed profiles and the default account. When any account is unavailable, print a Next section with the exact command to run. This snapshot does not change weekly-only routing.",
 	},
 	"codex reconcile": {
 		Usage:       "multisubs codex reconcile",
@@ -179,11 +184,11 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"claude status": {
 		Usage:       "multisubs claude status",
-		Description: "Show official authentication status for the default Claude account and every managed profile.",
+		Description: "Show official authentication status for the default Claude account and every managed profile. When a target is not logged in, print a Next section with the exact command to run.",
 	},
 	"claude usage": {
 		Usage:       "multisubs claude usage",
-		Description: "Show fresh session, weekly all-model, and optional Fable quota with validated full local account emails for every managed profile and the default account through the shared usage report.",
+		Description: "Show fresh session, weekly all-model, and optional Fable quota with validated full local account emails for every managed profile and the default account through the shared usage report. When any account is unavailable, print a Next section with the exact command to run.",
 	},
 	"claude doctor": {
 		Usage:       "multisubs claude doctor",
@@ -208,7 +213,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  multisubs init")
-	fmt.Println("  multisubs codex status")
+	fmt.Println("  multisubs status")
 	fmt.Println("  multisubs usage")
 	fmt.Println("  multisubs codex exec -s read-only \"Summarize this repository.\"")
 	fmt.Println("  multisubs claude status")
@@ -217,6 +222,7 @@ func printHelp() {
 	fmt.Println("Notes:")
 	fmt.Println("  - Codex commands live under `multisubs codex`.")
 	fmt.Println("  - Claude commands live under `multisubs claude`.")
+	fmt.Println("  - Status and usage print the next command when an account is not ready.")
 	fmt.Println("  - Usage snapshots do not change credentials; the default Codex app-server fallback may write non-credential operational state. JSON output is not available yet.")
 }
 

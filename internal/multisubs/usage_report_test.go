@@ -693,7 +693,11 @@ func TestPrintUsageReportProviderOnlyAndResetStates(t *testing.T) {
 		"  default · identity unavailable\n" +
 		"    unavailable · not logged in\n" +
 		"\n" +
-		"Result: partial · 1 of 2 accounts available\n"
+		"Result: partial · 1 of 2 accounts available\n" +
+		"\n" +
+		"Next:\n" +
+		"  Codex default · not logged in\n" +
+		"    Run: codex login\n"
 	if output.String() != want {
 		t.Fatalf("provider usage output:\n--- got ---\n%s--- want ---\n%s", output.String(), want)
 	}
@@ -743,6 +747,7 @@ func TestPrintUsageReportShowsRetainedSessionAsPartialWhenWeeklyIsUnavailable(t 
 		"Weekly        not reported",
 		"partial · weekly usage unavailable",
 		"Result: partial · 0 of 1 accounts available",
+		"Run: multisubs doctor",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("partial session output missing %q:\n%s", want, output.String())
@@ -1198,7 +1203,11 @@ func TestCmdCodexUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 		"    Spark weekly  not reported\n" +
 		"    partial · usage probe failed\n" +
 		"\n" +
-		"Result: partial · 0 of 1 accounts available\n"
+		"Result: partial · 0 of 1 accounts available\n" +
+		"\n" +
+		"Next:\n" +
+		"  Codex alpha (also default) · usage probe failed\n" +
+		"    Run: multisubs doctor\n"
 	if output != want {
 		t.Fatalf("Codex failed duplicate output:\n--- got ---\n%s--- want ---\n%s", output, want)
 	}
@@ -1245,7 +1254,11 @@ func TestCmdClaudeUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 		"    Fable weekly       not reported\n" +
 		"    partial · usage probe failed\n" +
 		"\n" +
-		"Result: partial · 0 of 1 accounts available\n"
+		"Result: partial · 0 of 1 accounts available\n" +
+		"\n" +
+		"Next:\n" +
+		"  Claude personal (also default) · usage probe failed\n" +
+		"    Run: multisubs doctor\n"
 	if output != want {
 		t.Fatalf("Claude failed duplicate output:\n--- got ---\n%s--- want ---\n%s", output, want)
 	}
@@ -1273,7 +1286,11 @@ func TestCmdClaudeUsageIdentityChangeRetainsQuotaWithoutGrouping(t *testing.T) {
 		"    Weekly all models  10% used · Resets Monday at 09:00\n" +
 		"    Fable weekly       not reported\n" +
 		"\n" +
-		"Result: partial · 1 of 2 accounts available\n"
+		"Result: partial · 1 of 2 accounts available\n" +
+		"\n" +
+		"Next:\n" +
+		"  Claude personal · identity unavailable\n" +
+		"    Run: multisubs doctor\n"
 	if output != want {
 		t.Fatalf("Claude identity-change output:\n--- got ---\n%s--- want ---\n%s", output, want)
 	}
@@ -1438,7 +1455,11 @@ func TestCodexUsageMissingIdentityPrintsExactPartialAndExitsOne(t *testing.T) {
 		"    Spark weekly  not reported\n" +
 		"    partial · identity unavailable\n" +
 		"\n" +
-		"Result: partial · 0 of 1 accounts available\n"
+		"Result: partial · 0 of 1 accounts available\n" +
+		"\n" +
+		"Next:\n" +
+		"  Codex default · identity unavailable\n" +
+		"    Run: multisubs doctor\n"
 	if output != want {
 		t.Fatalf("missing-identity output:\n--- got ---\n%s--- want ---\n%s", output, want)
 	}
