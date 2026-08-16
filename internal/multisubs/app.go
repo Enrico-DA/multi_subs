@@ -97,6 +97,12 @@ func RunCLI(args []string) error {
 			return err
 		}
 		return app.cmdUsage(args[1:], usageProviderAll)
+	case "status":
+		app, err := newApp(true)
+		if err != nil {
+			return err
+		}
+		return app.cmdAggregateStatus(args[1:])
 	case "codex":
 		return runCodexCLI(args[1:])
 	case "claude":
@@ -210,6 +216,8 @@ func (a *App) Run(args []string) error {
 		return a.cmdAggregateDoctor(args[1:])
 	case "usage":
 		return a.cmdUsage(args[1:], usageProviderAll)
+	case "status":
+		return a.cmdAggregateStatus(args[1:])
 	case "__complete-codex-profiles":
 		return a.cmdCompleteCodexProfiles()
 	case "__complete-claude-profiles":
@@ -336,7 +344,7 @@ func rejectCodexArguments(args []string) error {
 
 func bareCodexCommand(command string) bool {
 	switch command {
-	case "add", "login", "login-all", "cli", "exec", "status", "reconcile", "heartbeat", "monitor", "dry-run":
+	case "add", "login", "login-all", "cli", "exec", "reconcile", "heartbeat", "monitor", "dry-run":
 		return true
 	default:
 		return false

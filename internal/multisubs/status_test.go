@@ -89,9 +89,7 @@ func TestCmdStatusRejectsAuthSymlinkBeforeCodexStatus(t *testing.T) {
 	if !strings.Contains(out, "auth path is a symlink") {
 		t.Fatalf("expected symlink error in status output, got %q", out)
 	}
-	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("expected codex status not to be invoked, stat err=%v", statErr)
-	}
+	assertManagedCodexStatusNotInvoked(t, logPath, profileHome)
 }
 
 func TestCmdStatusRequiresFileStoreBeforeCodexStatus(t *testing.T) {
@@ -110,9 +108,7 @@ func TestCmdStatusRequiresFileStoreBeforeCodexStatus(t *testing.T) {
 	if !strings.Contains(out, "requires file-backed auth") {
 		t.Fatalf("expected file-store error in status output, got %q", out)
 	}
-	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("expected codex status not to be invoked, stat err=%v", statErr)
-	}
+	assertManagedCodexStatusNotInvoked(t, logPath, filepath.Join(app.store.paths.ProfilesDir, "work", "codex-home"))
 }
 
 func TestCmdStatusRejectsHardLinkedConfigBeforeCodexStatus(t *testing.T) {
@@ -132,9 +128,7 @@ func TestCmdStatusRejectsHardLinkedConfigBeforeCodexStatus(t *testing.T) {
 	if !strings.Contains(out, "multiple hard links") {
 		t.Fatalf("expected managed config error in status output, got %q", out)
 	}
-	if _, statErr := os.Stat(logPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("expected codex status not to be invoked, stat err=%v", statErr)
-	}
+	assertManagedCodexStatusNotInvoked(t, logPath, filepath.Join(app.store.paths.ProfilesDir, "work", "codex-home"))
 }
 
 func TestCodexLoginStatusTreatsZeroExitNegativeOutputAsLoggedOut(t *testing.T) {
@@ -262,7 +256,7 @@ func newStatusTestApp(t *testing.T) (*App, string) {
 		t.Fatalf("mkdir fake bin: %v", err)
 	}
 	logPath := filepath.Join(root, "codex-status.log")
-	script := "#!/bin/sh\nprintf 'codex login status invoked\\n' > " + shellQuote(logPath) + "\nexit 0\n"
+	script := "#!/bin/sh\nprintf 'codex login status invoked CODEX_HOME=%s\\n' \"${CODEX_HOME:-}\" >> " + shellQuote(logPath) + "\nprintf 'not logged in\\n'\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
@@ -273,6 +267,36 @@ func newStatusTestApp(t *testing.T) (*App, string) {
 		t.Fatalf("NewApp: %v", err)
 	}
 	return app, logPath
+}
+
+func assertManagedCodexStatusNotInvoked(t *testing.T, logPath, profileHome string) {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("read Codex status log: %v", err)
+	}
+	if strings.Contains(string(data), profileHome) {
+		t.Fatalf("managed profile invoked codex login status: %s", data)
+	}
+}
+
+func TestCmdStatusIncludesDefaultAndPrintsNextStepsWhenLoggedOut(t *testing.T) {
+	app, _ := newStatusTestApp(t)
+	writeDefaultFileStoreConfig(t, app)
+	createTestProfiles(t, app, "work")
+
+	out, err := captureStdout(t, app.cmdStatus)
+	if err != nil {
+		t.Fatalf("cmdStatus: %v", err)
+	}
+	for _, want := range []string{"work", "default", "Next:", "Run: codex login"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output missing %q:\n%s", want, out)
+		}
+	}
 }
 
 func TestStatusDoesNotResolveOrMutateProfileResources(t *testing.T) {

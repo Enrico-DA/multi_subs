@@ -22,6 +22,7 @@ func TestGlobalHelpShowsSymmetricProviderNamespaces(t *testing.T) {
 		"codex <command>",
 		"claude <command>",
 		"doctor [flags]",
+		"status",
 		"usage",
 		"completion <shell>",
 	} {
@@ -44,6 +45,7 @@ func TestProviderAndNestedHelpTopics(t *testing.T) {
 	}{
 		{args: []string{"codex", "help"}, want: "multisubs codex"},
 		{args: []string{"claude", "help"}, want: "multisubs claude"},
+		{args: []string{"help", "status"}, want: "Next section"},
 		{args: []string{"help", "usage"}, want: "multisubs usage"},
 		{args: []string{"help", "codex", "usage"}, want: "multisubs codex usage"},
 		{args: []string{"help", "codex", "heartbeat"}, want: "multisubs codex heartbeat"},
@@ -193,7 +195,7 @@ func TestFishCompletionTokensFollowStrictCommandTree(t *testing.T) {
 	}{
 		{
 			name: "top level",
-			want: []string{"init", "doctor", "usage", "codex", "claude", "completion", "version", "help"},
+			want: []string{"init", "doctor", "status", "usage", "codex", "claude", "completion", "version", "help"},
 		},
 		{
 			name: "Claude provider",

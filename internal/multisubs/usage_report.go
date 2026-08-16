@@ -40,10 +40,12 @@ type usageProviderReport struct {
 }
 
 type usageAccountReport struct {
-	Name     string
-	Identity string
-	Windows  []usageWindowReport
-	Failure  string
+	Name         string
+	Identity     string
+	Windows      []usageWindowReport
+	Failure      string
+	HasDefault   bool
+	ManagedNames []string
 }
 
 type usageWindowReport struct {
@@ -67,13 +69,25 @@ type codexUsageCollection struct {
 }
 
 func (a *App) cmdUsage(args []string, provider string) error {
-	command := "multisubs usage"
+	return a.printUsageReportCommand(args, provider, usageCommandName(provider))
+}
+
+func (a *App) cmdAggregateStatus(args []string) error {
+	return a.printUsageReportCommand(args, usageProviderAll, "multisubs status")
+}
+
+func usageCommandName(provider string) string {
 	switch provider {
 	case usageProviderCodex:
-		command = "multisubs codex usage"
+		return "multisubs codex usage"
 	case usageProviderClaude:
-		command = "multisubs claude usage"
+		return "multisubs claude usage"
+	default:
+		return "multisubs usage"
 	}
+}
+
+func (a *App) printUsageReportCommand(args []string, provider, command string) error {
 	if len(args) != 0 {
 		return &ExitError{Code: 2, Message: "usage: " + command}
 	}
@@ -268,6 +282,7 @@ func collapseCodexUsageCollections(collected []codexUsageCollection) []usageAcco
 			target := collected[memberIndex].Target
 			aliases = append(aliases, usageGroupAlias{
 				Name:      target.DisplayName,
+				LoginName: codexUsageLoginName(target),
 				IsDefault: target.Kind == codexRoutingTargetDefault,
 			})
 		}
@@ -587,6 +602,7 @@ func collapseClaudeUsageCollections(collected []claudeUsageCollection) []usageAc
 			}
 			aliases = append(aliases, usageGroupAlias{
 				Name:      result.Target.DisplayName,
+				LoginName: claudeUsageLoginName(result.Target),
 				IsDefault: result.Target.Kind == "default",
 			})
 		}
@@ -622,6 +638,7 @@ func deterministicClaudeUsageRepresentative(collected []claudeUsageCollection, i
 
 type usageGroupAlias struct {
 	Name      string
+	LoginName string
 	IsDefault bool
 }
 
@@ -635,6 +652,8 @@ func appendGroupedUsageRow(rows []groupedUsageRow, account usageAccountReport, a
 	name, hasDefault, sortName := formatUsageGroupAliases(aliases)
 	account.Name = name
 	account.Identity = accountEmail
+	account.HasDefault = hasDefault
+	account.ManagedNames = usageGroupLoginNames(aliases)
 	if accountEmail == "" && account.Failure == "" {
 		account.Failure = "identity unavailable"
 	}
@@ -643,6 +662,53 @@ func appendGroupedUsageRow(rows []groupedUsageRow, account usageAccountReport, a
 		HasDefault: hasDefault,
 		SortName:   sortName,
 	})
+}
+
+func usageGroupLoginNames(aliases []usageGroupAlias) []string {
+	names := make([]string, 0, len(aliases))
+	seen := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		loginName, ok := safeLoginProfileName(alias.LoginName)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[loginName]; exists {
+			continue
+		}
+		seen[loginName] = struct{}{}
+		names = append(names, loginName)
+	}
+	return names
+}
+
+func codexUsageLoginName(target codexUsageTarget) string {
+	if target.Kind != codexRoutingTargetManaged {
+		return ""
+	}
+	if target.Profile != nil {
+		if name, ok := safeLoginProfileName(target.Profile.Name); ok {
+			return name
+		}
+	}
+	if name, ok := safeLoginProfileName(target.Account.Label); ok {
+		return name
+	}
+	return ""
+}
+
+func claudeUsageLoginName(target claudeTarget) string {
+	if target.Kind != "managed" {
+		return ""
+	}
+	if target.Profile != nil {
+		if name, ok := safeLoginProfileName(target.Profile.Name); ok {
+			return name
+		}
+	}
+	if name, ok := safeLoginProfileName(target.Name); ok {
+		return name
+	}
+	return ""
 }
 
 func formatUsageGroupAliases(aliases []usageGroupAlias) (name string, hasDefault bool, sortName string) {
@@ -959,6 +1025,7 @@ func printUsageReport(writer io.Writer, report usageReport, now time.Time, locat
 	}
 	fmt.Fprintln(writer)
 	fmt.Fprintf(writer, "Result: %s · %d of %d accounts available\n", result, available, total)
+	printNextSteps(writer, usageReportNextSteps(report))
 }
 
 func usageProviderLabelWidth(provider usageProviderReport) int {

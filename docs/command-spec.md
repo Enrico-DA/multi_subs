@@ -45,6 +45,10 @@ The JSON result has `base`, `codex`, and `claude` objects. Each contains a `chec
 After valid argument parsing, all three sections are emitted even when the Codex profile registry is malformed, uses an unsupported version, or contains invalid stored names. That registry error becomes a failed shared/base check, and safe Codex and independent Claude checks continue against an empty Codex profile set.
 Any failed check makes the human summary `FAIL` and the command exit with code 1, regardless of check order or successful checks in another section.
 
+### `multisubs status`
+
+Prints the same Codex and Claude quota snapshot as `multisubs usage`. When the result is not complete, it also prints a `Next` section. Each next-step row names the account with a fixed safe reason and one exact command from a closed allow-list: `codex login`, `claude auth login`, `multisubs codex login <name>`, `multisubs claude login <name>`, `multisubs init`, or `multisubs doctor`. Profile names in those commands are validated registry names. Raw provider text, paths, and credentials never appear. Extra arguments exit with code 2.
+
 ### `multisubs usage`
 
 Prints one quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter.
@@ -62,7 +66,7 @@ This local-only report prints a full, strictly validated, normalized account ema
 
 Percentages mean used quota. Structured Codex resets render a countdown and exact local time. Missing resets are `reset unknown`; expired resets are `reset due`. Codex prints only fixed product-owned extra-limit labels, currently `Spark weekly`; unknown provider limit names are suppressed. Claude reset text is printed only when it matches a supported countdown, weekday, month-and-day, or time-only grammar, with an optional safe IANA timezone. All other provider reset text becomes `reset unknown`; no timestamp or timezone is invented.
 
-A missing optional window is `not reported`. A failed account is `unavailable` with a fixed safe reason. If identity is missing, malformed, or conflicted while quota succeeds, the quota row is retained as a separate row, its identity is `identity unavailable`, and it contributes one unavailable count because no safe logical collapse is proven. A safe Codex session can remain visible with a `partial` reason when required weekly data is unavailable. Source cleanup failure uses a fixed safe reason and fails that account. Every success is still printed. Exit code 0 means every logical account probe and identity check succeeded, exit code 1 means at least one account, identity, or provider failed, and exit code 2 means invocation misuse. No arguments or flags are accepted. `--json` is not available in this release.
+A missing optional window is `not reported`. A failed account is `unavailable` with a fixed safe reason. If identity is missing, malformed, or conflicted while quota succeeds, the quota row is retained as a separate row, its identity is `identity unavailable`, and it contributes one unavailable count because no safe logical collapse is proven. A safe Codex session can remain visible with a `partial` reason when required weekly data is unavailable. Source cleanup failure uses a fixed safe reason and fails that account. Every success is still printed. When the result is not complete, a `Next` section lists the exact command for each failed account using the same closed allow-list as `multisubs status`. Exit code 0 means every logical account probe and identity check succeeded, exit code 1 means at least one account, identity, or provider failed, and exit code 2 means invocation misuse. No arguments or flags are accepted. `--json` is not available in this release.
 
 ### `multisubs completion <bash|zsh|fish>`
 
@@ -139,7 +143,7 @@ Runs official `codex exec` after weekly-only account selection.
 
 ### `multisubs codex status`
 
-Shows safe, profile-local authentication state. It is read-only and accepts no extra arguments.
+Shows safe, profile-local authentication state for every managed Codex profile and the normal default Codex account. Default stays unmanaged: the probe uses the default home without a managed file-auth override. When a row is not logged in or cannot be checked, a `Next` section prints the exact command using the same closed allow-list as `multisubs status`. It is otherwise read-only and accepts no extra arguments.
 
 ### `multisubs codex usage`
 
@@ -252,7 +256,7 @@ Runs official Claude print mode after fresh target-scoped auth and usage checks.
 
 ### `multisubs claude status`
 
-Uses official `claude auth status --json` for the default account and each managed profile. It accepts no extra arguments.
+Uses official `claude auth status --json` for the default account and each managed profile. Probe failures print a fixed safe reason instead of raw provider text. When a target is not logged in or cannot be checked, a `Next` section prints the exact command using the same closed allow-list as `multisubs status`. It accepts no extra arguments.
 
 ### `multisubs claude usage`
 
@@ -278,7 +282,6 @@ login
 login-all
 cli
 exec
-status
 reconcile
 heartbeat
 monitor
