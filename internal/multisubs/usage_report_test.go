@@ -834,14 +834,12 @@ func TestClaudeUsageCollectorHandlesOptionalFableAndSafeFailures(t *testing.T) {
 
 func TestClaudeUsageCollectorPrefersLoggedOutAuthOverMalformedUsage(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
-	runner.capture = func(_ context.Context, args []string, env []string) ([]byte, []byte, error) {
+	runner.capture = func(_ context.Context, args []string, _ []string) ([]byte, []byte, error) {
 		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
 			return fakeClaudeAuthJSONWithOrg(false, "", ""), nil, nil
 		}
-		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
-			t.Fatalf("unexpected Claude usage args: %#v", args)
-		}
-		return fakeMalformedClaudeUsageEnvelope("synthetic-secret"), nil, nil
+		t.Fatalf("logged-out auth must not start /usage: %#v", args)
+		return nil, nil, nil
 	}
 	report := app.collectClaudeUsage()
 	if len(report.Accounts) != 1 {
@@ -853,8 +851,10 @@ func TestClaudeUsageCollectorPrefersLoggedOutAuthOverMalformedUsage(t *testing.T
 	if len(report.Accounts[0].Windows) != 0 {
 		t.Fatalf("logged-out default kept usage windows: %+v", report.Accounts[0])
 	}
-	if strings.Contains(report.Accounts[0].Failure, "synthetic-secret") {
-		t.Fatalf("logged-out classification exposed provider text: %+v", report.Accounts[0])
+	for _, call := range runner.Calls() {
+		if reflect.DeepEqual(call.Args, claudeUsageProbeArgs()) {
+			t.Fatalf("logged-out auth still probed /usage: %+v", call)
+		}
 	}
 }
 
@@ -1603,6 +1603,51 @@ func TestCodexUsageCollectorClosesSourceOnceAcrossOutcomes(t *testing.T) {
 				t.Fatalf("account failure exposed source error: %q", account.Failure)
 			}
 		})
+	}
+}
+
+func TestCodexUsageCollectorMarksSparkOnlyWeeklyPartial(t *testing.T) {
+	source := &fakeCodexUsageSource{
+		summary: &monitorusage.Summary{
+			AccountEmail: "owner@example.com",
+			WeeklyWindow: monitorusage.WindowSummary{UsedPercent: -1},
+			RateLimitWindows: map[string]monitorusage.RateLimitWindow{
+				"codex_bengalfox": {
+					LimitID:      "codex_bengalfox",
+					LimitName:    "Spark",
+					WeeklyWindow: monitorusage.WindowSummary{UsedPercent: 0},
+				},
+			},
+		},
+	}
+	app := &App{
+		codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
+			return source
+		},
+	}
+	target := codexUsageTarget{
+		codexRoutingTarget: codexRoutingTarget{
+			Kind: codexRoutingTargetDefault,
+			Account: monitorusage.MonitorAccount{
+				Label: defaultExecAccountLabel,
+			},
+		},
+		DisplayName: defaultExecAccountLabel,
+	}
+
+	account := app.collectCodexUsageTarget(target)
+	if account.Failure != "weekly usage unavailable" {
+		t.Fatalf("spark-only failure category: %q", account.Failure)
+	}
+	if len(account.Windows) < 3 ||
+		account.Windows[1].UsedPercent != nil ||
+		account.Windows[2].Label != "Spark weekly" ||
+		account.Windows[2].UsedPercent == nil ||
+		*account.Windows[2].UsedPercent != 0 {
+		t.Fatalf("spark-only windows: %+v", account.Windows)
+	}
+	if source.closeCalls != 1 {
+		t.Fatalf("source close calls: got %d want 1", source.closeCalls)
 	}
 }
 

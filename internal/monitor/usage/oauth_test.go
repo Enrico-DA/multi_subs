@@ -2,10 +2,13 @@ package usage
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -120,6 +123,157 @@ func TestOAuthSourceFetchSendsSafeAccountIDHeader(t *testing.T) {
 	}
 	if summary.WeeklyWindow.UsedPercent != 23 {
 		t.Fatalf("expected weekly window 23, got %+v", summary.WeeklyWindow)
+	}
+}
+
+func TestReadOAuthAuthFileResolvesAccountIDFallbacks(t *testing.T) {
+	const wantID = "acct-example-0002"
+	tests := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{
+			name: "tokens.account_id wins",
+			payload: map[string]any{
+				"account_id": "acct-example-top",
+				"tokens": map[string]any{
+					"access_token": "synthetic-access",
+					"account_id":   wantID,
+					"id_token":     syntheticJWT(map[string]any{"chatgpt_account_id": "acct-example-jwt"}),
+				},
+			},
+			want: wantID,
+		},
+		{
+			name: "top-level account_id",
+			payload: map[string]any{
+				"account_id": wantID,
+				"tokens": map[string]any{
+					"access_token": "synthetic-access",
+				},
+			},
+			want: wantID,
+		},
+		{
+			name: "id_token chatgpt_account_id",
+			payload: map[string]any{
+				"tokens": map[string]any{
+					"access_token": "synthetic-access",
+					"id_token":     syntheticJWT(map[string]any{"chatgpt_account_id": wantID}),
+				},
+			},
+			want: wantID,
+		},
+		{
+			name: "nested openai auth claim",
+			payload: map[string]any{
+				"tokens": map[string]any{
+					"access_token": "synthetic-access",
+					"id_token": syntheticJWT(map[string]any{
+						"https://api.openai.com/auth": map[string]any{
+							"chatgpt_account_id": wantID,
+						},
+					}),
+				},
+			},
+			want: wantID,
+		},
+		{
+			name: "access_token claim when id_token has none",
+			payload: map[string]any{
+				"tokens": map[string]any{
+					"access_token": syntheticJWT(map[string]any{"account_id": wantID}),
+					"id_token":     syntheticJWT(map[string]any{"sub": "synthetic-subject"}),
+				},
+			},
+			want: wantID,
+		},
+		{
+			name: "unsafe claim omitted",
+			payload: map[string]any{
+				"tokens": map[string]any{
+					"access_token": "synthetic-access",
+					"id_token":     syntheticJWT(map[string]any{"chatgpt_account_id": "aaa.bbb.ccc"}),
+				},
+			},
+			want: "",
+		},
+		{
+			name: "malformed token omitted",
+			payload: map[string]any{
+				"tokens": map[string]any{
+					"access_token": "synthetic-access",
+					"id_token":     "not-a-jwt",
+				},
+			},
+			want: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "auth.json")
+			body, err := json.Marshal(test.payload)
+			if err != nil {
+				t.Fatalf("marshal synthetic auth: %v", err)
+			}
+			if err := os.WriteFile(path, body, 0o600); err != nil {
+				t.Fatalf("write synthetic auth: %v", err)
+			}
+			creds, err := readOAuthAuthFile(path)
+			if err != nil {
+				t.Fatalf("readOAuthAuthFile: %v", err)
+			}
+			if creds.accountID != test.want {
+				t.Fatalf("account id: got %q want %q", creds.accountID, test.want)
+			}
+		})
+	}
+}
+
+func TestOAuthSourceFetchSendsAccountIDFromIDToken(t *testing.T) {
+	const accountID = "acct-example-jwt-1"
+	codexHome := t.TempDir()
+	authJSON := `{"tokens":{"access_token":"test-token","id_token":"` + syntheticJWT(map[string]any{"chatgpt_account_id": accountID}) + `"}}`
+	if err := os.WriteFile(codexHome+"/auth.json", []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write auth.json: %v", err)
+	}
+
+	source := NewOAuthSourceForHome(codexHome)
+	source.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("ChatGPT-Account-Id"); got != accountID {
+			t.Fatalf("account id header: got %q want %q", got, accountID)
+		}
+		body := `{
+			"email": "user@example.com",
+			"plan_type": "plus",
+			"rate_limit": {
+				"primary_window": {
+					"used_percent": 4,
+					"limit_window_seconds": 18000,
+					"reset_at": 1893456000
+				},
+				"secondary_window": {
+					"used_percent": 9,
+					"limit_window_seconds": 604800,
+					"reset_at": 1894060800
+				}
+			}
+		}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	summary, err := source.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if summary.WeeklyWindow.UsedPercent != 9 {
+		t.Fatalf("expected weekly window 9, got %+v", summary.WeeklyWindow)
 	}
 }
 
@@ -391,4 +545,13 @@ func fetchOAuthSummary(t *testing.T, body string) *Summary {
 		t.Fatalf("Fetch: %v", err)
 	}
 	return summary
+}
+
+func syntheticJWT(claims map[string]any) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	body, err := json.Marshal(claims)
+	if err != nil {
+		panic(err)
+	}
+	return header + "." + base64.RawURLEncoding.EncodeToString(body) + ".sig"
 }
