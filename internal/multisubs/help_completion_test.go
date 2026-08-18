@@ -326,7 +326,7 @@ func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
 			output:    renderBashCompletion(),
 			guarded: "        help)\n" +
 				"          if (( COMP_CWORD == 3 )); then\n" +
-				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help\" -- \"$cur\") )\n" +
+				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help\" -- \"$cur\") )\n" +
 				"          fi",
 		},
 		{
@@ -344,7 +344,7 @@ func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
 			output:    renderZshCompletion(),
 			guarded: "        help)\n" +
 				"          if (( CURRENT == 4 )); then\n" +
-				"            compadd -- init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help\n" +
+				"            compadd -- init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help\n" +
 				"          fi",
 		},
 		{
