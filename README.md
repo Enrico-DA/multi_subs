@@ -6,8 +6,22 @@ This is a deliberate breaking rename for one local user. There is no old executa
 
 ## Install
 
+This repository is private. Tell Go not to use the public module proxy:
+
+```bash
+export GOPRIVATE=github.com/Enrico-DA/multi_subs
+```
+
+Install the latest published `main`:
+
 ```bash
 go install github.com/Enrico-DA/multi_subs/cmd/multisubs@latest
+```
+
+Install unmerged work by commit hash. Branch names that contain `/` are not valid `go install` versions.
+
+```bash
+go install github.com/Enrico-DA/multi_subs/cmd/multisubs@<commit>
 ```
 
 For a source checkout:
