@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
 	"github.com/Enrico-DA/multi_subs/internal/codexappserver"
 	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 	"github.com/Enrico-DA/multi_subs/internal/processprobe"
@@ -55,7 +56,8 @@ func runBaseDoctor(store *Store, cfg *Config, registryErr error) DoctorReport {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
-	checks := make([]DoctorCheck, 0, 12)
+	checks := make([]DoctorCheck, 0, 13)
+	checks = append(checks, checkMultisubsVersion())
 	checks = append(checks, checkDirExists("multisubs home", store.paths.MultisubsHome, true))
 	if registryErr != nil {
 		checks = append(checks, DoctorCheck{
@@ -73,6 +75,20 @@ func runBaseDoctor(store *Store, cfg *Config, registryErr error) DoctorReport {
 	checks = append(checks, checkProfileResources(store, cfg.ProfileResources))
 	checks = append(checks, checkRepositoryLeakGuards(store.paths)...)
 	return DoctorReport{Checks: checks}
+}
+
+func checkMultisubsVersion() DoctorCheck {
+	version := buildinfo.DisplayVersion()
+	check := DoctorCheck{
+		Name:    "multisubs version",
+		Status:  "ok",
+		Details: "binary reports " + version,
+	}
+	if !buildinfo.HasIdentifyingVersion() {
+		check.Status = "warn"
+		check.Details = "binary reports " + version + "; install from a commit hash or release tag so this check can identify the build"
+	}
+	return check
 }
 
 func codexRegistryFailureDetails(err error) string {
