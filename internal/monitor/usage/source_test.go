@@ -90,7 +90,7 @@ func TestDefaultAccountWithoutAuthUsesUnmanagedAppServerFallback(t *testing.T) {
 
 func TestDefaultAccountWithUsableAuthUsesOAuthWithoutAppServer(t *testing.T) {
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(`{"tokens":{"access_token":"synthetic-token","account_id":"acct-example-0001"}}`), 0o600); err != nil {
 		t.Fatalf("write auth fixture: %v", err)
 	}
 	source := NewUsageSourceForHome(home)
@@ -98,6 +98,9 @@ func TestDefaultAccountWithUsableAuthUsesOAuthWithoutAppServer(t *testing.T) {
 	oauth.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if got := req.Header.Get("Authorization"); got != "Bearer synthetic-token" {
 			t.Fatalf("OAuth authorization header: %q", got)
+		}
+		if got := req.Header.Get("ChatGPT-Account-Id"); got != "acct-example-0001" {
+			t.Fatalf("OAuth account id header: %q", got)
 		}
 		body := `{"email":"user@example.test","plan_type":"pro","rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":18000},"secondary_window":{"used_percent":23,"limit_window_seconds":604800}}}`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
