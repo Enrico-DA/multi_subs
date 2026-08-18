@@ -76,7 +76,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"version": {
 		Usage:       "multisubs version",
-		Description: "Print the multisubs build version. A release tag wins. A go-install module version or short Git revision is used when the compile-time default would otherwise hide which binary is running.",
+		Description: "Print the multisubs build version. A release tag wins. A go-install module version or short Git revision is used when the compile-time default would otherwise hide which binary is running. Status, usage, and doctor print the same string.",
 	},
 	"help": {
 		Usage:       "multisubs help [topic]",

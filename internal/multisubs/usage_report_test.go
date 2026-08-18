@@ -15,8 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
 	monitorusage "github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
+
+func usageGoldenHeader(command, updated string) string {
+	return command + "\nVersion: " + buildinfo.DisplayVersion() + "\nUpdated: " + updated + "\n"
+}
 
 type fakeCodexUsageSource struct {
 	summary    *monitorusage.Summary
@@ -635,9 +640,7 @@ func TestPrintUsageReportCombinedGolden(t *testing.T) {
 
 	var output bytes.Buffer
 	printUsageReport(&output, report, now, location)
-	want := "" +
-		"multisubs usage\n" +
-		"Updated: Thu 23 Jul 2026 22:15 CEST\n" +
+	want := usageGoldenHeader("multisubs usage", "Thu 23 Jul 2026 22:15 CEST") +
 		"\n" +
 		"Codex\n" +
 		"  personal · personal@example.com\n" +
@@ -681,9 +684,7 @@ func TestPrintUsageReportProviderOnlyAndResetStates(t *testing.T) {
 	}
 	var output bytes.Buffer
 	printUsageReport(&output, report, now, location)
-	want := "" +
-		"multisubs codex usage\n" +
-		"Updated: Thu 23 Jul 2026 20:15 UTC\n" +
+	want := usageGoldenHeader("multisubs codex usage", "Thu 23 Jul 2026 20:15 UTC") +
 		"\n" +
 		"Codex\n" +
 		"  alpha · alpha@example.com\n" +
@@ -1196,9 +1197,7 @@ func TestCmdCodexUsageCollapsesManagedAndDefaultWithExactOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Codex duplicate usage: %v", err)
 	}
-	want := "" +
-		"multisubs codex usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs codex usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Codex\n" +
 		"  alpha (also default) · person@example.com\n" +
@@ -1218,9 +1217,7 @@ func TestCmdCodexUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 		return app.cmdUsage(nil, usageProviderCodex)
 	})
 	requireExitCode(t, err, 1)
-	want := "" +
-		"multisubs codex usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs codex usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Codex\n" +
 		"  alpha (also default) · person@example.com\n" +
@@ -1247,9 +1244,7 @@ func TestCmdClaudeUsageCollapsesManagedAndDefaultWithExactOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claude duplicate usage: %v", err)
 	}
-	want := "" +
-		"multisubs claude usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs claude usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Claude\n" +
 		"  personal (also default) · person@example.com\n" +
@@ -1269,9 +1264,7 @@ func TestCmdClaudeUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 		return app.cmdUsage(nil, usageProviderClaude)
 	})
 	requireExitCode(t, err, 1)
-	want := "" +
-		"multisubs claude usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs claude usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Claude\n" +
 		"  personal (also default) · person@example.com\n" +
@@ -1296,9 +1289,7 @@ func TestCmdClaudeUsageIdentityChangeRetainsQuotaWithoutGrouping(t *testing.T) {
 		return app.cmdUsage(nil, usageProviderClaude)
 	})
 	requireExitCode(t, err, 1)
-	want := "" +
-		"multisubs claude usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs claude usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Claude\n" +
 		"  personal · identity unavailable\n" +
@@ -1470,9 +1461,7 @@ func TestCodexUsageMissingIdentityPrintsExactPartialAndExitsOne(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("strict missing-identity exit: %T %v", err, err)
 	}
-	want := "" +
-		"multisubs codex usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs codex usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Codex\n" +
 		"  default · identity unavailable\n" +

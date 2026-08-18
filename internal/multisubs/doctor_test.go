@@ -32,6 +32,9 @@ func TestRunBaseDoctorReportsBinaryVersionFirst(t *testing.T) {
 	if !strings.Contains(report.Checks[0].Details, "binary reports ") {
 		t.Fatalf("version details: %q", report.Checks[0].Details)
 	}
+	if path := currentExecutablePath(); path != "" && !strings.Contains(report.Checks[0].Details, path) {
+		t.Fatalf("version details omitted executable path %q: %q", path, report.Checks[0].Details)
+	}
 	if report.Checks[0].Status != "ok" && report.Checks[0].Status != "warn" {
 		t.Fatalf("version status: %q", report.Checks[0].Status)
 	}

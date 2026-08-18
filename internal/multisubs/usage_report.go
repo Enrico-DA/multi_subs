@@ -14,6 +14,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
 	monitorusage "github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
 
@@ -1001,6 +1002,7 @@ func collectConcurrent[Target, Result any](targets []Target, collect func(Target
 
 func printUsageReport(writer io.Writer, report usageReport, now time.Time, location *time.Location) {
 	fmt.Fprintln(writer, report.Command)
+	fmt.Fprintf(writer, "Version: %s\n", buildinfo.DisplayVersion())
 	fmt.Fprintf(writer, "Updated: %s\n", report.UpdatedAt.Format("Mon 02 Jan 2006 15:04 MST"))
 	for _, provider := range report.Providers {
 		fmt.Fprintln(writer)
