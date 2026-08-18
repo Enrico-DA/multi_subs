@@ -37,7 +37,7 @@ No extra arguments are accepted.
 
 Runs an aggregate read-only report with these sections:
 
-1. `shared/base`: binary version, product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks. The version check uses the same string as `multisubs version`. It warns when that string is still the compile-time `0.1.0-dev` default, because that cannot tell two development builds apart.
+1. `shared/base`: binary version, product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks. The version check uses the same string as `multisubs version` and includes the resolved path of the running executable. It warns when that string is still the compile-time `0.1.0-dev` default, because that cannot tell two development builds apart.
 2. `Codex`: Codex binary (including a warning when the installed CLI cannot run `multisubs codex generate`), default Codex home, managed profile paths, config, auth shape, and login status.
 3. `Claude`: Claude binary, provider registry, managed paths, authentication status, and duplicate-organization checks.
 
@@ -47,11 +47,11 @@ Any failed check makes the human summary `FAIL` and the command exit with code 1
 
 ### `multisubs status`
 
-Prints the same Codex and Claude quota snapshot as `multisubs usage`. When the result is not complete, it also prints a `Next` section. Each next-step row names the account with a fixed safe reason and one exact command from a closed allow-list: `codex login`, `claude auth login`, `multisubs codex login <name>`, `multisubs claude login <name>`, `multisubs init`, or `multisubs doctor`. Profile names in those commands are validated registry names. Raw provider text, paths, and credentials never appear. Extra arguments exit with code 2.
+Prints the same Codex and Claude quota snapshot as `multisubs usage`. The first lines are the command name, `Version:` with the same string as `multisubs version`, and `Updated:`. The version line does not include a filesystem path. When the result is not complete, it also prints a `Next` section. Each next-step row names the account with a fixed safe reason and one exact command from a closed allow-list: `codex login`, `claude auth login`, `multisubs codex login <name>`, `multisubs claude login <name>`, `multisubs init`, or `multisubs doctor`. Profile names in those commands are validated registry names. Raw provider text, paths, and credentials never appear. Extra arguments exit with code 2.
 
 ### `multisubs usage`
 
-Prints one quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter.
+Prints one quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter. The first lines are the command name, `Version:` with the same string as `multisubs version`, and `Updated:`. The version line does not include a filesystem path.
 
 The physical target set is exact:
 

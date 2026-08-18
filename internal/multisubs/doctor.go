@@ -79,16 +79,37 @@ func runBaseDoctor(store *Store, cfg *Config, registryErr error) DoctorReport {
 
 func checkMultisubsVersion() DoctorCheck {
 	version := buildinfo.DisplayVersion()
+	details := "binary reports " + version
+	if path := currentExecutablePath(); path != "" {
+		details += " at " + path
+	}
 	check := DoctorCheck{
 		Name:    "multisubs version",
 		Status:  "ok",
-		Details: "binary reports " + version,
+		Details: details,
 	}
 	if !buildinfo.HasIdentifyingVersion() {
 		check.Status = "warn"
-		check.Details = "binary reports " + version + "; install from a commit hash or release tag so this check can identify the build"
+		check.Details = details + "; install from a commit hash or release tag so this check can identify the build"
 	}
 	return check
+}
+
+func currentExecutablePath() string {
+	path, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		if trimmed := strings.TrimSpace(resolved); trimmed != "" {
+			path = trimmed
+		}
+	}
+	return filepath.Clean(path)
 }
 
 func codexRegistryFailureDetails(err error) string {

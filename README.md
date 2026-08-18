@@ -12,15 +12,25 @@ This repository is private. Tell Go not to use the public module proxy:
 export GOPRIVATE=github.com/Enrico-DA/multi_subs
 ```
 
+`go install` writes to `GOBIN`, or to `$(go env GOPATH)/bin` when `GOBIN` is empty. That directory is often not the `multisubs` already on `PATH`. If a `multisubs` is already installed, set `GOBIN` to that directory so the new file replaces the one later commands will run.
+
 Install the latest published `main`:
 
 ```bash
+export GOPRIVATE=github.com/Enrico-DA/multi_subs
+if command -v multisubs >/dev/null 2>&1; then
+  export GOBIN="$(dirname "$(command -v multisubs)")"
+fi
 go install github.com/Enrico-DA/multi_subs/cmd/multisubs@latest
 ```
 
 Install unmerged work by commit hash. Branch names that contain `/` are not valid `go install` versions.
 
 ```bash
+export GOPRIVATE=github.com/Enrico-DA/multi_subs
+if command -v multisubs >/dev/null 2>&1; then
+  export GOBIN="$(dirname "$(command -v multisubs)")"
+fi
 go install github.com/Enrico-DA/multi_subs/cmd/multisubs@<commit>
 ```
 
@@ -30,12 +40,13 @@ For a source checkout:
 go build -o multisubs ./cmd/multisubs
 ```
 
-`multisubs version` prints the release tag when the binary was built with `-ldflags`. A `go install` from a commit prints that module version. A local source build prints the short Git revision when VCS info is present. The compile-time `0.1.0-dev` default appears only when nothing more specific is available. Doctor repeats the same version as the first shared/base check.
+`multisubs version` prints the release tag when the binary was built with `-ldflags`. A `go install` from a commit prints that module version. A local source build prints the short Git revision when VCS info is present. The compile-time `0.1.0-dev` default appears only when nothing more specific is available. Status, usage, and the first doctor check all print that same version. Doctor also prints the resolved path of the binary that is running.
 
 After install, confirm the binary on that machine:
 
 ```bash
-which -a multisubs
+command -v multisubs
+go version -m "$(command -v multisubs)"
 multisubs version
 ```
 
@@ -123,7 +134,7 @@ multisubs claude usage
 multisubs claude doctor
 ```
 
-`multisubs init` and `multisubs codex init` call the same shared initialization path. `multisubs doctor` is the aggregate read-only check. It prints shared/base, Codex, and Claude sections. The first shared/base check is the same version string as `multisubs version`. The two provider doctors stay focused on their own provider.
+`multisubs init` and `multisubs codex init` call the same shared initialization path. `multisubs doctor` is the aggregate read-only check. It prints shared/base, Codex, and Claude sections. The first shared/base check is the same version string as `multisubs version`, plus the resolved path of the running binary. The two provider doctors stay focused on their own provider.
 
 The three usage commands share one report format. This local-only output includes each logical subscription's full, validated account email by default. The combined command prints Codex first, then Claude. Duplicate physical targets for one subscription collapse into one row and one availability count. Managed aliases sort by name. If a logical row also contains the normal default account, it ends with `(also default)` and stays last for that provider. Email-shaped profile names use unique aliases such as `[managed-1]`. Codex rows are `Session`, `Weekly`, and fixed product-known model limits; the only current extra label is `Spark weekly`, and unknown provider limit names are suppressed. Claude rows are `Session (~5h)`, `Weekly all models`, and `Fable weekly`; only an explicit parenthesized duration in the provider's session heading replaces the approximate label, and an absent optional Fable window is `not reported`. One deterministic successful quota snapshot represents a duplicate group; percentages are never averaged.
 
