@@ -264,29 +264,29 @@ func (repo *repository) checkMonitorIdentity() {
 		repo.errors = append(repo.errors, fmt.Sprintf("%s: monitor must import %s/internal/buildinfo", relativePath, expectedModule))
 		return
 	}
-	initialize := findFunction(file, "ensureInitialized")
-	if initialize == nil || initialize.Body == nil {
-		repo.errors = append(repo.errors, fmt.Sprintf("%s: monitor must define ensureInitialized", relativePath))
+	start := findFunction(file, "ensureStarted")
+	if start == nil || start.Body == nil {
+		repo.errors = append(repo.errors, fmt.Sprintf("%s: monitor must define ensureStarted", relativePath))
 		return
 	}
 
-	foundClientInfo := false
-	ast.Inspect(initialize.Body, func(node ast.Node) bool {
+	foundClientConfig := false
+	ast.Inspect(start.Body, func(node ast.Node) bool {
 		literal, ok := node.(*ast.CompositeLit)
-		if !ok || !isIdentifier(literal.Type, "clientInfo") {
+		if !ok {
 			return true
 		}
-		nameValue, hasName := keyedValue(literal, "Name")
-		versionValue, hasVersion := keyedValue(literal, "Version")
+		nameValue, hasName := keyedValue(literal, "ClientName")
+		versionValue, hasVersion := keyedValue(literal, "ClientVersion")
 		if hasName && hasVersion &&
 			isIdentifier(nameValue, "clientName") &&
 			isSelector(versionValue, buildinfoName, "Version") {
-			foundClientInfo = true
+			foundClientConfig = true
 		}
 		return true
 	})
-	if !foundClientInfo {
-		repo.errors = append(repo.errors, fmt.Sprintf("%s: ensureInitialized must construct clientInfo{Name: clientName, Version: buildinfo.Version}", relativePath))
+	if !foundClientConfig {
+		repo.errors = append(repo.errors, fmt.Sprintf("%s: ensureStarted must construct Config{ClientName: clientName, ClientVersion: buildinfo.Version}", relativePath))
 	}
 }
 
