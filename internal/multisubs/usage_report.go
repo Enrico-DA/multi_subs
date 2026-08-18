@@ -542,6 +542,11 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 	}
 	authAfter, authAfterErr := fetchClaudeAuthStatus(probeContext, a.claudeCommandRunner(), target.ConfigDir)
 	identityAfter, identityAfterErr := validateClaudeUsageIdentity(authAfter)
+	if claudeAuthReportsLoggedOut(authBefore, authBeforeErr) || claudeAuthReportsLoggedOut(authAfter, authAfterErr) {
+		account.Failure = "not logged in"
+		collected.Account = account
+		return collected
+	}
 	if authBeforeErr == nil && identityBeforeErr == nil &&
 		authAfterErr == nil && identityAfterErr == nil &&
 		identityBefore == identityAfter {
@@ -563,6 +568,10 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 	}
 	collected.Account = account
 	return collected
+}
+
+func claudeAuthReportsLoggedOut(status claudeAuthStatus, err error) bool {
+	return err == nil && !status.LoggedIn
 }
 
 func collapseClaudeUsageCollections(collected []claudeUsageCollection) []usageAccountReport {
