@@ -33,6 +33,9 @@ func TestOAuthSourceFetchLeavesNonWeeklyPrimaryOnlyWindowUnknown(t *testing.T) {
 		if got := req.Header.Get("User-Agent"); got != clientName+"/"+buildinfo.Version {
 			t.Fatalf("expected versioned user agent, got %q", got)
 		}
+		if got := req.Header.Get("ChatGPT-Account-Id"); got != "" {
+			t.Fatalf("expected no account id header without tokens.account_id, got %q", got)
+		}
 		body := `{
 			"email": "user@example.com",
 			"plan_type": "pro",
@@ -72,6 +75,84 @@ func TestOAuthSourceFetchLeavesNonWeeklyPrimaryOnlyWindowUnknown(t *testing.T) {
 	}
 	if codexWindow.SessionWindow.UsedPercent != 12 {
 		t.Fatalf("expected per-limit OAuth session window, got %+v", codexWindow.SessionWindow)
+	}
+}
+
+func TestOAuthSourceFetchSendsSafeAccountIDHeader(t *testing.T) {
+	const accountID = "acct-example-0001"
+	codexHome := t.TempDir()
+	authJSON := `{"tokens":{"access_token":"test-token","account_id":"` + accountID + `"}}`
+	if err := os.WriteFile(codexHome+"/auth.json", []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write auth.json: %v", err)
+	}
+
+	source := NewOAuthSourceForHome(codexHome)
+	source.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("ChatGPT-Account-Id"); got != accountID {
+			t.Fatalf("account id header: got %q want %q", got, accountID)
+		}
+		body := `{
+			"email": "user@example.com",
+			"plan_type": "pro",
+			"rate_limit": {
+				"primary_window": {
+					"used_percent": 12,
+					"limit_window_seconds": 18000,
+					"reset_at": 1893456000
+				},
+				"secondary_window": {
+					"used_percent": 23,
+					"limit_window_seconds": 604800,
+					"reset_at": 1894060800
+				}
+			}
+		}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	summary, err := source.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if summary.WeeklyWindow.UsedPercent != 23 {
+		t.Fatalf("expected weekly window 23, got %+v", summary.WeeklyWindow)
+	}
+}
+
+func TestOAuthSourceFetchOmitsUnsafeAccountIDHeader(t *testing.T) {
+	codexHome := t.TempDir()
+	authJSON := `{"tokens":{"access_token":"test-token","account_id":"aaa.bbb.ccc"}}`
+	if err := os.WriteFile(codexHome+"/auth.json", []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write auth.json: %v", err)
+	}
+
+	source := NewOAuthSourceForHome(codexHome)
+	source.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("ChatGPT-Account-Id"); got != "" {
+			t.Fatalf("expected unsafe account id header to be omitted, got %q", got)
+		}
+		body := `{
+			"plan_type": "pro",
+			"rate_limit": {
+				"primary_window": {
+					"used_percent": 1,
+					"limit_window_seconds": 18000
+				}
+			}
+		}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	if _, err := source.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch: %v", err)
 	}
 }
 
@@ -133,6 +214,37 @@ func TestBuildRateLimitWindowsFromOAuthAdditionalLimitsKeepsPrimaryOnlyLimit(t *
 	}
 	if window.Secondary != nil {
 		t.Fatalf("expected missing secondary window to stay nil for normalizer fallback, got %#v", window.Secondary)
+	}
+}
+
+func TestBuildRateLimitWindowsFromOAuthAdditionalLimitsPrefersMeteredFeature(t *testing.T) {
+	limitName := "GPT-5.3-Codex-Spark"
+	windows := buildRateLimitWindowsFromOAuthAdditionalLimits([]oauthAdditionalRateLimit{
+		{
+			LimitName:      limitName,
+			MeteredFeature: "codex_bengalfox",
+			RateLimit: &oauthRateLimitDetails{
+				PrimaryWindow: &oauthWindowSnapshot{
+					UsedPercent:        8,
+					LimitWindowSeconds: 5 * 60 * 60,
+				},
+				SecondaryWindow: &oauthWindowSnapshot{
+					UsedPercent:        15,
+					LimitWindowSeconds: 7 * 24 * 60 * 60,
+				},
+			},
+		},
+	})
+
+	window, ok := windows["codex_bengalfox"]
+	if !ok {
+		t.Fatalf("expected metered feature id, got %#v", windows)
+	}
+	if window.LimitID != "codex_bengalfox" || pointerValue(window.LimitName) != limitName {
+		t.Fatalf("unexpected additional limit identity: %#v", window)
+	}
+	if window.Secondary == nil || window.Secondary.UsedPercent != 15 {
+		t.Fatalf("expected weekly additional window 15, got %#v", window.Secondary)
 	}
 }
 
