@@ -18,6 +18,8 @@ go build -o multisubs ./cmd/multisubs
 
 Development builds report `multisubs 0.1.0-dev`. Release builds report the release tag through the same `multisubs version` command.
 
+`multisubs codex generate` requires Codex CLI 0.147.0. `codex --version` must print `codex-cli 0.147.0`.
+
 ## Start
 
 Initialize shared product and Codex profile state:

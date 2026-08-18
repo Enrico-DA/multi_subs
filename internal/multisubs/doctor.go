@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Enrico-DA/multi_subs/internal/codexappserver"
 	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 	"github.com/Enrico-DA/multi_subs/internal/processprobe"
 )
@@ -118,7 +119,13 @@ func RunCodexDoctor(store *Store, cfg *Config, timeout time.Duration) DoctorRepo
 			if version == "" {
 				version = "version output is empty"
 			}
-			checks = append(checks, DoctorCheck{Name: "codex binary", Status: "ok", Details: fmt.Sprintf("%s (%s)", path, version)})
+			detail = fmt.Sprintf("%s (%s)", path, version)
+			status := "ok"
+			if strings.HasPrefix(version, "codex-cli ") && version != codexappserver.SupportedCodexVersion {
+				status = "warn"
+				detail += "; generate requires " + codexappserver.SupportedCodexVersion
+			}
+			checks = append(checks, DoctorCheck{Name: "codex binary", Status: status, Details: detail})
 		}
 	}
 

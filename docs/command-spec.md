@@ -38,7 +38,7 @@ No extra arguments are accepted.
 Runs an aggregate read-only report with these sections:
 
 1. `shared/base`: product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks.
-2. `Codex`: Codex binary, default Codex home, managed profile paths, config, auth shape, and login status.
+2. `Codex`: Codex binary (including a warning when the installed CLI cannot run `multisubs codex generate`), default Codex home, managed profile paths, config, auth shape, and login status.
 3. `Claude`: Claude binary, provider registry, managed paths, authentication status, and duplicate-organization checks.
 
 The JSON result has `base`, `codex`, and `claude` objects. Each contains a `checks` array.
