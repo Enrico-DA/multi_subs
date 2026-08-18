@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Enrico-DA/multi_subs/internal/codexappserver"
 )
 
 func TestDoctorReportHasFailures(t *testing.T) {
@@ -427,6 +429,85 @@ func TestRunDoctorScrubsCodexVersionEnvironment(t *testing.T) {
 		if envLogContainsKey(log, forbidden) {
 			t.Fatalf("expected %s to be scrubbed from codex version env", forbidden)
 		}
+	}
+}
+
+func TestRunCodexDoctorWarnsWhenGenerateVersionDoesNotMatch(t *testing.T) {
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	script := "#!/bin/sh\nprintf 'codex-cli 0.144.4\\n'\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multi"))
+	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "codex"))
+
+	paths, err := ResolvePaths()
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	report := RunCodexDoctor(NewStore(paths), DefaultConfig(), time.Second)
+	found := false
+	for _, check := range report.Checks {
+		if check.Name != "codex binary" {
+			continue
+		}
+		found = true
+		if check.Status != "warn" {
+			t.Fatalf("expected generate mismatch warn, got %s (%s)", check.Status, check.Details)
+		}
+		if !strings.Contains(check.Details, "codex-cli 0.144.4") ||
+			!strings.Contains(check.Details, "generate requires "+codexappserver.SupportedCodexVersion) {
+			t.Fatalf("generate mismatch details: %s", check.Details)
+		}
+	}
+	if !found {
+		t.Fatalf("expected codex binary check in report")
+	}
+}
+
+func TestRunCodexDoctorAcceptsSupportedGenerateVersion(t *testing.T) {
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	script := "#!/bin/sh\nprintf '%s\\n'\n"
+	script = fmt.Sprintf(script, codexappserver.SupportedCodexVersion)
+	if err := os.WriteFile(filepath.Join(fakeBin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MULTISUBS_HOME", filepath.Join(root, "multi"))
+	t.Setenv("MULTISUBS_DEFAULT_CODEX_HOME", filepath.Join(root, "codex"))
+
+	paths, err := ResolvePaths()
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	report := RunCodexDoctor(NewStore(paths), DefaultConfig(), time.Second)
+	found := false
+	for _, check := range report.Checks {
+		if check.Name != "codex binary" {
+			continue
+		}
+		found = true
+		if check.Status != "ok" {
+			t.Fatalf("expected supported generate version ok, got %s (%s)", check.Status, check.Details)
+		}
+		if !strings.Contains(check.Details, codexappserver.SupportedCodexVersion) {
+			t.Fatalf("supported version details: %s", check.Details)
+		}
+		if strings.Contains(check.Details, "generate requires") {
+			t.Fatalf("supported version still warned: %s", check.Details)
+		}
+	}
+	if !found {
+		t.Fatalf("expected codex binary check in report")
 	}
 }
 
