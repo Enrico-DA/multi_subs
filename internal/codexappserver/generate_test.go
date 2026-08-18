@@ -368,7 +368,7 @@ func TestCodexWireHasNoHarnessOrTools(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	tempDir := t.TempDir()
-	config := fmt.Sprintf("[mcp_servers.\"multicodex.test\"]\nurl = %s\n", strconv.Quote(mcpServer.URL))
+	config := fmt.Sprintf("[mcp_servers.\"synthetic.test\"]\nurl = %s\n", strconv.Quote(mcpServer.URL))
 	if err := os.WriteFile(filepath.Join(tempDir, "config.toml"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -383,13 +383,13 @@ func TestCodexWireHasNoHarnessOrTools(t *testing.T) {
 	}
 	args := generationArgs(catalogPath, mcpServers)
 	for _, override := range []string{
-		`model_provider="multicodex_test"`,
-		`model_providers.multicodex_test.name="Multicodex test"`,
-		"model_providers.multicodex_test.base_url=" + strconv.Quote(server.URL+"/v1"),
-		`model_providers.multicodex_test.env_key="FAKE_CODEX_SYNTHETIC_KEY"`,
-		`model_providers.multicodex_test.wire_api="responses"`,
-		"model_providers.multicodex_test.request_max_retries=0",
-		"model_providers.multicodex_test.stream_max_retries=0",
+		`model_provider="synthetic_test"`,
+		`model_providers.synthetic_test.name="Synthetic test"`,
+		"model_providers.synthetic_test.base_url=" + strconv.Quote(server.URL+"/v1"),
+		`model_providers.synthetic_test.env_key="FAKE_CODEX_SYNTHETIC_KEY"`,
+		`model_providers.synthetic_test.wire_api="responses"`,
+		"model_providers.synthetic_test.request_max_retries=0",
+		"model_providers.synthetic_test.stream_max_retries=0",
 	} {
 		args = append(args, "-c", override)
 	}
@@ -415,7 +415,7 @@ func TestCodexWireHasNoHarnessOrTools(t *testing.T) {
 	}
 	var thread threadStartResult
 	if err := client.Request(ctx, "thread/start", map[string]any{
-		"model": selection.Model, "modelProvider": "multicodex_test", "cwd": workDir,
+		"model": selection.Model, "modelProvider": "synthetic_test", "cwd": workDir,
 		"approvalPolicy": "never", "sandbox": "read-only",
 		"baseInstructions": "synthetic base instructions", "developerInstructions": "synthetic developer instructions", "ephemeral": true,
 	}, &thread); err != nil {
@@ -463,10 +463,10 @@ func TestCodexRuntimePinsOpenAIProvider(t *testing.T) {
 	defer cancel()
 	tempDir := t.TempDir()
 	config := `
-model_provider = "multicodex_test"
+model_provider = "synthetic_test"
 
-[model_providers.multicodex_test]
-name = "Multicodex test"
+[model_providers.synthetic_test]
+name = "Synthetic test"
 base_url = "https://example.invalid/v1"
 env_key = "FAKE_CODEX_SYNTHETIC_KEY"
 wire_api = "responses"
