@@ -73,6 +73,7 @@ func TestRunCLIRejectsBareCodexCommandsWithoutStateMutation(t *testing.T) {
 		"login-all",
 		"cli",
 		"exec",
+		"generate",
 		"reconcile",
 		"heartbeat",
 		"monitor",

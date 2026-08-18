@@ -186,7 +186,7 @@ func codexCommandReadOnlyStartup(command string) (bool, bool) {
 	switch command {
 	case "status", "usage", "doctor", "dry-run", "monitor":
 		return true, true
-	case "init", "add", "login", "login-all", "cli", "exec", "heartbeat", "reconcile":
+	case "init", "add", "login", "login-all", "cli", "exec", "generate", "heartbeat", "reconcile":
 		return false, true
 	default:
 		return false, false
@@ -288,6 +288,8 @@ func (a *App) cmdCodex(args []string) error {
 		return a.cmdCLI(args[1:])
 	case "exec":
 		return a.cmdExec(args[1:])
+	case "generate":
+		return a.cmdGenerate(args[1:])
 	case "status":
 		return a.cmdStatus()
 	case "usage":
@@ -344,7 +346,7 @@ func rejectCodexArguments(args []string) error {
 
 func bareCodexCommand(command string) bool {
 	switch command {
-	case "add", "login", "login-all", "cli", "exec", "reconcile", "heartbeat", "monitor", "dry-run":
+	case "add", "login", "login-all", "cli", "exec", "generate", "reconcile", "heartbeat", "monitor", "dry-run":
 		return true
 	default:
 		return false

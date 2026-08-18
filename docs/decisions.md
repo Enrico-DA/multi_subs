@@ -126,7 +126,15 @@ Each message states the cause with one of a fixed set of phrases chosen by obser
 
 Trade-offs: The unmanaged app server may write its normal non-credential logs, caches, database files, and database write-ahead files in the default home. A failed default login can redirect work and spend quota on another usable account. Two status attempts and the pause between them add bounded delay, and the one fallback selection may measure the remaining accounts again. Fixed phrases mean the message says a check failed without saying how, so a novel provider failure still needs `codex login status` to diagnose. There is no loop, guessed usage, or unmeasured routing tier.
 
-Enforcement: `internal/monitor/usage` owns the typed default source and keeps managed and unmanaged app-server modes distinct. The unmanaged source does not fingerprint auth and never receives `cli_auth_credentials_store="file"`. `internal/multisubs/exec.go` owns the two-attempt gate, fixed warning, typed default exclusion, and single reselection. `internal/multisubs/status.go` keeps account enrichment for status and doctor but gives exec a state-only probe. Tests cover the file-backed OAuth fast path, missing-file app-server path, sanitized unmanaged invocation, retry success, warned managed fallback, and exit code 1 when nothing remains.
+Enforcement: `internal/monitor/usage` owns the typed default source and keeps managed and unmanaged app-server modes distinct. The unmanaged source does not fingerprint auth and never receives `cli_auth_credentials_store="file"`. `internal/multisubs/exec.go` owns the two-attempt gate, fixed warning, typed default exclusion, and single reselection. The same gate is reused by `multisubs codex cli` automatic mode and `multisubs codex generate`. `internal/multisubs/status.go` keeps account enrichment for status and doctor but gives exec a state-only probe. Tests cover the file-backed OAuth fast path, missing-file app-server path, sanitized unmanaged invocation, retry success, warned managed fallback, and exit code 1 when nothing remains.
+
+## Keep tool-free Codex generation on the subscription path
+
+Decision: `multisubs codex generate` sends one prompt through Codex App Server using ChatGPT subscription authentication. It lives under the Codex namespace, uses the same weekly selector as exec, and never reads credential contents.
+
+Why: Upstream added a tool-free generation command so scripts can get one subscription reply without starting the interactive CLI or custom tools. The fork keeps that command and translates identity, routing, and the managed versus unmanaged app-server split.
+
+Enforcement: Generation requires Codex CLI 0.147.0, ChatGPT account type, a private empty workspace, a one-model catalog with tools removed, and fail-closed handling for unexpected App Server events. Automatic mode reuses exec routing. `--account` selects one managed profile without creating state for an unknown name. Default-account generation receives no managed file-auth override.
 
 ## Prefer plain English
 

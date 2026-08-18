@@ -39,8 +39,11 @@ multisubs codex status
 Run Codex with one named profile or automatic weekly routing:
 
 ```bash
+multisubs codex cli
 multisubs codex cli personal
 multisubs codex exec -s read-only "Summarize this repository."
+multisubs codex exec --search "What changed this week?"
+multisubs codex generate "Name three risks in this change."
 ```
 
 Add and use a Claude profile. Managed Claude profiles currently require a Claude Max subscription with first-party `claude.ai` login; other plans, including Pro, fail login verification and are never routed to. Claude usage reporting still works for any logged-in account.
@@ -77,8 +80,9 @@ multisubs codex init
 multisubs codex add <name>
 multisubs codex login <name> [...]
 multisubs codex login-all
-multisubs codex cli <name> [...]
-multisubs codex exec [...]
+multisubs codex cli [<name>] [...]
+multisubs codex exec [--search] [...]
+multisubs codex generate [...]
 multisubs codex status
 multisubs codex usage
 multisubs codex reconcile

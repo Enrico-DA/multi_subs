@@ -171,3 +171,34 @@ func TestRunInteractiveCodexWithProfileExecsWhenTerminalAttached(t *testing.T) {
 		t.Fatalf("expected profile env in env, got %q", env)
 	}
 }
+
+func TestRunInteractiveCodexWithEmptyProfileSkipsManagedAuth(t *testing.T) {
+	oldInteractive := isInteractiveTerminalAttached
+	t.Cleanup(func() {
+		isInteractiveTerminalAttached = oldInteractive
+	})
+	isInteractiveTerminalAttached = func() bool { return false }
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "codex.log")
+	script := "#!/bin/sh\nprintf 'args=%s\n' \"$*\" > " + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	if err := RunInteractiveCodexWithProfile("/tmp/default-codex-home", "", []string{"--version"}); err != nil {
+		t.Fatalf("interactive default launch: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	log := string(data)
+	if !strings.Contains(log, "args=--version\n") {
+		t.Fatalf("expected default args without managed auth, got %q", log)
+	}
+	if strings.Contains(log, managedCodexAuthConfig) {
+		t.Fatalf("default interactive launch received managed auth override: %q", log)
+	}
+}

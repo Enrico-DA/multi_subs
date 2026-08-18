@@ -62,37 +62,12 @@ var defaultExecAccountSelector execAccountSelector = func(ctx context.Context, a
 var defaultExecLoginStateProbe = defaultCodexLoginState
 
 func (a *App) cmdExec(args []string) error {
-	if execArgsAreHelpRequest(args) {
-		return runCommandWithEnv("codex", append([]string{"exec"}, args...), neutralCodexEnv(os.Environ()), "Codex exec help command failed")
+	globalArgs, execArgs := splitExecGlobalArgs(args)
+	codexArgs := append(append(globalArgs, "exec"), execArgs...)
+	if execArgsAreHelpRequest(execArgs) {
+		return runCommandWithEnv("codex", codexArgs, neutralCodexEnv(os.Environ()), "Codex exec help command failed")
 	}
-	routingArgs, err := parseExecRoutingArgs(args)
-	if err != nil {
-		return &ExitError{Code: 2, Message: err.Error()}
-	}
-	if routingArgs.ProfileExplicit && !routingArgs.ModelExplicit {
-		return &ExitError{
-			Code:    2,
-			Message: "Codex --profile can change the effective model; pass --model <model> so multisubs can route the matching weekly quota",
-		}
-	}
-
-	cfg, err := a.loadOrInitConfig()
-	if err != nil {
-		return err
-	}
-	cfg, err = a.execReadyConfig(cfg)
-	if err != nil {
-		return err
-	}
-	model := routingArgs.Model
-	if !routingArgs.ModelExplicit {
-		model, err = commonConfiguredExecModel(a.store.paths, cfg)
-		if err != nil {
-			return err
-		}
-	}
-
-	selected, err := a.selectExecProfile(cfg, defaultExecAccountSelector, model)
+	selected, err := a.selectAccountForCodexArgs(context.Background(), execArgs)
 	if err != nil {
 		return err
 	}
@@ -109,7 +84,58 @@ func (a *App) cmdExec(args []string) error {
 	if !selected.IsProfile {
 		activeProfile = ""
 	}
-	return RunCodexWithProfile(selected.CodexHome, activeProfile, append([]string{"exec"}, args...))
+	return RunCodexWithProfile(selected.CodexHome, activeProfile, codexArgs)
+}
+
+func splitExecGlobalArgs(args []string) ([]string, []string) {
+	globalArgs := make([]string, 0, 1)
+	execArgs := make([]string, 0, len(args))
+	terminated := false
+	for _, arg := range args {
+		if arg == "--" {
+			terminated = true
+			execArgs = append(execArgs, arg)
+			continue
+		}
+		if !terminated && arg == "--search" {
+			if len(globalArgs) == 0 {
+				globalArgs = append(globalArgs, arg)
+			}
+			continue
+		}
+		execArgs = append(execArgs, arg)
+	}
+	return globalArgs, execArgs
+}
+
+func (a *App) selectAccountForCodexArgs(ctx context.Context, args []string) (execSelection, error) {
+	routingArgs, err := parseExecRoutingArgs(args)
+	if err != nil {
+		return execSelection{}, &ExitError{Code: 2, Message: err.Error()}
+	}
+	if routingArgs.ProfileExplicit && !routingArgs.ModelExplicit {
+		return execSelection{}, &ExitError{
+			Code:    2,
+			Message: "Codex --profile can change the effective model; pass --model <model> so multisubs can route the matching weekly quota",
+		}
+	}
+
+	cfg, err := a.loadOrInitConfig()
+	if err != nil {
+		return execSelection{}, err
+	}
+	cfg, err = a.execReadyConfig(cfg)
+	if err != nil {
+		return execSelection{}, err
+	}
+	model := routingArgs.Model
+	if !routingArgs.ModelExplicit {
+		model, err = commonConfiguredExecModel(a.store.paths, cfg)
+		if err != nil {
+			return execSelection{}, err
+		}
+	}
+	return a.selectExecProfileWithContext(ctx, cfg, defaultExecAccountSelector, model)
 }
 
 func (a *App) execReadyConfig(cfg *Config) (*Config, error) {
@@ -234,12 +260,24 @@ func execArgsAreHelpRequest(args []string) bool {
 }
 
 func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model string) (execSelection, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), execSelectionTimeout)
+	defer cancel()
+	return a.selectExecProfileWithContext(ctx, cfg, selector, model)
+}
+
+func (a *App) selectExecProfileWithContext(ctx context.Context, cfg *Config, selector execAccountSelector, model string) (execSelection, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	selectCtx, cancel := context.WithTimeout(ctx, execSelectionTimeout)
+	defer cancel()
+
 	targets := codexRoutingTargets(cfg, a.store.paths.DefaultCodexHome)
 	if selector == nil {
 		return execSelection{}, fmt.Errorf("missing exec account selector")
 	}
 
-	selected, target, err := selectCodexRoutingTarget(targets, selector, model)
+	selected, target, err := selectCodexRoutingTarget(selectCtx, targets, selector, model)
 	if err != nil {
 		return execSelection{}, err
 	}
@@ -251,7 +289,7 @@ func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model
 			}
 			fmt.Fprintln(os.Stderr, defaultExecLoginSkipWarning(reason))
 			targets = remaining
-			selected, target, err = selectCodexRoutingTarget(targets, selector, model)
+			selected, target, err = selectCodexRoutingTarget(selectCtx, targets, selector, model)
 			if err != nil {
 				// The selection failure itself stays private: it can carry a
 				// local path or token-shaped text.
@@ -279,14 +317,12 @@ func (a *App) selectExecProfile(cfg *Config, selector execAccountSelector, model
 	return execSelection{}, fmt.Errorf("selected account %q is not an exec candidate", selected.Account.Label)
 }
 
-func selectCodexRoutingTarget(targets []codexRoutingTarget, selector execAccountSelector, model string) (usage.SelectedAccount, codexRoutingTarget, error) {
+func selectCodexRoutingTarget(ctx context.Context, targets []codexRoutingTarget, selector execAccountSelector, model string) (usage.SelectedAccount, codexRoutingTarget, error) {
 	accounts := make([]usage.MonitorAccount, 0, len(targets))
 	for _, target := range targets {
 		accounts = append(accounts, target.Account)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), execSelectionTimeout)
-	defer cancel()
 	selected, err := selector(ctx, accounts, model)
 	if err != nil {
 		return usage.SelectedAccount{}, codexRoutingTarget{}, err
