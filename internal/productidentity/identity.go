@@ -306,9 +306,14 @@ func (repo *repository) checkOAuthUserAgent() {
 		repo.errors = append(repo.errors, fmt.Sprintf("%s: OAuth monitor must define Fetch", relativePath))
 		return
 	}
+	request := findFunction(file, "fetchWithCredentials")
+	if request == nil || request.Body == nil {
+		repo.errors = append(repo.errors, fmt.Sprintf("%s: OAuth monitor must define fetchWithCredentials", relativePath))
+		return
+	}
 
 	foundUserAgent := false
-	ast.Inspect(fetch.Body, func(node ast.Node) bool {
+	ast.Inspect(request.Body, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) != 2 || selectorChain(call.Fun) != "req.Header.Set" {
 			return true
