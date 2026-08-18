@@ -832,6 +832,32 @@ func TestClaudeUsageCollectorHandlesOptionalFableAndSafeFailures(t *testing.T) {
 	}
 }
 
+func TestClaudeUsageCollectorPrefersLoggedOutAuthOverMalformedUsage(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	runner.capture = func(_ context.Context, args []string, env []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			return fakeClaudeAuthJSONWithOrg(false, "", ""), nil, nil
+		}
+		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
+			t.Fatalf("unexpected Claude usage args: %#v", args)
+		}
+		return fakeMalformedClaudeUsageEnvelope("synthetic-secret"), nil, nil
+	}
+	report := app.collectClaudeUsage()
+	if len(report.Accounts) != 1 {
+		t.Fatalf("Claude account count: got %d", len(report.Accounts))
+	}
+	if report.Accounts[0].Name != "default" || report.Accounts[0].Failure != "not logged in" {
+		t.Fatalf("logged-out default category: %+v", report.Accounts[0])
+	}
+	if len(report.Accounts[0].Windows) != 0 {
+		t.Fatalf("logged-out default kept usage windows: %+v", report.Accounts[0])
+	}
+	if strings.Contains(report.Accounts[0].Failure, "synthetic-secret") {
+		t.Fatalf("logged-out classification exposed provider text: %+v", report.Accounts[0])
+	}
+}
+
 func TestClaudeUsageCollectorCategorizesTimeoutAndLoggedOut(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "logged-out")
