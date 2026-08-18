@@ -15,6 +15,28 @@ import (
 	"github.com/Enrico-DA/multi_subs/internal/codexappserver"
 )
 
+func TestRunBaseDoctorReportsBinaryVersionFirst(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := NewStore(Paths{
+		MultisubsHome:    filepath.Join(root, "home"),
+		ConfigPath:       filepath.Join(root, "home", "config.json"),
+		ProfilesDir:      filepath.Join(root, "home", "profiles"),
+		DefaultCodexHome: filepath.Join(root, "codex"),
+	})
+	report := RunBaseDoctor(store, DefaultConfig())
+	if len(report.Checks) == 0 || report.Checks[0].Name != "multisubs version" {
+		t.Fatalf("first base check: %+v", report.Checks)
+	}
+	if !strings.Contains(report.Checks[0].Details, "binary reports ") {
+		t.Fatalf("version details: %q", report.Checks[0].Details)
+	}
+	if report.Checks[0].Status != "ok" && report.Checks[0].Status != "warn" {
+		t.Fatalf("version status: %q", report.Checks[0].Status)
+	}
+}
+
 func TestDoctorReportHasFailures(t *testing.T) {
 	t.Parallel()
 
