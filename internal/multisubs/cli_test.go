@@ -361,7 +361,7 @@ func TestCmdCLIAutomaticallySelectsAccountAndRunsInteractiveCodex(t *testing.T) 
 	}
 	wantArgs := "-m=gpt-5-codex-spark check this repo -c " + managedCodexAuthConfig
 	if !strings.Contains(log, "args="+wantArgs) {
-		t.Fatalf("expected cli args %q in log, got %q", log)
+		t.Fatalf("expected cli args %q in log, got %q", wantArgs, log)
 	}
 }
 
