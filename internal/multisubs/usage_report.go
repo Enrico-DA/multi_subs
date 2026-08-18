@@ -321,10 +321,8 @@ func codexSummaryHasWeeklyData(summary *monitorusage.Summary) bool {
 	if summary.WeeklyWindow.UsedPercent >= 0 {
 		return true
 	}
-	for _, window := range summary.RateLimitWindows {
-		if window.WeeklyWindow.UsedPercent >= 0 {
-			return true
-		}
+	if _, window, ok := summary.RateLimitWindowForModel(""); ok && window.WeeklyWindow.UsedPercent >= 0 {
+		return true
 	}
 	return false
 }
@@ -534,6 +532,11 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 	probeContext, cancelProbes := context.WithTimeout(context.Background(), usageAccountTimeout)
 	defer cancelProbes()
 	authBefore, authBeforeErr := fetchClaudeAuthStatus(probeContext, a.claudeCommandRunner(), target.ConfigDir)
+	if claudeAuthReportsLoggedOut(authBefore, authBeforeErr) {
+		account.Failure = "not logged in"
+		collected.Account = account
+		return collected
+	}
 	identityBefore, identityBeforeErr := validateClaudeUsageIdentity(authBefore)
 	providerUsage, err := fetchClaudeUsage(probeContext, a.claudeCommandRunner(), target.ConfigDir)
 	usageFailure := ""
@@ -542,7 +545,7 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 	}
 	authAfter, authAfterErr := fetchClaudeAuthStatus(probeContext, a.claudeCommandRunner(), target.ConfigDir)
 	identityAfter, identityAfterErr := validateClaudeUsageIdentity(authAfter)
-	if claudeAuthReportsLoggedOut(authBefore, authBeforeErr) || claudeAuthReportsLoggedOut(authAfter, authAfterErr) {
+	if claudeAuthReportsLoggedOut(authAfter, authAfterErr) {
 		account.Failure = "not logged in"
 		collected.Account = account
 		return collected

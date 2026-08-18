@@ -1,7 +1,6 @@
 package usage
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -32,13 +31,9 @@ func accountEmailFromAuthFile(path string) (string, error) {
 		return "", nil
 	}
 
-	parts := strings.Split(payload.Tokens.IDToken, ".")
-	if len(parts) < 2 {
+	raw := decodeJWTPayloadSegment(payload.Tokens.IDToken)
+	if len(raw) == 0 {
 		return "", nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", err
 	}
 	var claims struct {
 		Email string `json:"email"`

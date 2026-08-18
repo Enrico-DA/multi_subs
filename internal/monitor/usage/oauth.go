@@ -207,8 +207,9 @@ type oauthAuthCredentials struct {
 }
 
 type authFilePayload struct {
-	Email  string `json:"email"`
-	Tokens struct {
+	Email     string `json:"email"`
+	AccountID string `json:"account_id"`
+	Tokens    struct {
 		AccessToken string `json:"access_token"`
 		IDToken     string `json:"id_token"`
 		AccountID   string `json:"account_id"`
@@ -254,7 +255,7 @@ func readOAuthAuthFile(path string) (oauthAuthCredentials, error) {
 	}
 	return oauthAuthCredentials{
 		accessToken: token,
-		accountID:   oauthAccountIDHeaderValue(payload.Tokens.AccountID),
+		accountID:   resolveOAuthAccountID(payload),
 	}, nil
 }
 
