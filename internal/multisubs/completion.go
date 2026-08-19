@@ -63,7 +63,7 @@ _multisubs_complete() {
   command="${COMP_WORDS[3]:-}"
 
   if (( COMP_CWORD == 1 )); then
-    COMPREPLY=( $(compgen -W "init doctor status usage codex claude completion version help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "init install doctor status usage codex claude completion version help" -- "$cur") )
     return 0
   fi
 
@@ -160,7 +160,7 @@ _multisubs_complete() {
       ;;
     help)
       if (( COMP_CWORD == 2 )); then
-        COMPREPLY=( $(compgen -W "init doctor status usage codex claude completion version help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "init install doctor status usage codex claude completion version help" -- "$cur") )
       elif (( COMP_CWORD == 3 )); then
         case "${COMP_WORDS[2]}" in
           codex)
@@ -204,7 +204,7 @@ _multisubs_complete() {
   command="${words[4]:-}"
 
   if (( CURRENT == 2 )); then
-    compadd -- init doctor status usage codex claude completion version help
+    compadd -- init install doctor status usage codex claude completion version help
     return
   fi
 
@@ -295,7 +295,7 @@ _multisubs_complete() {
       ;;
     help)
       if (( CURRENT == 3 )); then
-        compadd -- init doctor status usage codex claude completion version help
+        compadd -- init install doctor status usage codex claude completion version help
       elif (( CURRENT == 4 )); then
         case "${words[3]:-}" in
           codex) compadd -- init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help ;;
@@ -327,10 +327,10 @@ func fishCompletionEntries() []fishCompletionEntry {
 	monitorTUIOptions := []string{"interval", "timeout", "no-color", "no-alt-screen", "include-default", "include-active", "discover"}
 
 	return []fishCompletionEntry{
-		{tokens: []string{"init", "doctor", "status", "usage", "codex", "claude", "completion", "version", "help"}},
+		{tokens: []string{"init", "install", "doctor", "status", "usage", "codex", "claude", "completion", "version", "help"}},
 		{path: []string{"codex"}, tokens: codexCommands},
 		{path: []string{"claude"}, tokens: claudeCommands},
-		{path: []string{"help"}, tokens: []string{"init", "doctor", "status", "usage", "codex", "claude", "completion", "version", "help"}},
+		{path: []string{"help"}, tokens: []string{"init", "install", "doctor", "status", "usage", "codex", "claude", "completion", "version", "help"}},
 		{path: []string{"help", "codex"}, tokens: codexCommands},
 		{path: []string{"help", "claude"}, tokens: claudeCommands},
 		{path: []string{"help", "codex", "monitor"}, tokens: monitorCommands},

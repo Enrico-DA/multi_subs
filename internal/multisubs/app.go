@@ -85,6 +85,12 @@ func RunCLI(args []string) error {
 			return err
 		}
 		return app.cmdInit()
+	case "install":
+		app, err := newApp(false)
+		if err != nil {
+			return err
+		}
+		return app.cmdInstall(args[1:])
 	case "doctor":
 		app, err := newApp(true)
 		if err != nil {
@@ -210,6 +216,8 @@ func (a *App) Run(args []string) error {
 		return nil
 	case "init":
 		return a.cmdInit()
+	case "install":
+		return a.cmdInstall(args[1:])
 	case "completion":
 		return a.cmdCompletion(args[1:])
 	case "doctor":

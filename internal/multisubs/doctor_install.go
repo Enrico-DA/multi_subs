@@ -57,13 +57,13 @@ func goInstallTargetCheck(in goInstallTargetInput) DoctorCheck {
 		parts = append(parts, "go install replaces the running binary in "+runningDir)
 	} else {
 		status = "warn"
-		parts = append(parts, "go install writes to "+installDir+"; the running binary is "+running+". set GOBIN to "+runningDir+" before the next install")
+		parts = append(parts, "go install writes to "+installDir+"; the running binary is "+running+". run multisubs install to replace this binary and persist GOBIN")
 	}
 
 	leftovers := uniqueExistingLeftovers(exists, running, binaryName, installDir, defaultDir)
 	if len(leftovers) > 0 {
 		status = "warn"
-		parts = append(parts, "a second binary is at "+strings.Join(leftovers, " and ")+"; remove it so only the running copy remains")
+		parts = append(parts, "a second binary is at "+strings.Join(leftovers, " and ")+"; run multisubs install to remove leftovers")
 	}
 
 	pathLookup := cleanResolvedPath(in.pathLookup)

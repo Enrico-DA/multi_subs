@@ -24,7 +24,15 @@ Decision: Codex commands live under `multisubs codex`; Claude commands live unde
 
 Why: A symmetric tree makes provider ownership clear and leaves room for later product-wide commands.
 
-Enforcement: Bare Codex routes fail with code 2 before state access and point to the matching namespaced route. Product-wide commands are `init`, `doctor`, `status`, and `usage`. `multisubs init` remains the shared initializer, and `multisubs codex init` calls the same path. `multisubs status` prints the same quota snapshot as `multisubs usage` and adds a Next section when any account is not ready.
+Enforcement: Bare Codex routes fail with code 2 before state access and point to the matching namespaced route. Product-wide commands are `init`, `install`, `doctor`, `status`, and `usage`. `multisubs init` remains the shared initializer, and `multisubs codex init` calls the same path. `multisubs status` prints the same quota snapshot as `multisubs usage` and adds a Next section when any account is not ready.
+
+## Let install own the PATH binary
+
+Decision: `multisubs install` replaces the running binary, persists `GOBIN` in the login shell profile, and deletes leftover Go-bin copies. Doctor only warns.
+
+Why: Empty `GOBIN` makes a later `go install` write a second binary under `GOPATH/bin` while `PATH` keeps running an older copy. Editing the shell profile by hand is the wrong owner for that install path.
+
+Enforcement: The command sets `GOBIN` to the running binary's directory, writes `MULTISUBS_HOME/install.env`, and updates one marked shell-rc block. It never deletes the running binary. Raw `go install` output is discarded. Provider credentials are not changed.
 
 ## Keep aggregate and focused doctors
 
