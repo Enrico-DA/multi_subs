@@ -55,7 +55,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"doctor": {
 		Usage:       "multisubs doctor [--json] [--timeout 8s]",
-		Description: "Run one read-only product check with shared/base, Codex, and Claude sections.",
+		Description: "Run one read-only product check with shared/base, Codex, and Claude sections. Shared/base includes the running binary path and whether go install would replace that file.",
 	},
 	"status": {
 		Usage:       "multisubs status",
