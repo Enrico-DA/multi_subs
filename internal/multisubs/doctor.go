@@ -56,8 +56,9 @@ func runBaseDoctor(store *Store, cfg *Config, registryErr error) DoctorReport {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
-	checks := make([]DoctorCheck, 0, 13)
+	checks := make([]DoctorCheck, 0, 14)
 	checks = append(checks, checkMultisubsVersion())
+	checks = append(checks, checkGoInstallTarget())
 	checks = append(checks, checkDirExists("multisubs home", store.paths.MultisubsHome, true))
 	if registryErr != nil {
 		checks = append(checks, DoctorCheck{

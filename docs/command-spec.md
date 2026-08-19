@@ -37,7 +37,7 @@ No extra arguments are accepted.
 
 Runs an aggregate read-only report with these sections:
 
-1. `shared/base`: binary version, product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks. The version check uses the same string as `multisubs version` and includes the resolved path of the running executable. It warns when that string is still the compile-time `0.1.0-dev` default, because that cannot tell two development builds apart.
+1. `shared/base`: binary version, go-install target, product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks. The version check uses the same string as `multisubs version` and includes the resolved path of the running executable. It warns when that string is still the compile-time `0.1.0-dev` default, because that cannot tell two development builds apart. The go-install check warns when `go install` would write to a different directory than the running binary, and when a leftover `multisubs` remains at the default `GOPATH/bin` location. Doctor never deletes those files.
 2. `Codex`: Codex binary (including a warning when the installed CLI cannot run `multisubs codex generate`), default Codex home, managed profile paths, config, auth shape, and login status.
 3. `Claude`: Claude binary, provider registry, managed paths, authentication status, and duplicate-organization checks.
 

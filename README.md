@@ -6,13 +6,20 @@ This is a deliberate breaking rename for one local user. There is no old executa
 
 ## Install
 
-This repository is private. Tell Go not to use the public module proxy:
+This repository is private. Tell Go not to use the public module proxy, and set `GOBIN` to the directory of the `multisubs` you actually run. Put both in your shell profile so later installs replace that file instead of writing a second copy under `$(go env GOPATH)/bin`.
 
 ```bash
 export GOPRIVATE=github.com/Enrico-DA/multi_subs
+export GOBIN="$HOME/.local/bin"
 ```
 
-`go install` writes to `GOBIN`, or to `$(go env GOPATH)/bin` when `GOBIN` is empty. That directory is often not the `multisubs` already on `PATH`. If a `multisubs` is already installed, set `GOBIN` to that directory so the new file replaces the one later commands will run.
+If the current binary is not in `~/.local/bin`, point `GOBIN` at that directory instead:
+
+```bash
+export GOBIN="$(dirname "$(command -v multisubs)")"
+```
+
+If `GOBIN` is empty, `go install` writes to `$(go env GOPATH)/bin` (often `~/go/bin`). That is a different file from a `multisubs` on `PATH` in `~/.local/bin`. Doctor warns when those directories differ, and when a leftover binary remains at the default `go install` path.
 
 Install the latest published `main`:
 
@@ -20,9 +27,14 @@ Install the latest published `main`:
 export GOPRIVATE=github.com/Enrico-DA/multi_subs
 if command -v multisubs >/dev/null 2>&1; then
   export GOBIN="$(dirname "$(command -v multisubs)")"
+else
+  export GOBIN="${GOBIN:-$HOME/.local/bin}"
 fi
+mkdir -p "$GOBIN"
 go install github.com/Enrico-DA/multi_subs/cmd/multisubs@latest
 ```
+
+If this is the first install, add `$GOBIN` to `PATH`.
 
 Install unmerged work by commit hash. Branch names that contain `/` are not valid `go install` versions.
 
@@ -30,7 +42,10 @@ Install unmerged work by commit hash. Branch names that contain `/` are not vali
 export GOPRIVATE=github.com/Enrico-DA/multi_subs
 if command -v multisubs >/dev/null 2>&1; then
   export GOBIN="$(dirname "$(command -v multisubs)")"
+else
+  export GOBIN="${GOBIN:-$HOME/.local/bin}"
 fi
+mkdir -p "$GOBIN"
 go install github.com/Enrico-DA/multi_subs/cmd/multisubs@<commit>
 ```
 
@@ -48,7 +63,10 @@ After install, confirm the binary on that machine:
 command -v multisubs
 go version -m "$(command -v multisubs)"
 multisubs version
+multisubs doctor
 ```
+
+If doctor reports a second binary under `$(go env GOPATH)/bin`, remove that leftover after the `PATH` binary is the one you want. Do not delete the running `PATH` copy.
 
 `multisubs codex generate` requires Codex CLI 0.147.0. `codex --version` must print `codex-cli 0.147.0`.
 
@@ -134,7 +152,7 @@ multisubs claude usage
 multisubs claude doctor
 ```
 
-`multisubs init` and `multisubs codex init` call the same shared initialization path. `multisubs doctor` is the aggregate read-only check. It prints shared/base, Codex, and Claude sections. The first shared/base check is the same version string as `multisubs version`, plus the resolved path of the running binary. The two provider doctors stay focused on their own provider.
+`multisubs init` and `multisubs codex init` call the same shared initialization path. `multisubs doctor` is the aggregate read-only check. It prints shared/base, Codex, and Claude sections. The first shared/base check is the same version string as `multisubs version`, plus the resolved path of the running binary. The next check warns when `go install` would write a second copy, or when a leftover binary remains at the default Go bin path. The two provider doctors stay focused on their own provider.
 
 The three usage commands share one report format. This local-only output includes each logical subscription's full, validated account email by default. The combined command prints Codex first, then Claude. Duplicate physical targets for one subscription collapse into one row and one availability count. Managed aliases sort by name. If a logical row also contains the normal default account, it ends with `(also default)` and stays last for that provider. Email-shaped profile names use unique aliases such as `[managed-1]`. Codex rows are `Session`, `Weekly`, and fixed product-known model limits; the only current extra label is `Spark weekly`, and unknown provider limit names are suppressed. Claude rows are `Session (~5h)`, `Weekly all models`, and `Fable weekly`; only an explicit parenthesized duration in the provider's session heading replaces the approximate label, and an absent optional Fable window is `not reported`. One deterministic successful quota snapshot represents a duplicate group; percentages are never averaged.
 

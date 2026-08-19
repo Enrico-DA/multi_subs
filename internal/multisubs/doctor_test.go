@@ -38,6 +38,9 @@ func TestRunBaseDoctorReportsBinaryVersionFirst(t *testing.T) {
 	if report.Checks[0].Status != "ok" && report.Checks[0].Status != "warn" {
 		t.Fatalf("version status: %q", report.Checks[0].Status)
 	}
+	if len(report.Checks) < 2 || report.Checks[1].Name != "go install target" {
+		t.Fatalf("second base check: %+v", report.Checks)
+	}
 }
 
 func TestDoctorReportHasFailures(t *testing.T) {
