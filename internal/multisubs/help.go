@@ -17,6 +17,7 @@ var commandSummaries = []struct {
 	Summary string
 }{
 	{Name: "init", Summary: "initialize shared multisubs state"},
+	{Name: "install [ref]", Summary: "replace the running binary and persist GOBIN"},
 	{Name: "doctor [flags]", Summary: "run aggregate shared, Codex, and Claude checks"},
 	{Name: "status", Summary: "show quota and the next command when an account is not ready"},
 	{Name: "usage", Summary: "show one quota snapshot for every routed account"},
@@ -53,9 +54,18 @@ var commandHelpByName = map[string]commandHelp{
 		Usage:       "multisubs init",
 		Description: "Create shared multisubs state and the Codex profile registry. This does not change either default provider account.",
 	},
+	"install": {
+		Usage:       "multisubs install [ref]",
+		Description: "Replace the running multisubs binary with go install, using that binary's directory as GOBIN. Default ref is latest. After a successful install, persist GOPRIVATE and GOBIN in the login shell profile and delete leftover regular copies at the default Go bin path. Doctor never deletes leftovers. Raw go install output is discarded. Provider credentials are not changed.",
+		Examples: []string{
+			"multisubs install",
+			"multisubs install latest",
+			"multisubs install v0.1.0",
+		},
+	},
 	"doctor": {
 		Usage:       "multisubs doctor [--json] [--timeout 8s]",
-		Description: "Run one read-only product check with shared/base, Codex, and Claude sections. Shared/base includes the running binary path and whether go install would replace that file.",
+		Description: "Run one read-only product check with shared/base, Codex, and Claude sections. Shared/base includes the running binary path and whether go install would replace that file. Doctor never deletes leftover binaries; run `multisubs install` to replace the running copy and remove leftovers.",
 	},
 	"status": {
 		Usage:       "multisubs status",
@@ -228,6 +238,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  multisubs init")
+	fmt.Println("  multisubs install")
 	fmt.Println("  multisubs status")
 	fmt.Println("  multisubs usage")
 	fmt.Println("  multisubs codex exec -s read-only \"Summarize this repository.\"")

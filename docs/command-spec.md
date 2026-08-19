@@ -33,11 +33,23 @@ Creates private shared product directories and the Codex profile registry under 
 
 No extra arguments are accepted.
 
+### `multisubs install [ref]`
+
+Replaces the running `multisubs` binary with `go install github.com/Enrico-DA/multi_subs/cmd/multisubs@<ref>`. `GOBIN` is the directory of that running binary. Default ref is `latest`. The ref must be `latest`, a release tag, or a commit hash. Slash-containing branch names and `@` are rejected with exit code 2. Extra arguments exit with code 2. `-h` and `--help` print help without installing.
+
+After a successful install the command:
+
+- writes `MULTISUBS_HOME/install.env` with `GOPRIVATE` and `GOBIN`;
+- writes or replaces one marked block in the login shell profile (`~/.zshrc` by default; bash uses `~/.bashrc` when that file exists, otherwise `~/.bash_profile`; fish uses `~/.config/fish/config.fish`);
+- deletes leftover regular `multisubs` binaries at the default `GOPATH/bin` path when that file is not the running binary.
+
+It does not print raw `go install` output. A failed `go install` leaves the shell profile and leftovers unchanged. Doctor never deletes leftovers; this command does. Provider credentials and both default accounts are unchanged.
+
 ### `multisubs doctor [--json] [--timeout 8s]`
 
 Runs an aggregate read-only report with these sections:
 
-1. `shared/base`: binary version, go-install target, product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks. The version check uses the same string as `multisubs version` and includes the resolved path of the running executable. It warns when that string is still the compile-time `0.1.0-dev` default, because that cannot tell two development builds apart. The go-install check warns when `go install` would write to a different directory than the running binary, and when a leftover `multisubs` remains at the default `GOPATH/bin` location. Doctor never deletes those files.
+1. `shared/base`: binary version, go-install target, product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks. The version check uses the same string as `multisubs version` and includes the resolved path of the running executable. It warns when that string is still the compile-time `0.1.0-dev` default, because that cannot tell two development builds apart. The go-install check warns when `go install` would write to a different directory than the running binary, and when a leftover `multisubs` remains at the default `GOPATH/bin` location. Those warnings point at `multisubs install`. Doctor never deletes those files.
 2. `Codex`: Codex binary (including a warning when the installed CLI cannot run `multisubs codex generate`), default Codex home, managed profile paths, config, auth shape, and login status.
 3. `Claude`: Claude binary, provider registry, managed paths, authentication status, and duplicate-organization checks.
 

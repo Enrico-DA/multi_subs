@@ -48,7 +48,7 @@ func TestGoInstallTargetCheckWarnsWhenGoInstallWouldWriteElsewhere(t *testing.T)
 	}
 	if !strings.Contains(check.Details, filepath.Join(goPath, "bin")) ||
 		!strings.Contains(check.Details, running) ||
-		!strings.Contains(check.Details, "set GOBIN") {
+		!strings.Contains(check.Details, "run multisubs install") {
 		t.Fatalf("differing install dir details: %q", check.Details)
 	}
 }
@@ -74,7 +74,7 @@ func TestGoInstallTargetCheckWarnsAboutLeftoverBinary(t *testing.T) {
 	}
 	if !strings.Contains(check.Details, leftover) ||
 		!strings.Contains(check.Details, "second binary") ||
-		!strings.Contains(check.Details, "remove it") {
+		!strings.Contains(check.Details, "run multisubs install") {
 		t.Fatalf("leftover details: %q", check.Details)
 	}
 }

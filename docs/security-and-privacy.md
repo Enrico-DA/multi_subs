@@ -41,7 +41,7 @@ Product state directories, profile directories, provider config directories, loc
 
 - Unsafe symlinks and hard links fail closed.
 - Codex and Claude account configuration locks have a five-second acquisition deadline and never proceed unlocked.
-- Product-controlled runtime paths stay below `MULTISUBS_HOME`.
+- Product-controlled runtime paths stay below `MULTISUBS_HOME`, except the documented `multisubs install` path. That command may write `MULTISUBS_HOME/install.env`, write or replace one marked `GOPRIVATE`/`GOBIN` block in the login shell profile, and delete leftover regular `multisubs` files at the default Go bin path. It never deletes the running binary and never changes provider credentials.
 - Resource reconciliation does not overwrite regular user guidance, config, or skill entries.
 - Only documented product-owned links may be created, changed, or removed.
 - Runtime-managed `.system` skills remain profile-local.
