@@ -156,6 +156,12 @@ func TestRemoveInstallLeftoversDeletesDefaultGoBinCopy(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	// removeInstallLeftovers resolves symlinks before deleting, so the expected
+	// paths must be resolved too. On macOS t.TempDir() sits under /var, which is
+	// a symlink to /private/var.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	runningDir := filepath.Join(root, "local-bin")
 	if err := os.MkdirAll(runningDir, 0o700); err != nil {
 		t.Fatalf("mkdir running: %v", err)
@@ -190,6 +196,11 @@ func TestRemoveInstallLeftoversDeletesDefaultGoBinCopy(t *testing.T) {
 
 func TestCmdInstallPersistsGOBINAndRemovesLeftover(t *testing.T) {
 	root := t.TempDir()
+	// The install path reports resolved paths, so the expected values must be
+	// resolved too. See TestRemoveInstallLeftoversDeletesDefaultGoBinCopy.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	home := filepath.Join(root, "home")
 	localBin := filepath.Join(root, "local-bin")
 	if err := os.MkdirAll(localBin, 0o700); err != nil {

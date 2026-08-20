@@ -18,7 +18,7 @@
 # GitHub itself, as committer of merges performed through the web UI.
 ^noreply@github\.com$
 
-# Upstream multicodex authorship, inherited whenever upstream is merged in.
+# Upstream authorship, inherited whenever the upstream project is merged in.
 ^me@olliecrow\.io$
 
 # Coding agents that commit into this repository.
