@@ -78,6 +78,19 @@ func summaryHasWeeklyData(summary *Summary) bool {
 	return summary.WeeklyWindow.UsedPercent >= 0 || rateLimitWindowsHaveWeeklyData(summary.RateLimitWindows)
 }
 
+func summaryHasStandardWeeklyData(summary *Summary) bool {
+	if summary == nil {
+		return false
+	}
+	if summary.WeeklyWindow.UsedPercent >= 0 {
+		return true
+	}
+	if _, window, ok := summary.RateLimitWindowForModel(""); ok && window.WeeklyWindow.UsedPercent >= 0 {
+		return true
+	}
+	return false
+}
+
 func rateLimitWindowsHaveWeeklyData(windows map[string]RateLimitWindow) bool {
 	for _, window := range windows {
 		if window.WeeklyWindow.UsedPercent >= 0 {

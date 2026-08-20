@@ -126,6 +126,81 @@ func TestDefaultAccountWithUsableAuthUsesOAuthWithoutAppServer(t *testing.T) {
 	}
 }
 
+func TestDefaultAccountSparkOnlyOAuthFallsBackToUnmanagedAppServerWeekly(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(`{"tokens":{"access_token":"synthetic-token","account_id":"acct-example-0001"}}`), 0o600); err != nil {
+		t.Fatalf("write auth fixture: %v", err)
+	}
+	source := NewUsageSourceForHome(home)
+	oauth := source.oauth.(*OAuthSource)
+	oauth.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{
+			"email":"user@example.test",
+			"plan_type":"pro",
+			"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":18000}},
+			"additional_rate_limits":[{
+				"limit_name":"Spark",
+				"metered_feature":"codex_bengalfox",
+				"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":604800,"reset_at":1894060800}}
+			}]
+		}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	appServer := &fakeSource{name: "app-server", out: &Summary{
+		Source:       "app-server",
+		PlanType:     "pro",
+		WeeklyWindow: WindowSummary{UsedPercent: 100},
+		RateLimitWindows: map[string]RateLimitWindow{
+			"codex": {LimitID: "codex", WeeklyWindow: WindowSummary{UsedPercent: 100}},
+		},
+	}}
+	source.appServer = appServer
+
+	summary, err := source.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("spark-only OAuth fallback: %v", err)
+	}
+	if summary.WeeklyWindow.UsedPercent != 100 || summary.Source != "app-server" {
+		t.Fatalf("expected app-server standard weekly, got %+v", summary)
+	}
+	spark := summary.RateLimitWindows["codex_bengalfox"]
+	if spark.WeeklyWindow.UsedPercent != 0 {
+		t.Fatalf("expected OAuth Spark weekly to be kept, got %+v", spark)
+	}
+	if appServer.fetches != 1 {
+		t.Fatalf("app-server fetches: got %d want 1", appServer.fetches)
+	}
+}
+
+func TestDefaultAccountSparkOnlyOAuthKeepsOAuthWhenAppServerHasNoWeekly(t *testing.T) {
+	source := &DefaultAccountSource{
+		oauthCredential: func() (string, error) { return "synthetic-token", nil },
+		oauthFetchWithCredential: func(context.Context, string) (*Summary, error) {
+			return &Summary{
+				Source:        "oauth",
+				SessionWindow: unavailableWindowSummary(),
+				WeeklyWindow:  unavailableWindowSummary(),
+				RateLimitWindows: map[string]RateLimitWindow{
+					"codex_bengalfox": {LimitName: "Spark", SessionWindow: unavailableWindowSummary(), WeeklyWindow: WindowSummary{UsedPercent: 0}},
+				},
+			}, nil
+		},
+		appServer:                     &fakeSource{name: "app-server", err: context.DeadlineExceeded},
+		allowAuthFileIdentityFallback: true,
+	}
+
+	summary, err := source.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("OAuth kept after app-server failure: %v", err)
+	}
+	if summary.Source != "oauth" || summaryHasStandardWeeklyData(summary) {
+		t.Fatalf("expected spark-only OAuth snapshot, got %+v", summary)
+	}
+	if source.appServer.(*fakeSource).fetches != 1 {
+		t.Fatal("expected one unmanaged app-server attempt")
+	}
+}
+
 func TestDefaultAccountDoesNotUseAppServerAfterOAuthProviderFailure(t *testing.T) {
 	oauth := &fakeSource{name: "oauth", err: context.DeadlineExceeded}
 	source := &DefaultAccountSource{
@@ -145,7 +220,7 @@ func TestDefaultAccountDoesNotUseAppServerAfterOAuthProviderFailure(t *testing.T
 	}
 }
 
-func TestDefaultAccountClosesOldAppServerBeforeReturningToOAuth(t *testing.T) {
+func TestDefaultAccountClosesOldAppServerAfterOAuthReportsWeekly(t *testing.T) {
 	appServer := &fakeSource{name: "app-server", out: &Summary{Source: "app-server"}}
 	authChecks := 0
 	source := &DefaultAccountSource{
@@ -158,10 +233,7 @@ func TestDefaultAccountClosesOldAppServerBeforeReturningToOAuth(t *testing.T) {
 			return "synthetic-token", nil
 		},
 		oauthFetchWithCredential: func(context.Context, string) (*Summary, error) {
-			if appServer.closeCount != 1 {
-				t.Fatalf("app-server closes before OAuth request: got %d want 1", appServer.closeCount)
-			}
-			return &Summary{Source: "oauth"}, nil
+			return &Summary{Source: "oauth", WeeklyWindow: WindowSummary{UsedPercent: 23}}, nil
 		},
 		appServer:                     appServer,
 		allowAuthFileIdentityFallback: true,
@@ -193,9 +265,11 @@ func TestDefaultAccountRetainsTransitionCloseFailure(t *testing.T) {
 		closeErrors: []error{closeFailure, nil},
 	}
 	source := &DefaultAccountSource{
-		oauth:                         &fakeSource{name: "oauth"},
-		oauthCredential:               func() (string, error) { return "synthetic-token", nil },
-		oauthFetchWithCredential:      func(context.Context, string) (*Summary, error) { return &Summary{Source: "oauth"}, nil },
+		oauth:           &fakeSource{name: "oauth"},
+		oauthCredential: func() (string, error) { return "synthetic-token", nil },
+		oauthFetchWithCredential: func(context.Context, string) (*Summary, error) {
+			return &Summary{Source: "oauth", WeeklyWindow: WindowSummary{UsedPercent: 11}}, nil
+		},
 		appServer:                     appServer,
 		appServerUsed:                 true,
 		allowAuthFileIdentityFallback: false,

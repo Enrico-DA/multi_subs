@@ -211,6 +211,9 @@ func TestNormalizeSummaryAcceptsWeeklyBucketWithoutTopLevelWindows(t *testing.T)
 	if got := summary.RateLimitWindows["codex_bengalfox"].WeeklyWindow.UsedPercent; got != 55 {
 		t.Fatalf("expected Spark weekly usage 55, got %d", got)
 	}
+	if summaryHasStandardWeeklyData(summary) {
+		t.Fatal("Spark-only weekly must not count as standard weekly data")
+	}
 }
 
 func TestRateLimitWindowForModelUsesWeeklyDefaultAndSparkBuckets(t *testing.T) {
