@@ -404,6 +404,47 @@ func mergeReportSummaries(primarySession, fallbackWeekly *Summary) *Summary {
 	return out
 }
 
+func mergeDefaultOAuthWithAppServerWeekly(oauth, appServer *Summary) *Summary {
+	out := mergeReportSummaries(oauth, appServer)
+	if out == nil {
+		return appServer
+	}
+	if oauth == nil {
+		return out
+	}
+	for id, window := range oauth.RateLimitWindows {
+		if window.WeeklyWindow.UsedPercent < 0 {
+			continue
+		}
+		existing, ok := out.RateLimitWindows[id]
+		if ok && existing.WeeklyWindow.UsedPercent >= 0 {
+			continue
+		}
+		if !ok {
+			existing = RateLimitWindow{
+				LimitID:       window.LimitID,
+				LimitName:     window.LimitName,
+				SessionWindow: unavailableWindowSummary(),
+				WeeklyWindow:  unavailableWindowSummary(),
+			}
+		}
+		existing.WeeklyWindow = cloneWindowSummary(window.WeeklyWindow)
+		if existing.LimitName == "" {
+			existing.LimitName = window.LimitName
+		}
+		if existing.LimitID == "" {
+			existing.LimitID = window.LimitID
+		}
+		if out.RateLimitWindows == nil {
+			out.RateLimitWindows = make(map[string]RateLimitWindow)
+		}
+		out.RateLimitWindows[id] = existing
+	}
+	out.Warnings = dedupeStrings(append(out.Warnings, "oauth did not report standard weekly usage"))
+	out.WindowDataAvailable = summaryHasWeeklyData(out)
+	return out
+}
+
 func cloneUsageSummary(summary *Summary) *Summary {
 	if summary == nil {
 		return nil

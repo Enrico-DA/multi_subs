@@ -94,28 +94,47 @@ func (s *DefaultAccountSource) Fetch(ctx context.Context) (*Summary, error) {
 	defer s.fetchMu.Unlock()
 
 	token, err := s.oauthCredential()
-	if !errors.Is(err, errOAuthAuthFileUnavailable) {
-		s.setAuthFileIdentityFallbackAllowed(true)
-		if err != nil {
-			return nil, err
-		}
-		// The credential file answered, so no app-server child process is
-		// needed. Close any old child before the OAuth request starts.
-		if s.appServerUsed {
-			if closeErr := s.appServer.Close(); closeErr != nil {
-				if s.closeErr == nil {
-					s.closeErr = closeErr
-				}
-				return nil, fmt.Errorf("close inactive app-server source: %w", closeErr)
-			}
-			s.appServerUsed = false
-		}
-		return s.oauthFetchWithCredential(ctx, token)
+	if errors.Is(err, errOAuthAuthFileUnavailable) {
+		s.setAuthFileIdentityFallbackAllowed(false)
+		s.appServerUsed = true
+		return s.appServer.Fetch(ctx)
+	}
+	s.setAuthFileIdentityFallbackAllowed(true)
+	if err != nil {
+		return nil, err
 	}
 
-	s.setAuthFileIdentityFallbackAllowed(false)
+	summary, err := s.oauthFetchWithCredential(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if summaryHasStandardWeeklyData(summary) {
+		if closeErr := s.closeInactiveAppServer(); closeErr != nil {
+			return nil, closeErr
+		}
+		return summary, nil
+	}
+
 	s.appServerUsed = true
-	return s.appServer.Fetch(ctx)
+	appSummary, appErr := s.appServer.Fetch(ctx)
+	if appErr != nil || !summaryHasStandardWeeklyData(appSummary) {
+		return summary, nil
+	}
+	return mergeDefaultOAuthWithAppServerWeekly(summary, appSummary), nil
+}
+
+func (s *DefaultAccountSource) closeInactiveAppServer() error {
+	if !s.appServerUsed {
+		return nil
+	}
+	if closeErr := s.appServer.Close(); closeErr != nil {
+		if s.closeErr == nil {
+			s.closeErr = closeErr
+		}
+		return fmt.Errorf("close inactive app-server source: %w", closeErr)
+	}
+	s.appServerUsed = false
+	return nil
 }
 
 func (s *DefaultAccountSource) Close() error {
