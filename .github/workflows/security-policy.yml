@@ -103,7 +103,8 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             range="${PR_BASE_SHA}..${PR_HEAD_SHA}"
-          elif [[ "${PUSH_BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
+          elif [[ "${PUSH_BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]] \
+            || ! git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
             range="${GITHUB_SHA}^!"
           else
             range="${PUSH_BEFORE_SHA}..${GITHUB_SHA}"
@@ -211,7 +212,8 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             range="${PR_BASE_SHA}..${PR_HEAD_SHA}"
-          elif [[ "${PUSH_BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
+          elif [[ "${PUSH_BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]] \
+            || ! git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
             range="${GITHUB_SHA}^!"
           else
             range="${PUSH_BEFORE_SHA}..${GITHUB_SHA}"
@@ -230,7 +232,8 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             range="${PR_BASE_SHA}..${PR_HEAD_SHA}"
-          elif [[ "${PUSH_BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
+          elif [[ "${PUSH_BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]] \
+            || ! git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
             range="${GITHUB_SHA}^!"
           else
             range="${PUSH_BEFORE_SHA}..${GITHUB_SHA}"
