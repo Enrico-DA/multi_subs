@@ -19,6 +19,9 @@ json_secret_regex='["'"'"']([Aa][Cc][Cc][Ee][Ss][Ss]_[Tt][Oo][Kk][Ee][Nn]|[Rr][E
 known_token_regex='((ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,})'
 email_regex='[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'
 reserved_email_regex='[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+\.)*([Ee][Xx][Aa][Mm][Pp][Ll][Ee]\.([Cc][Oo][Mm]|[Nn][Ee][Tt]|[Oo][Rr][Gg])|[Tt][Ee][Ss][Tt]|[Ee][Xx][Aa][Mm][Pp][Ll][Ee]|[Ii][Nn][Vv][Aa][Ll][Ii][Dd]|[Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt])'
+# Structurally non-deliverable no-reply identities. These are not a person's
+# mailbox, and they legitimately appear in Co-authored-by trailers.
+noreply_email_regex='([^[:space:]<>@]+@([A-Za-z0-9-]+\.)*[Nn][Oo][Rr][Ee][Pp][Ll][Yy]\.[A-Za-z0-9.-]+|[Nn][Oo]-?[Rr][Ee][Pp][Ll][Yy]@[A-Za-z0-9.-]+)'
 
 search_pattern() {
   local pattern="$1"
@@ -40,10 +43,12 @@ filter_allowed_path_placeholders() {
   done
 }
 
-filter_reserved_emails() {
+filter_allowed_emails() {
   local line redacted
   while IFS= read -r line; do
-    redacted="$(printf '%s\n' "$line" | sed -E "s#${reserved_email_regex}#<reserved-email>#g")"
+    redacted="$(printf '%s\n' "$line" \
+      | sed -E "s#${reserved_email_regex}#<reserved-email>#g" \
+      | sed -E "s#${noreply_email_regex}#<noreply-email>#g")"
     if [[ "$redacted" =~ $email_regex ]]; then
       printf '%s\n' "$line"
     fi
@@ -78,7 +83,7 @@ for target in "$@"; do
   if [[ "$(basename "$target")" != "go.mod" && "$(basename "$target")" != "go.sum" ]]; then
     email_matches="$(search_pattern "$email_regex" "$target")"
     if [[ -n "$email_matches" ]]; then
-      email_matches="$(printf '%s\n' "$email_matches" | filter_reserved_emails)"
+      email_matches="$(printf '%s\n' "$email_matches" | filter_allowed_emails)"
     fi
   fi
 
@@ -96,6 +101,7 @@ Blocked by sensitive-text policy.
 - Remove or redact secrets and credential-like values.
 - Replace local absolute paths with repo-relative paths or placeholders like /path/to/project.
 - Use only reserved email domains, such as example.com or example.test, and synthetic local parts.
+- No-reply identities, such as a users.noreply.github.com address, are accepted in trailers.
 EOF
 fi
 
