@@ -100,16 +100,16 @@ func TestProductIdentityMutations(t *testing.T) {
 			{
 				name:        "monitor client relationship",
 				path:        "internal/monitor/usage/appserver.go",
-				active:      "\t\t\tName:    clientName,",
-				replacement: "\t\t\tName:    \"other-client\",",
-				errorText:   "construct clientInfo",
+				active:      "\t\tClientName:    clientName,",
+				replacement: "\t\tClientName:    \"other-client\",",
+				errorText:   "ClientName: clientName",
 			},
 			{
 				name:        "monitor version relationship",
 				path:        "internal/monitor/usage/appserver.go",
-				active:      "\t\t\tVersion: buildinfo.Version,",
-				replacement: "\t\t\tVersion: \"development\",",
-				errorText:   "construct clientInfo",
+				active:      "\t\tClientVersion: buildinfo.Version,",
+				replacement: "\t\tClientVersion: \"development\",",
+				errorText:   "ClientVersion: buildinfo.Version",
 			},
 			{
 				name:        "OAuth User-Agent",

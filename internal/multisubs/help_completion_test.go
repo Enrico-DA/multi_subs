@@ -21,6 +21,7 @@ func TestGlobalHelpShowsSymmetricProviderNamespaces(t *testing.T) {
 		"multisubs",
 		"codex <command>",
 		"claude <command>",
+		"install [ref]",
 		"doctor [flags]",
 		"status",
 		"usage",
@@ -45,6 +46,7 @@ func TestProviderAndNestedHelpTopics(t *testing.T) {
 	}{
 		{args: []string{"codex", "help"}, want: "multisubs codex"},
 		{args: []string{"claude", "help"}, want: "multisubs claude"},
+		{args: []string{"help", "install"}, want: "multisubs install"},
 		{args: []string{"help", "status"}, want: "Next section"},
 		{args: []string{"help", "usage"}, want: "multisubs usage"},
 		{args: []string{"help", "codex", "usage"}, want: "multisubs codex usage"},
@@ -147,6 +149,7 @@ func TestCompletionScriptsCoverSymmetricCommandTree(t *testing.T) {
 				"status",
 				"usage",
 				"monitor",
+				"install",
 				"doctor",
 				"dry-run",
 				"__complete-codex-profiles",
@@ -195,7 +198,7 @@ func TestFishCompletionTokensFollowStrictCommandTree(t *testing.T) {
 	}{
 		{
 			name: "top level",
-			want: []string{"init", "doctor", "status", "usage", "codex", "claude", "completion", "version", "help"},
+			want: []string{"init", "install", "doctor", "status", "usage", "codex", "claude", "completion", "version", "help"},
 		},
 		{
 			name: "Claude provider",
@@ -326,7 +329,7 @@ func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
 			output:    renderBashCompletion(),
 			guarded: "        help)\n" +
 				"          if (( COMP_CWORD == 3 )); then\n" +
-				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help\" -- \"$cur\") )\n" +
+				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help\" -- \"$cur\") )\n" +
 				"          fi",
 		},
 		{
@@ -344,7 +347,7 @@ func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
 			output:    renderZshCompletion(),
 			guarded: "        help)\n" +
 				"          if (( CURRENT == 4 )); then\n" +
-				"            compadd -- init add login login-all cli exec status usage reconcile heartbeat monitor doctor dry-run help\n" +
+				"            compadd -- init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help\n" +
 				"          fi",
 		},
 		{

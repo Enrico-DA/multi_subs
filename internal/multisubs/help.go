@@ -17,6 +17,7 @@ var commandSummaries = []struct {
 	Summary string
 }{
 	{Name: "init", Summary: "initialize shared multisubs state"},
+	{Name: "install [ref]", Summary: "replace the running binary and persist GOBIN"},
 	{Name: "doctor [flags]", Summary: "run aggregate shared, Codex, and Claude checks"},
 	{Name: "status", Summary: "show quota and the next command when an account is not ready"},
 	{Name: "usage", Summary: "show one quota snapshot for every routed account"},
@@ -35,8 +36,9 @@ var codexCommandSummaries = []struct {
 	{Name: "add <name>", Summary: "add a named Codex account profile"},
 	{Name: "login <name> [args...]", Summary: "log in through the official Codex flow"},
 	{Name: "login-all", Summary: "run login for every known Codex profile"},
-	{Name: "cli <name> [args...]", Summary: "run the interactive Codex CLI with one profile"},
+	{Name: "cli [<name>] [args...]", Summary: "run interactive Codex on the best available account"},
 	{Name: "exec [args...]", Summary: "run codex exec on the best available account"},
+	{Name: "generate [args...]", Summary: "generate one tool-free ChatGPT subscription reply"},
 	{Name: "status", Summary: "show Codex profile authentication states"},
 	{Name: "usage", Summary: "show Codex quota for every routed account"},
 	{Name: "reconcile", Summary: "reconcile resources for all Codex profiles"},
@@ -52,9 +54,18 @@ var commandHelpByName = map[string]commandHelp{
 		Usage:       "multisubs init",
 		Description: "Create shared multisubs state and the Codex profile registry. This does not change either default provider account.",
 	},
+	"install": {
+		Usage:       "multisubs install [ref]",
+		Description: "Replace the running multisubs binary with go install, using that binary's directory as GOBIN. Default ref is latest. After a successful install, persist GOPRIVATE and GOBIN in the login shell profile and delete leftover regular copies at the default Go bin path. Doctor never deletes leftovers. Raw go install output is discarded. Provider credentials are not changed.",
+		Examples: []string{
+			"multisubs install",
+			"multisubs install latest",
+			"multisubs install v0.1.0",
+		},
+	},
 	"doctor": {
 		Usage:       "multisubs doctor [--json] [--timeout 8s]",
-		Description: "Run one read-only product check with shared/base, Codex, and Claude sections.",
+		Description: "Run one read-only product check with shared/base, Codex, and Claude sections. Shared/base includes the running binary path and whether go install would replace that file. Doctor never deletes leftover binaries; run `multisubs install` to replace the running copy and remove leftovers.",
 	},
 	"status": {
 		Usage:       "multisubs status",
@@ -75,7 +86,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"version": {
 		Usage:       "multisubs version",
-		Description: "Print the multisubs build version.",
+		Description: "Print the multisubs build version. A release tag wins. A go-install module version or short Git revision is used when the compile-time default would otherwise hide which binary is running. Status, usage, and doctor print the same string.",
 	},
 	"help": {
 		Usage:       "multisubs help [topic]",
@@ -107,12 +118,26 @@ var commandHelpByName = map[string]commandHelp{
 		Description: "Run login for all configured Codex profiles in sorted order.",
 	},
 	"codex cli": {
-		Usage:       "multisubs codex cli <name> [codex args...]",
-		Description: "Run the official interactive Codex CLI with one profile-local CODEX_HOME.",
+		Usage:       "multisubs codex cli [<name>|--account <name>] [codex args...]",
+		Description: "Run the official interactive Codex CLI after selecting the default account or a managed profile with the same weekly-usage rules as `multisubs codex exec`. A leading profile name or `--account <name>` bypasses routing and launches that managed profile. Default login uses the same two bounded checks as exec.",
+		Examples: []string{
+			"multisubs codex cli",
+			"multisubs codex cli -m gpt-5-codex-spark",
+			"multisubs codex cli personal",
+			"multisubs codex cli --account work -- \"check this repo\"",
+		},
 	},
 	"codex exec": {
-		Usage:       "multisubs codex exec [codex exec args]",
-		Description: "Run `codex exec` after selecting the default account or a managed profile by weekly usage. Default login gets two bounded checks. If neither confirms login, multisubs warns on stderr, excludes default, and selects once more from the remaining accounts.",
+		Usage:       "multisubs codex exec [--search] [codex exec args]",
+		Description: "Run `codex exec` after selecting the default account or a managed profile by weekly usage. `--search` is moved before `exec` because Codex defines it as a global flag. Default login gets two bounded checks. If neither confirms login, multisubs warns on stderr, excludes default, and selects once more from the remaining accounts.",
+	},
+	"codex generate": {
+		Usage:       "multisubs codex generate [--account <name>] [-m|--model <model>] [--effort <effort>] [--base-instructions-file <path>] [--developer-instructions-file <path>] [--output-schema <path>] [--json] [prompt]",
+		Description: "Send one text prompt through Codex App Server using ChatGPT subscription authentication. Automatic mode uses the same weekly routing as `multisubs codex exec`. `--account <name>` selects one managed profile. Requires Codex CLI 0.147.0. Resource notices and errors go to stderr so generated text can stay on stdout.",
+		Examples: []string{
+			"multisubs codex generate \"Summarize this change.\"",
+			"multisubs codex generate --account work --json \"Name three risks.\"",
+		},
 	},
 	"codex status": {
 		Usage:       "multisubs codex status",
@@ -213,6 +238,7 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  multisubs init")
+	fmt.Println("  multisubs install")
 	fmt.Println("  multisubs status")
 	fmt.Println("  multisubs usage")
 	fmt.Println("  multisubs codex exec -s read-only \"Summarize this repository.\"")

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
+	"github.com/Enrico-DA/multi_subs/internal/codexappserver"
 	"github.com/Enrico-DA/multi_subs/internal/codexstate"
 	"github.com/Enrico-DA/multi_subs/internal/processprobe"
 )
@@ -54,7 +56,9 @@ func runBaseDoctor(store *Store, cfg *Config, registryErr error) DoctorReport {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
-	checks := make([]DoctorCheck, 0, 12)
+	checks := make([]DoctorCheck, 0, 14)
+	checks = append(checks, checkMultisubsVersion())
+	checks = append(checks, checkGoInstallTarget())
 	checks = append(checks, checkDirExists("multisubs home", store.paths.MultisubsHome, true))
 	if registryErr != nil {
 		checks = append(checks, DoctorCheck{
@@ -72,6 +76,41 @@ func runBaseDoctor(store *Store, cfg *Config, registryErr error) DoctorReport {
 	checks = append(checks, checkProfileResources(store, cfg.ProfileResources))
 	checks = append(checks, checkRepositoryLeakGuards(store.paths)...)
 	return DoctorReport{Checks: checks}
+}
+
+func checkMultisubsVersion() DoctorCheck {
+	version := buildinfo.DisplayVersion()
+	details := "binary reports " + version
+	if path := currentExecutablePath(); path != "" {
+		details += " at " + path
+	}
+	check := DoctorCheck{
+		Name:    "multisubs version",
+		Status:  "ok",
+		Details: details,
+	}
+	if !buildinfo.HasIdentifyingVersion() {
+		check.Status = "warn"
+		check.Details = details + "; install from a commit hash or release tag so this check can identify the build"
+	}
+	return check
+}
+
+func currentExecutablePath() string {
+	path, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		if trimmed := strings.TrimSpace(resolved); trimmed != "" {
+			path = trimmed
+		}
+	}
+	return filepath.Clean(path)
 }
 
 func codexRegistryFailureDetails(err error) string {
@@ -118,7 +157,13 @@ func RunCodexDoctor(store *Store, cfg *Config, timeout time.Duration) DoctorRepo
 			if version == "" {
 				version = "version output is empty"
 			}
-			checks = append(checks, DoctorCheck{Name: "codex binary", Status: "ok", Details: fmt.Sprintf("%s (%s)", path, version)})
+			detail = fmt.Sprintf("%s (%s)", path, version)
+			status := "ok"
+			if strings.HasPrefix(version, "codex-cli ") && version != codexappserver.SupportedCodexVersion {
+				status = "warn"
+				detail += "; generate requires " + codexappserver.SupportedCodexVersion
+			}
+			checks = append(checks, DoctorCheck{Name: "codex binary", Status: status, Details: detail})
 		}
 	}
 

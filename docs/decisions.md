@@ -24,7 +24,15 @@ Decision: Codex commands live under `multisubs codex`; Claude commands live unde
 
 Why: A symmetric tree makes provider ownership clear and leaves room for later product-wide commands.
 
-Enforcement: Bare Codex routes fail with code 2 before state access and point to the matching namespaced route. Product-wide commands are `init`, `doctor`, `status`, and `usage`. `multisubs init` remains the shared initializer, and `multisubs codex init` calls the same path. `multisubs status` prints the same quota snapshot as `multisubs usage` and adds a Next section when any account is not ready.
+Enforcement: Bare Codex routes fail with code 2 before state access and point to the matching namespaced route. Product-wide commands are `init`, `install`, `doctor`, `status`, and `usage`. `multisubs init` remains the shared initializer, and `multisubs codex init` calls the same path. `multisubs status` prints the same quota snapshot as `multisubs usage` and adds a Next section when any account is not ready.
+
+## Let install own the PATH binary
+
+Decision: `multisubs install` replaces the running binary, persists `GOBIN` in the login shell profile, and deletes leftover Go-bin copies. Doctor only warns.
+
+Why: Empty `GOBIN` makes a later `go install` write a second binary under `GOPATH/bin` while `PATH` keeps running an older copy. Editing the shell profile by hand is the wrong owner for that install path.
+
+Enforcement: The command sets `GOBIN` to the running binary's directory, writes `MULTISUBS_HOME/install.env`, and updates one marked shell-rc block. It never deletes the running binary. Raw `go install` output is discarded. Provider credentials are not changed.
 
 ## Keep aggregate and focused doctors
 
@@ -116,7 +124,7 @@ Claude then puts every valid default or managed target in one score-sorted, orga
 
 ## Measure and verify the default Codex account without blocking work silently
 
-Decision: Routing and the unified usage report use one typed source policy for the default Codex account. A usable protected `auth.json` keeps direct OAuth as the only source, so the common path starts no process and adds no writes. Without a usable file, multisubs starts the official app server against the default home in unmanaged mode. The app-server source receives a sanitized environment, adds no managed file-store override, and does not read or fingerprint credentials. It still requires real weekly data.
+Decision: Routing and the unified usage report use one typed source policy for the default Codex account. A usable protected `auth.json` tries direct OAuth first. If that snapshot includes a standard weekly window, no process starts and no extra files are written. Spark-only extra limits are not standard weekly data. When OAuth has no standard weekly, or the auth file is not usable, one official app server runs against the default home in unmanaged mode. The app-server source receives a sanitized environment, adds no managed file-store override, and does not read or fingerprint credentials. It still requires real weekly data.
 
 Before launching a selected default account, `multisubs codex exec` also requires an explicit logged-in result from the official Codex CLI. It makes two bounded attempts separated by a short pause. If neither confirms login and another candidate exists, multisubs prints a prominent actionable stderr warning, excludes default for that command, and selects exactly once more from the remaining set. When no other candidate exists, it prints no reroute warning, because no reroute can happen; it exits with code 1 and one blocked message that states the same cause and fix. A replacement selection that then fails returns that same blocked message, because a selection failure can carry a local path or token-shaped text.
 
@@ -126,7 +134,15 @@ Each message states the cause with one of a fixed set of phrases chosen by obser
 
 Trade-offs: The unmanaged app server may write its normal non-credential logs, caches, database files, and database write-ahead files in the default home. A failed default login can redirect work and spend quota on another usable account. Two status attempts and the pause between them add bounded delay, and the one fallback selection may measure the remaining accounts again. Fixed phrases mean the message says a check failed without saying how, so a novel provider failure still needs `codex login status` to diagnose. There is no loop, guessed usage, or unmeasured routing tier.
 
-Enforcement: `internal/monitor/usage` owns the typed default source and keeps managed and unmanaged app-server modes distinct. The unmanaged source does not fingerprint auth and never receives `cli_auth_credentials_store="file"`. `internal/multisubs/exec.go` owns the two-attempt gate, fixed warning, typed default exclusion, and single reselection. `internal/multisubs/status.go` keeps account enrichment for status and doctor but gives exec a state-only probe. Tests cover the file-backed OAuth fast path, missing-file app-server path, sanitized unmanaged invocation, retry success, warned managed fallback, and exit code 1 when nothing remains.
+Enforcement: `internal/monitor/usage` owns the typed default source and keeps managed and unmanaged app-server modes distinct. The unmanaged source does not fingerprint auth and never receives `cli_auth_credentials_store="file"`. Standard weekly data is the top-level weekly window or the `codex` bucket; Spark extra limits do not skip the unmanaged probe. `internal/multisubs/exec.go` owns the two-attempt gate, fixed warning, typed default exclusion, and single reselection. The same gate is reused by `multisubs codex cli` automatic mode and `multisubs codex generate`. `internal/multisubs/status.go` keeps account enrichment for status and doctor but gives exec a state-only probe. Tests cover the file-backed OAuth fast path, Spark-only OAuth falling through to unmanaged app-server weekly, missing-file app-server path, sanitized unmanaged invocation, retry success, warned managed fallback, and exit code 1 when nothing remains.
+
+## Keep tool-free Codex generation on the subscription path
+
+Decision: `multisubs codex generate` sends one prompt through Codex App Server using ChatGPT subscription authentication. It lives under the Codex namespace, uses the same weekly selector as exec, and never reads credential contents.
+
+Why: Upstream added a tool-free generation command so scripts can get one subscription reply without starting the interactive CLI or custom tools. The fork keeps that command and translates identity, routing, and the managed versus unmanaged app-server split.
+
+Enforcement: Generation requires Codex CLI 0.147.0, ChatGPT account type, a private empty workspace, a one-model catalog with tools removed, and fail-closed handling for unexpected App Server events. Automatic mode reuses exec routing. `--account` selects one managed profile without creating state for an unknown name. Default-account generation receives no managed file-auth override.
 
 ## Prefer plain English
 

@@ -14,6 +14,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
 	monitorusage "github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
 
@@ -321,10 +322,8 @@ func codexSummaryHasWeeklyData(summary *monitorusage.Summary) bool {
 	if summary.WeeklyWindow.UsedPercent >= 0 {
 		return true
 	}
-	for _, window := range summary.RateLimitWindows {
-		if window.WeeklyWindow.UsedPercent >= 0 {
-			return true
-		}
+	if _, window, ok := summary.RateLimitWindowForModel(""); ok && window.WeeklyWindow.UsedPercent >= 0 {
+		return true
 	}
 	return false
 }
@@ -534,6 +533,11 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 	probeContext, cancelProbes := context.WithTimeout(context.Background(), usageAccountTimeout)
 	defer cancelProbes()
 	authBefore, authBeforeErr := fetchClaudeAuthStatus(probeContext, a.claudeCommandRunner(), target.ConfigDir)
+	if claudeAuthReportsLoggedOut(authBefore, authBeforeErr) {
+		account.Failure = "not logged in"
+		collected.Account = account
+		return collected
+	}
 	identityBefore, identityBeforeErr := validateClaudeUsageIdentity(authBefore)
 	providerUsage, err := fetchClaudeUsage(probeContext, a.claudeCommandRunner(), target.ConfigDir)
 	usageFailure := ""
@@ -542,6 +546,11 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 	}
 	authAfter, authAfterErr := fetchClaudeAuthStatus(probeContext, a.claudeCommandRunner(), target.ConfigDir)
 	identityAfter, identityAfterErr := validateClaudeUsageIdentity(authAfter)
+	if claudeAuthReportsLoggedOut(authAfter, authAfterErr) {
+		account.Failure = "not logged in"
+		collected.Account = account
+		return collected
+	}
 	if authBeforeErr == nil && identityBeforeErr == nil &&
 		authAfterErr == nil && identityAfterErr == nil &&
 		identityBefore == identityAfter {
@@ -563,6 +572,10 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 	}
 	collected.Account = account
 	return collected
+}
+
+func claudeAuthReportsLoggedOut(status claudeAuthStatus, err error) bool {
+	return err == nil && !status.LoggedIn
 }
 
 func collapseClaudeUsageCollections(collected []claudeUsageCollection) []usageAccountReport {
@@ -989,6 +1002,7 @@ func collectConcurrent[Target, Result any](targets []Target, collect func(Target
 
 func printUsageReport(writer io.Writer, report usageReport, now time.Time, location *time.Location) {
 	fmt.Fprintln(writer, report.Command)
+	fmt.Fprintf(writer, "Version: %s\n", buildinfo.DisplayVersion())
 	fmt.Fprintf(writer, "Updated: %s\n", report.UpdatedAt.Format("Mon 02 Jan 2006 15:04 MST"))
 	for _, provider := range report.Providers {
 		fmt.Fprintln(writer)

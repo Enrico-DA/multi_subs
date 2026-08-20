@@ -18,6 +18,8 @@ func TestRunCLIHelpNamespacesDoNotCreateState(t *testing.T) {
 		{"help", "codex", "usage"},
 		{"help", "codex", "exec"},
 		{"help", "claude", "usage"},
+		{"help", "install"},
+		{"install", "-h"},
 	} {
 		args := args
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
@@ -73,6 +75,7 @@ func TestRunCLIRejectsBareCodexCommandsWithoutStateMutation(t *testing.T) {
 		"login-all",
 		"cli",
 		"exec",
+		"generate",
 		"reconcile",
 		"heartbeat",
 		"monitor",
@@ -173,6 +176,8 @@ func TestRunCLIRejectsUnknownCommandWithoutStateMutation(t *testing.T) {
 func TestRunCLIRejectsUndocumentedArgumentsBeforeCreatingState(t *testing.T) {
 	commands := [][]string{
 		{"init", "unexpected"},
+		{"install", "latest", "unexpected"},
+		{"install", "feature/branch"},
 		{"version", "unexpected"},
 		{"__complete-codex-profiles", "unexpected"},
 		{"__complete-claude-profiles", "unexpected"},

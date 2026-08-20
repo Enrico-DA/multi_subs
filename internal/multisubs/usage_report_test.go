@@ -15,8 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Enrico-DA/multi_subs/internal/buildinfo"
 	monitorusage "github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
+
+func usageGoldenHeader(command, updated string) string {
+	return command + "\nVersion: " + buildinfo.DisplayVersion() + "\nUpdated: " + updated + "\n"
+}
 
 type fakeCodexUsageSource struct {
 	summary    *monitorusage.Summary
@@ -635,9 +640,7 @@ func TestPrintUsageReportCombinedGolden(t *testing.T) {
 
 	var output bytes.Buffer
 	printUsageReport(&output, report, now, location)
-	want := "" +
-		"multisubs usage\n" +
-		"Updated: Thu 23 Jul 2026 22:15 CEST\n" +
+	want := usageGoldenHeader("multisubs usage", "Thu 23 Jul 2026 22:15 CEST") +
 		"\n" +
 		"Codex\n" +
 		"  personal · personal@example.com\n" +
@@ -681,9 +684,7 @@ func TestPrintUsageReportProviderOnlyAndResetStates(t *testing.T) {
 	}
 	var output bytes.Buffer
 	printUsageReport(&output, report, now, location)
-	want := "" +
-		"multisubs codex usage\n" +
-		"Updated: Thu 23 Jul 2026 20:15 UTC\n" +
+	want := usageGoldenHeader("multisubs codex usage", "Thu 23 Jul 2026 20:15 UTC") +
 		"\n" +
 		"Codex\n" +
 		"  alpha · alpha@example.com\n" +
@@ -828,6 +829,32 @@ func TestClaudeUsageCollectorHandlesOptionalFableAndSafeFailures(t *testing.T) {
 		if strings.Contains(account.Failure, "synthetic-secret") ||
 			strings.Contains(account.Failure, profiles["alpha"].ConfigDir) {
 			t.Fatalf("Claude collector exposed sensitive text: %+v", account)
+		}
+	}
+}
+
+func TestClaudeUsageCollectorPrefersLoggedOutAuthOverMalformedUsage(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	runner.capture = func(_ context.Context, args []string, _ []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			return fakeClaudeAuthJSONWithOrg(false, "", ""), nil, nil
+		}
+		t.Fatalf("logged-out auth must not start /usage: %#v", args)
+		return nil, nil, nil
+	}
+	report := app.collectClaudeUsage()
+	if len(report.Accounts) != 1 {
+		t.Fatalf("Claude account count: got %d", len(report.Accounts))
+	}
+	if report.Accounts[0].Name != "default" || report.Accounts[0].Failure != "not logged in" {
+		t.Fatalf("logged-out default category: %+v", report.Accounts[0])
+	}
+	if len(report.Accounts[0].Windows) != 0 {
+		t.Fatalf("logged-out default kept usage windows: %+v", report.Accounts[0])
+	}
+	for _, call := range runner.Calls() {
+		if reflect.DeepEqual(call.Args, claudeUsageProbeArgs()) {
+			t.Fatalf("logged-out auth still probed /usage: %+v", call)
 		}
 	}
 }
@@ -1170,9 +1197,7 @@ func TestCmdCodexUsageCollapsesManagedAndDefaultWithExactOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Codex duplicate usage: %v", err)
 	}
-	want := "" +
-		"multisubs codex usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs codex usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Codex\n" +
 		"  alpha (also default) · person@example.com\n" +
@@ -1192,9 +1217,7 @@ func TestCmdCodexUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 		return app.cmdUsage(nil, usageProviderCodex)
 	})
 	requireExitCode(t, err, 1)
-	want := "" +
-		"multisubs codex usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs codex usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Codex\n" +
 		"  alpha (also default) · person@example.com\n" +
@@ -1221,9 +1244,7 @@ func TestCmdClaudeUsageCollapsesManagedAndDefaultWithExactOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claude duplicate usage: %v", err)
 	}
-	want := "" +
-		"multisubs claude usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs claude usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Claude\n" +
 		"  personal (also default) · person@example.com\n" +
@@ -1243,9 +1264,7 @@ func TestCmdClaudeUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 		return app.cmdUsage(nil, usageProviderClaude)
 	})
 	requireExitCode(t, err, 1)
-	want := "" +
-		"multisubs claude usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs claude usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Claude\n" +
 		"  personal (also default) · person@example.com\n" +
@@ -1270,9 +1289,7 @@ func TestCmdClaudeUsageIdentityChangeRetainsQuotaWithoutGrouping(t *testing.T) {
 		return app.cmdUsage(nil, usageProviderClaude)
 	})
 	requireExitCode(t, err, 1)
-	want := "" +
-		"multisubs claude usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs claude usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Claude\n" +
 		"  personal · identity unavailable\n" +
@@ -1444,9 +1461,7 @@ func TestCodexUsageMissingIdentityPrintsExactPartialAndExitsOne(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("strict missing-identity exit: %T %v", err, err)
 	}
-	want := "" +
-		"multisubs codex usage\n" +
-		"Updated: Fri 24 Jul 2026 12:00 UTC\n" +
+	want := usageGoldenHeader("multisubs codex usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Codex\n" +
 		"  default · identity unavailable\n" +
@@ -1577,6 +1592,51 @@ func TestCodexUsageCollectorClosesSourceOnceAcrossOutcomes(t *testing.T) {
 				t.Fatalf("account failure exposed source error: %q", account.Failure)
 			}
 		})
+	}
+}
+
+func TestCodexUsageCollectorMarksSparkOnlyWeeklyPartial(t *testing.T) {
+	source := &fakeCodexUsageSource{
+		summary: &monitorusage.Summary{
+			AccountEmail: "owner@example.com",
+			WeeklyWindow: monitorusage.WindowSummary{UsedPercent: -1},
+			RateLimitWindows: map[string]monitorusage.RateLimitWindow{
+				"codex_bengalfox": {
+					LimitID:      "codex_bengalfox",
+					LimitName:    "Spark",
+					WeeklyWindow: monitorusage.WindowSummary{UsedPercent: 0},
+				},
+			},
+		},
+	}
+	app := &App{
+		codexUsageSource: func(monitorusage.MonitorAccount) monitorusage.Source {
+			return source
+		},
+	}
+	target := codexUsageTarget{
+		codexRoutingTarget: codexRoutingTarget{
+			Kind: codexRoutingTargetDefault,
+			Account: monitorusage.MonitorAccount{
+				Label: defaultExecAccountLabel,
+			},
+		},
+		DisplayName: defaultExecAccountLabel,
+	}
+
+	account := app.collectCodexUsageTarget(target)
+	if account.Failure != "weekly usage unavailable" {
+		t.Fatalf("spark-only failure category: %q", account.Failure)
+	}
+	if len(account.Windows) < 3 ||
+		account.Windows[1].UsedPercent != nil ||
+		account.Windows[2].Label != "Spark weekly" ||
+		account.Windows[2].UsedPercent == nil ||
+		*account.Windows[2].UsedPercent != 0 {
+		t.Fatalf("spark-only windows: %+v", account.Windows)
+	}
+	if source.closeCalls != 1 {
+		t.Fatalf("source close calls: got %d want 1", source.closeCalls)
 	}
 }
 

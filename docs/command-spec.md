@@ -33,12 +33,24 @@ Creates private shared product directories and the Codex profile registry under 
 
 No extra arguments are accepted.
 
+### `multisubs install [ref]`
+
+Replaces the running `multisubs` binary with `go install github.com/Enrico-DA/multi_subs/cmd/multisubs@<ref>`. `GOBIN` is the directory of that running binary. Default ref is `latest`. The ref must be `latest`, a release tag, or a commit hash. Slash-containing branch names and `@` are rejected with exit code 2. Extra arguments exit with code 2. `-h` and `--help` print help without installing.
+
+After a successful install the command:
+
+- writes `MULTISUBS_HOME/install.env` with `GOPRIVATE` and `GOBIN`;
+- writes or replaces one marked block in the login shell profile (`~/.zshrc` by default; bash uses `~/.bashrc` when that file exists, otherwise `~/.bash_profile`; fish uses `~/.config/fish/config.fish`);
+- deletes leftover regular `multisubs` binaries at the default `GOPATH/bin` path when that file is not the running binary.
+
+It does not print raw `go install` output. A failed `go install` leaves the shell profile and leftovers unchanged. Doctor never deletes leftovers; this command does. Provider credentials and both default accounts are unchanged.
+
 ### `multisubs doctor [--json] [--timeout 8s]`
 
 Runs an aggregate read-only report with these sections:
 
-1. `shared/base`: product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks.
-2. `Codex`: Codex binary, default Codex home, managed profile paths, config, auth shape, and login status.
+1. `shared/base`: binary version, go-install target, product state, config, resource policy, repository path isolation, ignore coverage, and tracked-sensitive-file checks. The version check uses the same string as `multisubs version` and includes the resolved path of the running executable. It warns when that string is still the compile-time `0.1.0-dev` default, because that cannot tell two development builds apart. The go-install check warns when `go install` would write to a different directory than the running binary, and when a leftover `multisubs` remains at the default `GOPATH/bin` location. Those warnings point at `multisubs install`. Doctor never deletes those files.
+2. `Codex`: Codex binary (including a warning when the installed CLI cannot run `multisubs codex generate`), default Codex home, managed profile paths, config, auth shape, and login status.
 3. `Claude`: Claude binary, provider registry, managed paths, authentication status, and duplicate-organization checks.
 
 The JSON result has `base`, `codex`, and `claude` objects. Each contains a `checks` array.
@@ -47,11 +59,11 @@ Any failed check makes the human summary `FAIL` and the command exit with code 1
 
 ### `multisubs status`
 
-Prints the same Codex and Claude quota snapshot as `multisubs usage`. When the result is not complete, it also prints a `Next` section. Each next-step row names the account with a fixed safe reason and one exact command from a closed allow-list: `codex login`, `claude auth login`, `multisubs codex login <name>`, `multisubs claude login <name>`, `multisubs init`, or `multisubs doctor`. Profile names in those commands are validated registry names. Raw provider text, paths, and credentials never appear. Extra arguments exit with code 2.
+Prints the same Codex and Claude quota snapshot as `multisubs usage`. The first lines are the command name, `Version:` with the same string as `multisubs version`, and `Updated:`. The version line does not include a filesystem path. When the result is not complete, it also prints a `Next` section. Each next-step row names the account with a fixed safe reason and one exact command from a closed allow-list: `codex login`, `claude auth login`, `multisubs codex login <name>`, `multisubs claude login <name>`, `multisubs init`, or `multisubs doctor`. Profile names in those commands are validated registry names. Raw provider text, paths, and credentials never appear. Extra arguments exit with code 2.
 
 ### `multisubs usage`
 
-Prints one quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter.
+Prints one quota report with a Codex section followed by a Claude section. `multisubs codex usage` and `multisubs claude usage` filter the same report model and formatter. The first lines are the command name, `Version:` with the same string as `multisubs version`, and `Updated:`. The version line does not include a filesystem path.
 
 The physical target set is exact:
 
@@ -76,7 +88,7 @@ Prints completion for both provider namespaces, all nested help and monitor topi
 
 ### `multisubs version`
 
-Prints `multisubs <version>`. `--version` and `-v` are accepted aliases. Extra arguments are rejected.
+Prints `multisubs <version>`. `--version` and `-v` are accepted aliases. Extra arguments are rejected. A release override wins. Otherwise the command prints the Go module version from `go install` or a short VCS revision. The compile-time `0.1.0-dev` default is last.
 
 ### `multisubs help [topic]`
 
@@ -112,15 +124,19 @@ Exact `multisubs codex login <name> --help` and `multisubs codex login <name> -h
 
 Runs login for every configured Codex profile in sorted order. No extra arguments are accepted.
 
-### `multisubs codex cli <name> [codex args...]`
+### `multisubs codex cli [<name>|--account <name>] [codex args...]`
 
-Runs the official interactive Codex CLI with the named profile. Inherited product controls and account override variables are removed first. Multisubs then gives the managed Codex child its profile-local `CODEX_HOME` and only the selected `MULTISUBS_ACTIVE_PROFILE` marker.
+Runs the official interactive Codex CLI. Without a profile name, it uses the same weekly-only account selection, identity reconciliation, equal default/managed priority, and default-login gate as `multisubs codex exec`. A leading profile name or `--account <name>` bypasses routing and launches that managed profile even when its weekly usage is exhausted or unavailable. Manual mode prepares only the named profile, so unrelated profile errors do not block it. Automatic mode prepares and validates every configured profile before selection and fails closed if any configured profile is unsafe.
 
-Exact `multisubs codex cli <name> --help` and `multisubs codex cli <name> -h` requests instead run official Codex help with only the help flag and a neutral sanitized environment. The named profile need not exist. These requests do not load config, create product state, reconcile resources, add the active profile marker, or force managed auth. A help flag mixed with any other Codex argument is rejected with exit code 2; `--` still ends option handling.
+Inherited product controls and account override variables are removed first. A managed child receives its profile-local `CODEX_HOME` and only the selected `MULTISUBS_ACTIVE_PROFILE` marker. A default-account launch uses the default Codex home with no managed file-auth override and no `MULTISUBS_*` variable.
 
-### `multisubs codex exec [codex exec args...]`
+Exact `multisubs codex cli <name> --help` and `multisubs codex cli <name> -h` requests instead run official Codex help with only the help flag and a neutral sanitized environment. The named profile need not exist. These requests do not load config, create product state, reconcile resources, add the active profile marker, or force managed auth. `cli --help` and `cli -h` are product help. A help flag mixed with any other Codex argument is rejected with exit code 2; `--` still ends option handling.
+
+### `multisubs codex exec [--search] [codex exec args...]`
 
 Runs official `codex exec` after weekly-only account selection.
+
+- `--search` is moved before the `exec` subcommand because Codex defines it as a global flag. `--search` after `--` stays prompt text.
 
 - The default account and managed profiles have equal selection priority.
 - Fetched physical targets are reconciled by official Codex account identity before selection. Successful duplicates must agree on requested-bucket presence, weekly availability, exhaustion, used percentage, and reset meaning. When both snapshots carry an absolute reset timestamp, those timestamps must match exactly even if their countdowns differ. Only when both snapshots lack an absolute timestamp may relative countdowns differ, and then by at most five seconds to cover concurrent-fetch drift. Known and unknown resets, mixed absolute and relative-only resets, and larger drift disagree. Disagreement excludes the whole logical group. A deterministic physical home is chosen only after agreement. One failed duplicate can fall back to a consistent success only when protected official email identity safely joins them. Missing or conflicting fallback identity contributes no separate capacity.
@@ -132,7 +148,7 @@ Runs official `codex exec` after weekly-only account selection.
 - Without an explicit model or profile selector, all candidate `config.toml` files must declare the same root model or all omit it. Conflicts exit with code 2 and require `--model`.
 - `--profile`/`-p` without an explicit model exits with code 2 because the selected Codex config can change the model.
 - Managed profile children receive file-backed-auth isolation.
-- Routing and the unified usage report use the same default-account source rule. A private regular `auth.json` with `tokens.access_token` uses OAuth directly and starts no app-server process. When that file is not usable, the official app server runs against the default home in unmanaged mode. It receives a sanitized environment, no managed file-store override, and no credential read or fingerprint from the app-server source. The official process may write non-credential logs, caches, database files, and database write-ahead files in the default home. It does not change credentials.
+- Routing and the unified usage report use the same default-account source rule. A private regular `auth.json` with `tokens.access_token` uses OAuth first. If that snapshot includes a standard weekly window, no app-server process starts. Spark-only extra limits are not standard weekly data. When OAuth has no standard weekly, one unmanaged official app-server probe runs against the same default home. If that file also has a safe account id, the OAuth request includes `ChatGPT-Account-Id`. The id may come from `tokens.account_id`, top-level `account_id`, or sanitized token claims. That identifier is never printed. When the auth file is not usable, the official app server runs against the default home in unmanaged mode. It receives a sanitized environment, no managed file-store override, and no credential read or fingerprint from the app-server source. The official process may write non-credential logs, caches, database files, and database write-ahead files in the default home. It does not change credentials.
 - The unmanaged fallback must return real weekly data. It does not invent a percentage or create an unmeasured routing tier. The default account then follows the same identity reconciliation, weekly scoring, reset, and Spark rules as managed accounts.
 - Default-account execution uses the default Codex home without a managed file-auth override or default-credential mutation. After selection, exec makes two bounded `codex login status` attempts in that home, separated by a short pause so a momentarily busy home is not read as a login failure. The official check honors the credential store configured for the Codex CLI and does not treat a missing `auth.json` as proof of logout.
 - Only an explicit logged-in result passes the launch check. If neither attempt confirms login and another candidate exists, exec prints a prominent stderr warning that names the default account, states the cause, says `Run: codex login`, and says that default is being skipped. It excludes default and selects exactly once more from the remaining candidates. A redirected job always has this warning.
@@ -140,6 +156,28 @@ Runs official `codex exec` after weekly-only account selection.
 - When no other candidate exists, no reroute warning is printed, because no reroute can happen. Exec exits with code 1 and one blocked message carrying the same cause and the same `Run: codex login` fix. Replacement selection that then fails returns that same blocked message. Raw selection or provider failure output never appears in it.
 - Exact provider help requests pass through without config or state creation.
 - Optional selected-profile metadata is confined to `MULTISUBS_HOME/run`.
+
+### `multisubs codex generate [--account <name>] [-m|--model <model>] [--effort <effort>] [--base-instructions-file <path>] [--developer-instructions-file <path>] [--output-schema <path>] [--json] [prompt]`
+
+Sends one text prompt through Codex App Server using ChatGPT subscription authentication and Codex's built-in OpenAI provider.
+
+- Reads the prompt from standard input when no prompt argument is present and rejects input larger than 4 MiB.
+- Uses the same weekly-aware routing, identity reconciliation, equal default/managed priority, and default-login gate as `multisubs codex exec`, unless `--account <name>` selects one managed profile directly.
+- Passes an explicit model to the existing model-aware selector. Otherwise, uses the highest-priority visible model in the installed Codex bundled catalog.
+- Validates `--effort` against the selected model's bundled supported-effort metadata. Without the flag, uses the selected model's bundled default effort.
+- Requires exactly `codex-cli 0.147.0` and fails before generation for any other version.
+- Requires App Server `account/read` to report managed ChatGPT authentication. It rejects API-key billing and does not start login or token-refresh flows.
+- Runs an ephemeral thread in a private empty temporary directory with read-only sandboxing and approval policy `never`.
+- Sends exact base or developer instruction file contents when selected and empty client instructions otherwise. The prompt and each optional input file have independent 4 MiB limits; file inputs must resolve to regular files. File-read errors do not print those paths.
+- Accepts `--output-schema` only when the file contains a JSON object and passes that object to App Server for structured-output enforcement.
+- Disables client context sources, tools, MCP servers, and notification hooks, ignores unrelated custom model providers, and uses a private `0600` one-model catalog with tool metadata removed.
+- Fails closed if Codex config replaces the built-in OpenAI provider, overrides its endpoint, or loads a configuration lockfile.
+- Rejects server requests, command, file, web, image, and unexpected item events.
+- By default, streams only assistant text to standard output. Resource notices and safe errors use standard error. A failure can occur after partial text was written.
+- With `--json`, buffers up to 16 MiB of assistant text and writes one object only after success. The object contains response text, model, effective effort, elapsed milliseconds, and numeric token usage. Usage is `null` when App Server emits no usage event. It excludes account and profile identifiers, paths, reasoning text, and raw events. A generation failure or response-limit failure writes no JSON object.
+- Writes selected-profile metadata under `MULTISUBS_HOME/run` when `MULTISUBS_SELECTED_PROFILE_PATH` is set. The selection source is `explicit_account`, `usage_selector`, or `usage_selector_default`.
+- Deletes the temporary workspace and model catalog when the command ends.
+- Re-checks profile filesystem and file-backed auth isolation before a configured-profile run. It never changes or manages default account authentication.
 
 ### `multisubs codex status`
 
@@ -149,7 +187,7 @@ Shows safe, profile-local authentication state for every managed Codex profile a
 
 Prints the Codex-only view of the shared usage report. It shows `Session (5h)` for a declared 300-minute window. If there is no declared five-hour window, one unambiguous declared non-weekly window is labeled with its actual duration. Missing durations are not guessed by position, and several ambiguous non-weekly durations leave session usage unreported.
 
-The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Only fixed product-owned extra-limit labels are reported; the current known label is `Spark weekly`. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses OAuth when its usable protected auth file has an access token, and otherwise uses the official app server in unmanaged mode. Routing uses the same typed default source. Duplicate logical subscriptions use one deterministic successful snapshot. The command does not use the TUI or observed-token estimates.
+The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Only fixed product-owned extra-limit labels are reported; the current known label is `Spark weekly`. A Spark-only snapshot is not standard weekly data: status keeps the Spark row and marks the account `weekly usage unavailable` unless the default-account unmanaged app-server probe supplies a standard weekly window. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses OAuth when its usable protected auth file has an access token, sending `ChatGPT-Account-Id` when that file has a safe account id. The id may come from `tokens.account_id`, top-level `account_id`, or sanitized token claims. It is never printed. If that OAuth snapshot has no standard weekly window, one unmanaged official app-server probe runs against the same default home. Otherwise the official app server runs in unmanaged mode when the auth file is not usable. Routing uses the same typed default source. Duplicate logical subscriptions use one deterministic successful snapshot. The command does not use the TUI or observed-token estimates.
 
 Codex account and model scoring remains weekly-only. Identity reconciliation happens before that existing scoring. No arguments are accepted.
 
@@ -260,7 +298,7 @@ Uses official `claude auth status --json` for the default account and each manag
 
 ### `multisubs claude usage`
 
-Prints the Claude-only view of the shared usage report. For each managed profile and the normal default account, one bounded context covers official `claude auth status --json`, the free non-persistent `/usage` probe, and a second official auth status. Usage identity requires logged-in status, a non-empty organization ID, and a strictly normalized email; it does not apply Max, provider, or auth-method routing restrictions. Grouping is allowed only when organization ID and normalized email are unchanged across both status results. Identity change or failure keeps valid quota as an ungrouped `identity unavailable` partial row. Targets with the same stable organization collapse into one logical row; different non-empty organization IDs never merge by email.
+Prints the Claude-only view of the shared usage report. For each managed profile and the normal default account, one bounded context covers official `claude auth status --json`, the free non-persistent `/usage` probe, and a second official auth status. If the first official auth result reports that the account is not logged in, the row is `not logged in` and `/usage` does not run. If the second official auth result reports that the account is not logged in, the row is also `not logged in`, even when the usage probe text cannot be parsed. Usage identity requires logged-in status, a non-empty organization ID, and a strictly normalized email; it does not apply Max, provider, or auth-method routing restrictions. Grouping is allowed only when organization ID and normalized email are unchanged across both status results. Identity change or failure keeps valid quota as an ungrouped `identity unavailable` partial row. Targets with the same stable organization collapse into one logical row; different non-empty organization IDs never merge by email.
 
 The labels are `Session (~5h)`, `Weekly all models`, and `Fable weekly`. Only an explicit bounded parenthesized duration in the session heading, such as `(5h)`, replaces `~5h`; reset countdown text never supplies the duration. Session and weekly all-model data are required provider sections. Missing optional Fable data is `not reported`, not an account failure. Reset text is printed only for supported `Resets in N ...`, weekday, month-and-day, or `Resets at ...` forms, with an optional safe IANA timezone. Parser, authentication, path, timeout, and binary failures affect only the relevant account and use fixed safe reasons. It accepts no extra arguments.
 
@@ -282,6 +320,7 @@ login
 login-all
 cli
 exec
+generate
 reconcile
 heartbeat
 monitor

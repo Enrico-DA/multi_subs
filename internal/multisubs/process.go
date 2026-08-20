@@ -31,7 +31,9 @@ func RunCodexWithProfile(codexHome, profile string, args []string) error {
 }
 
 func RunInteractiveCodexWithProfile(codexHome, profile string, args []string) error {
-	args = codexstate.WithManagedAuthOverride(args)
+	if profile != "" {
+		args = codexstate.WithManagedAuthOverride(args)
+	}
 	env := profileCodexEnv(os.Environ(), codexHome, profile)
 	if isInteractiveTerminalAttached() {
 		path, err := execLookPath("codex")

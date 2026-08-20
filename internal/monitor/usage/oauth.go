@@ -55,11 +55,43 @@ func (s *OAuthSource) Name() string {
 }
 
 func (s *OAuthSource) Fetch(ctx context.Context) (*Summary, error) {
-	token, err := s.accessTokenFromAuthFile()
+	creds, err := s.credentialsFromAuthFile()
 	if err != nil {
 		return nil, err
 	}
-	req, err := newOAuthUsageRequest(ctx, token)
+	return s.fetchWithCredentials(ctx, creds)
+}
+
+func (s *OAuthSource) accessTokenFromAuthFile() (string, error) {
+	creds, err := s.credentialsFromAuthFile()
+	if err != nil {
+		return "", err
+	}
+	return creds.accessToken, nil
+}
+
+func (s *OAuthSource) credentialsFromAuthFile() (oauthAuthCredentials, error) {
+	authPath, err := findAuthJSONPathForHome(s.codexHome)
+	if err != nil {
+		return oauthAuthCredentials{}, &oauthAuthFileUnavailableError{err: err}
+	}
+	creds, err := readOAuthAuthFile(authPath)
+	if err != nil {
+		return oauthAuthCredentials{}, &oauthAuthFileUnavailableError{err: err}
+	}
+	return creds, nil
+}
+
+func (s *OAuthSource) fetchWithAccessToken(ctx context.Context, token string) (*Summary, error) {
+	creds := oauthAuthCredentials{accessToken: token}
+	if fileCreds, err := s.credentialsFromAuthFile(); err == nil {
+		creds.accountID = fileCreds.accountID
+	}
+	return s.fetchWithCredentials(ctx, creds)
+}
+
+func (s *OAuthSource) fetchWithCredentials(ctx context.Context, creds oauthAuthCredentials) (*Summary, error) {
+	req, err := newOAuthUsageRequest(ctx, creds)
 	if err != nil {
 		return nil, err
 	}
@@ -67,35 +99,16 @@ func (s *OAuthSource) Fetch(ctx context.Context) (*Summary, error) {
 	return s.fetchRequest(req)
 }
 
-func (s *OAuthSource) accessTokenFromAuthFile() (string, error) {
-	authPath, err := findAuthJSONPathForHome(s.codexHome)
-	if err != nil {
-		return "", &oauthAuthFileUnavailableError{err: err}
-	}
-	token, err := readAccessToken(authPath)
-	if err != nil {
-		return "", &oauthAuthFileUnavailableError{err: err}
-	}
-	return token, nil
-}
-
-func (s *OAuthSource) fetchWithAccessToken(ctx context.Context, token string) (*Summary, error) {
-	req, err := newOAuthUsageRequest(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	userAgent := clientName + "/" + buildinfo.Version
-	req.Header.Set("User-Agent", userAgent)
-	return s.fetchRequest(req)
-}
-
-func newOAuthUsageRequest(ctx context.Context, token string) (*http.Request, error) {
+func newOAuthUsageRequest(ctx context.Context, creds oauthAuthCredentials) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, chatGPTOAuthUsageEndpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build oauth request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+creds.accessToken)
 	req.Header.Set("Accept", "application/json")
+	if accountID := oauthAccountIDHeaderValue(creds.accountID); accountID != "" {
+		req.Header.Set("ChatGPT-Account-Id", accountID)
+	}
 	return req, nil
 }
 
@@ -169,8 +182,9 @@ type oauthUsagePayload struct {
 }
 
 type oauthAdditionalRateLimit struct {
-	LimitName string                 `json:"limit_name"`
-	RateLimit *oauthRateLimitDetails `json:"rate_limit"`
+	LimitName      string                 `json:"limit_name"`
+	MeteredFeature string                 `json:"metered_feature"`
+	RateLimit      *oauthRateLimitDetails `json:"rate_limit"`
 }
 
 type oauthRateLimitDetails struct {
@@ -187,11 +201,18 @@ type oauthWindowSnapshot struct {
 	ResetAt            int `json:"reset_at"`
 }
 
+type oauthAuthCredentials struct {
+	accessToken string
+	accountID   string
+}
+
 type authFilePayload struct {
-	Email  string `json:"email"`
-	Tokens struct {
+	Email     string `json:"email"`
+	AccountID string `json:"account_id"`
+	Tokens    struct {
 		AccessToken string `json:"access_token"`
 		IDToken     string `json:"id_token"`
+		AccountID   string `json:"account_id"`
 	} `json:"tokens"`
 }
 
@@ -211,20 +232,49 @@ func findAuthJSONPathForHome(codexHome string) (string, error) {
 }
 
 func readAccessToken(path string) (string, error) {
+	creds, err := readOAuthAuthFile(path)
+	if err != nil {
+		return "", err
+	}
+	return creds.accessToken, nil
+}
+
+func readOAuthAuthFile(path string) (oauthAuthCredentials, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read auth file: %w", err)
+		return oauthAuthCredentials{}, fmt.Errorf("read auth file: %w", err)
 	}
 
 	var payload authFilePayload
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return "", fmt.Errorf("decode auth file: %w", err)
+		return oauthAuthCredentials{}, fmt.Errorf("decode auth file: %w", err)
 	}
 	token := strings.TrimSpace(payload.Tokens.AccessToken)
 	if token == "" {
-		return "", errors.New("auth.json missing tokens.access_token")
+		return oauthAuthCredentials{}, errors.New("auth.json missing tokens.access_token")
 	}
-	return token, nil
+	return oauthAuthCredentials{
+		accessToken: token,
+		accountID:   resolveOAuthAccountID(payload),
+	}, nil
+}
+
+func oauthAccountIDHeaderValue(raw string) string {
+	id := strings.TrimSpace(raw)
+	if id == "" || len(id) > 128 {
+		return ""
+	}
+	for i := 0; i < len(id); i++ {
+		character := id[i]
+		if character >= 'a' && character <= 'z' ||
+			character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' ||
+			character == '-' || character == '_' {
+			continue
+		}
+		return ""
+	}
+	return id
 }
 
 func fileExists(path string) bool {
@@ -299,18 +349,22 @@ func buildRateLimitWindowsFromOAuthAdditionalLimits(additionalLimits []oauthAddi
 		}
 
 		limitName := strings.TrimSpace(additional.LimitName)
-		if limitName == "" {
-			limitName = "additional-" + strconv.Itoa(i)
+		limitID := strings.TrimSpace(additional.MeteredFeature)
+		if limitID == "" {
+			limitID = limitName
 		}
-		windowByLimit[limitName] = rateLimitSnapshotRaw{
-			LimitID:   limitName,
+		if limitID == "" {
+			limitID = "additional-" + strconv.Itoa(i)
+		}
+		windowByLimit[limitID] = rateLimitSnapshotRaw{
+			LimitID:   limitID,
 			LimitName: &additional.LimitName,
 			Primary:   oauthRateLimitWindow(additional.RateLimit, additional.RateLimit.PrimaryWindow),
 		}
 		if additional.RateLimit.SecondaryWindow != nil {
-			window := windowByLimit[limitName]
+			window := windowByLimit[limitID]
 			window.Secondary = oauthRateLimitWindow(additional.RateLimit, additional.RateLimit.SecondaryWindow)
-			windowByLimit[limitName] = window
+			windowByLimit[limitID] = window
 		}
 	}
 	if len(windowByLimit) == 0 {
