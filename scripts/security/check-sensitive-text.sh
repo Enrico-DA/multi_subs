@@ -17,11 +17,15 @@ allowed_path_placeholder_regex='(/Users/(YOU|USER|username)|/home/(user|USER|use
 secret_assignment_regex='([Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_./+=-]{12,}'
 json_secret_regex='["'"'"']([Aa][Cc][Cc][Ee][Ss][Ss]_[Tt][Oo][Kk][Ee][Nn]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Ii][Dd]_[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Oo][Pp][Ee][Nn][Aa][Ii]_[Aa][Pp][Ii]_[Kk][Ee][Yy])["'"'"'][[:space:]]*:[[:space:]]*["'"'"'][A-Za-z0-9_./+=-]{20,}["'"'"']'
 known_token_regex='((ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,})'
-email_regex='[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'
-reserved_email_regex='[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+\.)*([Ee][Xx][Aa][Mm][Pp][Ll][Ee]\.([Cc][Oo][Mm]|[Nn][Ee][Tt]|[Oo][Rr][Gg])|[Tt][Ee][Ss][Tt]|[Ee][Xx][Aa][Mm][Pp][Ll][Ee]|[Ii][Nn][Vv][Aa][Ll][Ii][Dd]|[Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt])'
+email_regex='("[^"]+"|[A-Za-z0-9._%+-]+)@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'
+# The two regexes below are matched fully anchored against a lowercased
+# address, so they are written in lower case only. Anchoring matters: an
+# unanchored reserved match would accept a real address at any domain whose
+# label merely starts with a reserved word, such as example-evil.com.
+reserved_email_regex='("[^"]+"|[a-z0-9._%+-]+)@([a-z0-9-]+\.)*(example\.(com|net|org)|test|example|invalid|localhost)'
 # Structurally non-deliverable no-reply identities. These are not a person's
 # mailbox, and they legitimately appear in Co-authored-by trailers.
-noreply_email_regex='([^[:space:]<>@]+@([A-Za-z0-9-]+\.)*[Nn][Oo][Rr][Ee][Pp][Ll][Yy]\.[A-Za-z0-9.-]+|[Nn][Oo]-?[Rr][Ee][Pp][Ll][Yy]@[A-Za-z0-9.-]+)'
+noreply_email_regex='(("[^"]+"|[a-z0-9._%+-]+)@([a-z0-9-]+\.)*noreply\.[a-z0-9.-]+|no-?reply@[a-z0-9.-]+)'
 
 search_pattern() {
   local pattern="$1"
@@ -44,14 +48,19 @@ filter_allowed_path_placeholders() {
 }
 
 filter_allowed_emails() {
-  local line redacted
+  local line remaining email normalized
   while IFS= read -r line; do
-    redacted="$(printf '%s\n' "$line" \
-      | sed -E "s#${reserved_email_regex}#<reserved-email>#g" \
-      | sed -E "s#${noreply_email_regex}#<noreply-email>#g")"
-    if [[ "$redacted" =~ $email_regex ]]; then
-      printf '%s\n' "$line"
-    fi
+    remaining="$line"
+    while [[ "$remaining" =~ $email_regex ]]; do
+      email="${BASH_REMATCH[0]}"
+      normalized="$(printf '%s' "$email" | tr '[:upper:]' '[:lower:]')"
+      if [[ ! "$normalized" =~ ^${reserved_email_regex}$ ]] \
+        && [[ ! "$normalized" =~ ^${noreply_email_regex}$ ]]; then
+        printf '%s\n' "$line"
+        break
+      fi
+      remaining="${remaining#*"$email"}"
+    done
   done
 }
 

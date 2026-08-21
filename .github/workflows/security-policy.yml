@@ -146,6 +146,27 @@ jobs:
             exit 1
           fi
 
+      - name: Self-test reserved-domain anchoring
+        run: |
+          set -euo pipefail
+          tmp_bad="$(mktemp)"
+          tmp_ok="$(mktemp)"
+          # Domains whose first label merely starts with a reserved word are
+          # real domains, and must not be accepted as fixtures.
+          printf '%s@%s\n' "person" "example-evil.com" > "${tmp_bad}"
+          printf '%s@%s\n' "person" "testing.net" >> "${tmp_bad}"
+          printf '%s@%s\n' "person" "invalid-corp.com" >> "${tmp_bad}"
+          printf '"%s"@%s\n' "odd name" "realmail.co" >> "${tmp_bad}"
+          printf '%s@%s\n' "person" "example.com" > "${tmp_ok}"
+          printf '%s@%s\n' "person" "sub.example.test" >> "${tmp_ok}"
+          printf '%s@%s\n' "person" "host.localhost" >> "${tmp_ok}"
+          printf '"%s"@%s\n' "odd name" "example.org" >> "${tmp_ok}"
+          bash scripts/security/check-sensitive-text.sh --context=anchor-selftest "${tmp_ok}"
+          if bash scripts/security/check-sensitive-text.sh --context=anchor-selftest "${tmp_bad}"; then
+            echo "expected reserved-domain anchoring self-test failure did not occur" >&2
+            exit 1
+          fi
+
       - name: Self-test no-reply identity acceptance
         run: |
           set -euo pipefail
