@@ -104,7 +104,7 @@ func TestCodexCLIProfileHelpUsesNeutralProviderPathThroughAppDispatch(t *testing
 				t.Setenv("CODEX_HOME", filepath.Join(root, "stale-codex"))
 				t.Setenv("MULTISUBS_ACTIVE_PROFILE", "stale")
 				t.Setenv("MULTISUBS_SELECTED_PROFILE_PATH", filepath.Join(root, "stale-selection"))
-				t.Setenv("MULTISUBS_HEARTBEAT_PROMPT", "stale-prompt")
+				t.Setenv("MULTISUBS_MONITOR_ACCOUNTS_FILE", "stale-accounts")
 				t.Setenv("MULTISUBS_FUTURE_CONTROL", "stale")
 				t.Setenv("OPENAI_API_KEY", "stale-secret")
 				t.Setenv("CODEX_AUTH_TOKEN", "stale-secret")
@@ -273,7 +273,7 @@ func assertNeutralCodexHelpInvocation(t *testing.T, logPath, helpFlag string, in
 		"MULTISUBS_DEFAULT_CODEX_HOME",
 		"MULTISUBS_ACTIVE_PROFILE",
 		"MULTISUBS_SELECTED_PROFILE_PATH",
-		"MULTISUBS_HEARTBEAT_PROMPT",
+		"MULTISUBS_MONITOR_ACCOUNTS_FILE",
 		"OPENAI_API_KEY",
 		"CODEX_AUTH_TOKEN",
 	}

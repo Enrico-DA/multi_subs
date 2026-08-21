@@ -24,7 +24,6 @@ var identityFixturePaths = []string{
 	"go.mod",
 	"internal/codexstate/env.go",
 	"internal/codexstate/env_test.go",
-	"internal/monitor/tui/model.go",
 	"internal/monitor/usage/accounts.go",
 	"internal/monitor/usage/accounts_test.go",
 	"internal/monitor/usage/appserver.go",
@@ -117,20 +116,6 @@ func TestProductIdentityMutations(t *testing.T) {
 				active:      "\treq.Header.Set(\"User-Agent\", clientName+\"/\"+buildinfo.Version)",
 				replacement: "\treq.Header.Set(\"User-Agent\", \"other-client\")",
 				errorText:   "OAuth User-Agent",
-			},
-			{
-				name:        "full TUI name",
-				path:        "internal/monitor/tui/model.go",
-				active:      "\ttitle := m.styles.title.Render(\" multisubs codex monitor \")",
-				replacement: "\ttitle := m.styles.title.Render(\" other monitor \")",
-				errorText:   "active monitor TUI title",
-			},
-			{
-				name:        "compact TUI name",
-				path:        "internal/monitor/tui/model.go",
-				active:      "\t\tleft := m.styles.accent.Render(\"multisubs\") + \" \" + stateStyle.Render(stateText)",
-				replacement: "\t\tleft := m.styles.accent.Render(\"other\") + \" \" + stateStyle.Render(stateText)",
-				errorText:   "active compact monitor TUI",
 			},
 		}
 		for _, mutation := range mutations {

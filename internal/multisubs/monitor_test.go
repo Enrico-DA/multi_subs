@@ -9,7 +9,7 @@ import (
 	"github.com/Enrico-DA/multi_subs/internal/monitor/usage"
 )
 
-func TestMonitorHelpIncludesDoctorAndTerminalUserInterfaceText(t *testing.T) {
+func TestMonitorHelpIncludesDoctorAndSnapshotPointer(t *testing.T) {
 	app := newTestAppForCLI(t)
 	out, err := captureStdout(t, func() error {
 		return app.Run([]string{"codex", "monitor", "help"})
@@ -17,13 +17,13 @@ func TestMonitorHelpIncludesDoctorAndTerminalUserInterfaceText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("monitor help failed: %v", err)
 	}
-	if !strings.Contains(out, "terminal user interface") {
-		t.Fatalf("expected expanded terminal user interface text, got:\n%s", out)
+	if !strings.Contains(out, "multisubs usage") {
+		t.Fatalf("expected a pointer to the usage snapshot, got:\n%s", out)
 	}
 	if !strings.Contains(out, "multisubs codex monitor doctor") {
 		t.Fatalf("expected doctor usage in monitor help, got:\n%s", out)
 	}
-	for _, want := range []string{"--interval 60s", "--timeout 60s"} {
+	for _, want := range []string{"--timeout 60s", "--json"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in monitor help, got:\n%s", want, out)
 		}
@@ -44,8 +44,8 @@ func TestHelpMonitorTopic(t *testing.T) {
 	if !strings.Contains(out, "multisubs codex monitor") {
 		t.Fatalf("expected monitor help topic output, got:\n%s", out)
 	}
-	if !strings.Contains(out, "[--timeout 60s]") {
-		t.Fatalf("expected 60s timeout in help monitor output, got:\n%s", out)
+	if strings.Contains(out, "tui") {
+		t.Fatalf("monitor help topic should not mention a terminal interface, got:\n%s", out)
 	}
 }
 
@@ -70,30 +70,6 @@ func TestMonitorDoctorHelpFlagSucceeds(t *testing.T) {
 	app := newTestAppForCLI(t)
 	if err := app.Run([]string{"codex", "monitor", "doctor", "--help"}); err != nil {
 		t.Fatalf("monitor doctor --help failed: %v", err)
-	}
-}
-
-func TestMonitorTUIHelpFlagSucceeds(t *testing.T) {
-	app := newTestAppForCLI(t)
-	if err := app.Run([]string{"codex", "monitor", "tui", "--help"}); err != nil {
-		t.Fatalf("monitor tui --help failed: %v", err)
-	}
-}
-
-func TestMonitorRequiresTTY(t *testing.T) {
-	app := newTestAppForCLI(t)
-	_, err := captureStdout(t, func() error {
-		return app.Run([]string{"codex", "monitor"})
-	})
-	var exitErr *ExitError
-	if !errors.As(err, &exitErr) {
-		t.Fatalf("expected ExitError, got %T (%v)", err, err)
-	}
-	if exitErr.Code != 1 {
-		t.Fatalf("expected exit code 1, got %d", exitErr.Code)
-	}
-	if !strings.Contains(exitErr.Message, "requires a TTY") {
-		t.Fatalf("unexpected message: %s", exitErr.Message)
 	}
 }
 
@@ -123,19 +99,6 @@ func TestHelpMonitorCompletionTopic(t *testing.T) {
 	}
 }
 
-func TestHelpMonitorTUITopic(t *testing.T) {
-	app := newTestAppForCLI(t)
-	out, err := captureStdout(t, func() error {
-		return app.Run([]string{"help", "codex", "monitor", "tui"})
-	})
-	if err != nil {
-		t.Fatalf("help monitor tui failed: %v", err)
-	}
-	if !strings.Contains(out, "multisubs codex monitor tui") {
-		t.Fatalf("expected monitor tui help topic output, got:\n%s", out)
-	}
-}
-
 func TestMonitorDoctorMixedChecksFailSummaryAndExit(t *testing.T) {
 	t.Parallel()
 
@@ -157,5 +120,18 @@ func TestMonitorDoctorMixedChecksFailSummaryAndExit(t *testing.T) {
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("monitor doctor result = %T (%v), want exit code 1", err, err)
+	}
+}
+
+func TestBareMonitorPrintsUsage(t *testing.T) {
+	app := newTestAppForCLI(t)
+	out, err := captureStdout(t, func() error {
+		return app.Run([]string{"codex", "monitor"})
+	})
+	if err != nil {
+		t.Fatalf("bare monitor failed: %v", err)
+	}
+	if !strings.Contains(out, "multisubs codex monitor doctor") {
+		t.Fatalf("expected monitor usage, got:\n%s", out)
 	}
 }

@@ -187,7 +187,7 @@ Shows safe, profile-local authentication state for every managed Codex profile a
 
 Prints the Codex-only view of the shared usage report. It shows `Session (5h)` for a declared 300-minute window. If there is no declared five-hour window, one unambiguous declared non-weekly window is labeled with its actual duration. Missing durations are not guessed by position, and several ambiguous non-weekly durations leave session usage unreported.
 
-The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Only fixed product-owned extra-limit labels are reported; the current known label is `Spark weekly`. A Spark-only snapshot is not standard weekly data: status keeps the Spark row and marks the account `weekly usage unavailable` unless the default-account unmanaged app-server probe supplies a standard weekly window. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses OAuth when its usable protected auth file has an access token, sending `ChatGPT-Account-Id` when that file has a safe account id. The id may come from `tokens.account_id`, top-level `account_id`, or sanitized token claims. It is never printed. If that OAuth snapshot has no standard weekly window, one unmanaged official app-server probe runs against the same default home. Otherwise the official app server runs in unmanaged mode when the auth file is not usable. Routing uses the same typed default source. Duplicate logical subscriptions use one deterministic successful snapshot. The command does not use the TUI or observed-token estimates.
+The existing declared 10,080-minute weekly selection and narrow older-response fallback stay unchanged. A primary result without weekly data still triggers fallback. The report-only managed source can merge a safe primary session with fallback weekly data while keeping fallback identity and weekly limit fields together. If fallback fails, a retained session is partial and the account still fails strict success. Shared routing and monitor sources do not use this report-only merge. Only fixed product-owned extra-limit labels are reported; the current known label is `Spark weekly`. A Spark-only snapshot is not standard weekly data: status keeps the Spark row and marks the account `weekly usage unavailable` unless the default-account unmanaged app-server probe supplies a standard weekly window. Managed profiles reuse the validated app-server-to-OAuth source path. The normal default account uses OAuth when its usable protected auth file has an access token, sending `ChatGPT-Account-Id` when that file has a safe account id. The id may come from `tokens.account_id`, top-level `account_id`, or sanitized token claims. It is never printed. If that OAuth snapshot has no standard weekly window, one unmanaged official app-server probe runs against the same default home. Otherwise the official app server runs in unmanaged mode when the auth file is not usable. Routing uses the same typed default source. Duplicate logical subscriptions use one deterministic successful snapshot. 
 
 Codex account and model scoring remains weekly-only. Identity reconciliation happens before that existing scoring. No arguments are accepted.
 
@@ -195,35 +195,19 @@ Codex account and model scoring remains weekly-only. Identity reconciliation hap
 
 Applies the current guidance and skill resource policy to every Codex profile. It does not inspect auth or launch Codex. It accepts no extra arguments.
 
-### `multisubs codex heartbeat`
+### `multisubs codex monitor`
 
-Sends a small ephemeral, read-only `codex exec` request to each logged-in managed profile. It uses a non-blocking private lock under `MULTISUBS_HOME`.
-
-Settings:
-
-- `MULTISUBS_HEARTBEAT_TIMEOUT_SECONDS`
-- `MULTISUBS_HEARTBEAT_RETRIES`
-- `MULTISUBS_HEARTBEAT_BACKOFF_SECONDS`
-- `MULTISUBS_HEARTBEAT_LOCK_PATH`
-
-The lock override must resolve inside `MULTISUBS_HOME`.
-
-### `multisubs codex monitor [flags]`
-
-Runs the Codex usage terminal interface.
+Checks Codex usage sources. Bare `multisubs codex monitor` prints its usage and exits 0; there is no live terminal interface. Use `multisubs usage` for a usage snapshot.
 
 Nested topics:
 
-- `multisubs codex monitor tui [flags]`
 - `multisubs codex monitor doctor [flags]`
 - `multisubs codex monitor completion [shell]`
 - `multisubs codex monitor help`
 
 `multisubs codex monitor help` accepts no arguments and is a completion leaf.
 
-The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. An included default home follows the same OAuth-or-unmanaged-app-server rule as routing and the usage report. A requested monitor-doctor app-server probe may therefore start the official process against the default home, where it can write non-credential logs, caches, database files, and database write-ahead files without changing credentials. Active homes follow their explicit inclusion rules. With `--discover`, filesystem candidates canonically inside `MULTISUBS_HOME` are excluded; registered managed profiles still come from `config.json`. It remains the live Codex view; `multisubs usage` is the separate quick snapshot.
-
-The live monitor reloads its account set on the polling schedule. A failed reload closes and clears the current targets before the next fetch, reports the reload error through the existing fetch-error state, and retries later. The monitor loop stays open so a repaired registry can recover without a restart. A reload that can still verify a safe target set replaces the old set and excludes every rejected target.
+The monitor uses official weekly data. Validated managed profiles try the Codex app server first and use the existing narrow OAuth fallback. An included default home follows the same OAuth-or-unmanaged-app-server rule as routing and the usage report. A requested monitor-doctor app-server probe may therefore start the official process against the default home, where it can write non-credential logs, caches, database files, and database write-ahead files without changing credentials. Active homes follow their explicit inclusion rules. With `--discover`, filesystem candidates canonically inside `MULTISUBS_HOME` are excluded; registered managed profiles still come from `config.json`. `multisubs usage` is the separate usage snapshot.
 
 `multisubs codex monitor doctor --json` keeps `name`, `ok`, and the human `details` sentence for every check. A successful usage-fetch check also includes `plan_type`, `source`, and the numeric `weekly_used_percent`. Each structured value is omitted when it is unavailable. In particular, unavailable weekly usage omits `weekly_used_percent` while `details` still says `weekly=unavailable`. Failed fetch checks keep the safe error in `details` and omit all three structured usage fields. The new fields add no session windows, provider account identifiers, paths, or raw provider payloads.
 
@@ -322,7 +306,6 @@ cli
 exec
 generate
 reconcile
-heartbeat
 monitor
 dry-run
 ```

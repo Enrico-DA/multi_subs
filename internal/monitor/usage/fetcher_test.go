@@ -385,29 +385,7 @@ func TestFetcherStopsUsingOldTargetsWhenAccountReloadFails(t *testing.T) {
 	}
 }
 
-type fakeEstimator struct {
-	values map[string]ObservedTokenEstimate
-	errs   map[string]error
-}
-
-func (f fakeEstimator) Estimate(codexHome string, _ time.Time) (ObservedTokenEstimate, error) {
-	if err, ok := f.errs[codexHome]; ok {
-		return ObservedTokenEstimate{
-			Status: observedTokensStatusUnavailable,
-			Note:   err.Error(),
-		}, err
-	}
-	v, ok := f.values[codexHome]
-	if !ok {
-		return ObservedTokenEstimate{
-			Status: observedTokensStatusUnavailable,
-			Note:   "missing estimate",
-		}, errors.New("missing estimate")
-	}
-	return v, nil
-}
-
-func TestFetcherAggregatesMultiAccountObservedTokens(t *testing.T) {
+func TestFetcherAggregatesMultiAccountResults(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "/b")
@@ -439,18 +417,6 @@ func TestFetcherAggregatesMultiAccountObservedTokens(t *testing.T) {
 				fallback: fallbackB,
 			},
 		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {
-					WindowWeekly: ObservedTokenBreakdown{Total: 200},
-					Status:       observedTokensStatusEstimated,
-				},
-				"/b": {
-					WindowWeekly: ObservedTokenBreakdown{Total: 80},
-					Status:       observedTokensStatusEstimated,
-				},
-			},
-		},
 	}
 
 	out, err := f.Fetch(context.Background())
@@ -459,12 +425,6 @@ func TestFetcherAggregatesMultiAccountObservedTokens(t *testing.T) {
 	}
 	if out.TotalAccounts != 2 || out.SuccessfulAccounts != 2 {
 		t.Fatalf("expected 2/2 account success, got %d/%d", out.SuccessfulAccounts, out.TotalAccounts)
-	}
-	if out.ObservedTokensWeekly == nil || *out.ObservedTokensWeekly != 280 {
-		t.Fatalf("expected aggregated weekly observed total, got %+v", out.ObservedTokensWeekly)
-	}
-	if out.ObservedTokensStatus != observedTokensStatusEstimated {
-		t.Fatalf("expected estimated observed status, got %q", out.ObservedTokensStatus)
 	}
 	if len(out.Accounts) != 2 {
 		t.Fatalf("expected 2 account rows, got %d", len(out.Accounts))
@@ -483,111 +443,7 @@ func TestFetcherAggregatesMultiAccountObservedTokens(t *testing.T) {
 	}
 }
 
-func TestFetcherAllowsObservedOnlyWhenAllSourcesFail(t *testing.T) {
-	f := &Fetcher{
-		accounts: []accountFetcher{
-			{
-				account:  MonitorAccount{Label: "a", CodexHome: "/a"},
-				primary:  &fakeSource{name: "primary-a", err: errors.New("p")},
-				fallback: &fakeSource{name: "fallback-a", err: errors.New("f")},
-			},
-		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {
-					WindowWeekly: ObservedTokenBreakdown{Total: 99},
-					Status:       observedTokensStatusEstimated,
-				},
-			},
-		},
-	}
-
-	out, err := f.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if out.SuccessfulAccounts != 0 {
-		t.Fatalf("expected zero successful accounts")
-	}
-	if out.ObservedTokensStatus != observedTokensStatusEstimated {
-		t.Fatalf("expected observed estimate status")
-	}
-}
-
-func TestFetcherMarksObservedPartialWhenSomeAccountsUnavailable(t *testing.T) {
-	f := &Fetcher{
-		accounts: []accountFetcher{
-			{
-				account:  MonitorAccount{Label: "a", CodexHome: "/a"},
-				primary:  &fakeSource{name: "primary-a", out: &Summary{WeeklyWindow: WindowSummary{}}},
-				fallback: &fakeSource{name: "fallback-a"},
-			},
-			{
-				account:  MonitorAccount{Label: "b", CodexHome: "/b"},
-				primary:  &fakeSource{name: "primary-b", out: &Summary{WeeklyWindow: WindowSummary{}}},
-				fallback: &fakeSource{name: "fallback-b"},
-			},
-		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {
-					WindowWeekly: ObservedTokenBreakdown{Total: 20},
-					Status:       observedTokensStatusEstimated,
-				},
-			},
-			errs: map[string]error{
-				"/b": errors.New("missing logs"),
-			},
-		},
-	}
-
-	out, err := f.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if out.ObservedTokensStatus != observedTokensStatusPartial {
-		t.Fatalf("expected partial observed status, got %q", out.ObservedTokensStatus)
-	}
-}
-
-func TestFetcherMarksObservedWarmingWhenUnavailableEstimateIsWarming(t *testing.T) {
-	f := &Fetcher{
-		accounts: []accountFetcher{
-			{
-				account: MonitorAccount{Label: "a", CodexHome: "/a"},
-				primary: &fakeSource{name: "primary-a", out: &Summary{
-					WeeklyWindow: WindowSummary{UsedPercent: 20},
-				}},
-				fallback: &fakeSource{name: "fallback-a"},
-			},
-		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {
-					Status:  observedTokensStatusUnavailable,
-					Warming: true,
-					Note:    "warming token estimate",
-				},
-			},
-		},
-	}
-
-	out, err := f.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if out.ObservedTokensStatus != observedTokensStatusUnavailable {
-		t.Fatalf("expected unavailable observed status, got %q", out.ObservedTokensStatus)
-	}
-	if !out.ObservedTokensWarming {
-		t.Fatalf("expected warming flag when unavailable estimate is warming")
-	}
-	if len(out.Accounts) != 1 || !out.Accounts[0].ObservedTokensWarming {
-		t.Fatalf("expected per-account warming flag to be set")
-	}
-}
-
-func TestFetcherSumsObservedTotalsAcrossHomesForSameIdentity(t *testing.T) {
+func TestFetcherDedupesHomesForSameIdentity(t *testing.T) {
 	f := &Fetcher{
 		accounts: []accountFetcher{
 			{
@@ -607,42 +463,11 @@ func TestFetcherSumsObservedTotalsAcrossHomesForSameIdentity(t *testing.T) {
 				fallback: &fakeSource{name: "fallback-b"},
 			},
 		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {
-					WindowWeekly: ObservedTokenBreakdown{
-						Total:           200,
-						Input:           150,
-						CachedInput:     110,
-						Output:          50,
-						ReasoningOutput: 10,
-						HasSplit:        true,
-					},
-					Status: observedTokensStatusEstimated,
-				},
-				"/b": {
-					WindowWeekly: ObservedTokenBreakdown{
-						Total:       180,
-						Input:       140,
-						CachedInput: 100,
-						Output:      40,
-						HasSplit:    true,
-					},
-					Status: observedTokensStatusEstimated,
-				},
-			},
-		},
 	}
 
 	out, err := f.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if out.ObservedTokensWeekly == nil || *out.ObservedTokensWeekly != 380 {
-		t.Fatalf("expected summed weekly total across same-account homes, got %+v", out.ObservedTokensWeekly)
-	}
-	if out.ObservedWindowWeekly == nil || out.ObservedWindowWeekly.Input != 290 || out.ObservedWindowWeekly.CachedInput != 210 || out.ObservedWindowWeekly.Output != 90 || out.ObservedWindowWeekly.ReasoningOutput != 10 {
-		t.Fatalf("expected weekly breakdown to add across same-account homes, got %+v", out.ObservedWindowWeekly)
 	}
 	if out.TotalAccounts != 1 || out.SuccessfulAccounts != 1 {
 		t.Fatalf("expected deduped identity counts 1/1, got %d/%d", out.SuccessfulAccounts, out.TotalAccounts)
@@ -876,7 +701,7 @@ func TestFetcherRefreshesEmptyAccountLoaderOnFetch(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
 
 	callCount := 0
-	f := newFetcherWithAccountLoader(false, func() ([]MonitorAccount, string, error) {
+	f := newFetcherWithAccountLoader(func() ([]MonitorAccount, string, error) {
 		callCount++
 		if callCount == 1 {
 			return nil, "accounts not written yet", nil
@@ -917,7 +742,7 @@ func TestFetcherIncludesLoaderWarningWhenNoAccountsConfigured(t *testing.T) {
 	}
 }
 
-func TestFetcherAddsObservedTotalsAcrossHomesWhenDedupingByAccountID(t *testing.T) {
+func TestFetcherDedupesHomesByAccountID(t *testing.T) {
 	f := &Fetcher{
 		accounts: []accountFetcher{
 			{
@@ -935,18 +760,6 @@ func TestFetcherAddsObservedTotalsAcrossHomesWhenDedupingByAccountID(t *testing.
 					WeeklyWindow: WindowSummary{UsedPercent: 30},
 				}},
 				fallback: &fakeSource{name: "fallback-b"},
-			},
-		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {
-					WindowWeekly: ObservedTokenBreakdown{Total: 200},
-					Status:       observedTokensStatusEstimated,
-				},
-				"/b": {
-					WindowWeekly: ObservedTokenBreakdown{Total: 180},
-					Status:       observedTokensStatusEstimated,
-				},
 			},
 		},
 	}
@@ -985,12 +798,6 @@ func TestFetcherKeepsUnverifiedAccountsDistinctByHome(t *testing.T) {
 				fallback: &fakeSource{name: "fallback-b"},
 			},
 		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {WindowWeekly: ObservedTokenBreakdown{Total: 200}, Status: observedTokensStatusEstimated},
-				"/b": {WindowWeekly: ObservedTokenBreakdown{Total: 180}, Status: observedTokensStatusEstimated},
-			},
-		},
 	}
 
 	out, err := f.Fetch(context.Background())
@@ -1002,9 +809,6 @@ func TestFetcherKeepsUnverifiedAccountsDistinctByHome(t *testing.T) {
 	}
 	if len(out.Accounts) != 2 {
 		t.Fatalf("expected two account rows for unverified homes, got %d", len(out.Accounts))
-	}
-	if out.ObservedTokensWeekly == nil || *out.ObservedTokensWeekly != 380 {
-		t.Fatalf("expected summed unverified observed weekly total, got %+v", out.ObservedTokensWeekly)
 	}
 }
 
@@ -1024,12 +828,6 @@ func TestFetcherUsesActiveHomeIdentityForCurrentAccount(t *testing.T) {
 				account:  MonitorAccount{Label: "b", CodexHome: "/b"},
 				primary:  &fakeSource{name: "primary-b", out: &Summary{AccountEmail: "b@example.com", WeeklyWindow: WindowSummary{UsedPercent: 19}}},
 				fallback: &fakeSource{name: "fallback-b"},
-			},
-		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {WindowWeekly: ObservedTokenBreakdown{Total: 2}, Status: observedTokensStatusEstimated},
-				"/b": {WindowWeekly: ObservedTokenBreakdown{Total: 4}, Status: observedTokensStatusEstimated},
 			},
 		},
 	}
@@ -1087,7 +885,6 @@ func TestFetcherClonesRateLimitWindowsForActiveAndAccountRows(t *testing.T) {
 		WeeklyWindow:         WindowSummary{UsedPercent: 20},
 		AdditionalLimitCount: 1,
 		RateLimitWindows:     baseWindows,
-		ObservedTokensStatus: observedTokensStatusUnavailable,
 		WindowAccountLabel:   "a",
 		FetchedAt:            time.Now().UTC(),
 	}
@@ -1298,12 +1095,6 @@ func TestFetcherMarksWindowUnavailableWhenActiveFetchFails(t *testing.T) {
 				fallback: &fakeSource{name: "fallback-b", err: errors.New("fallback boom")},
 			},
 		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {WindowWeekly: ObservedTokenBreakdown{Total: 2}, Status: observedTokensStatusEstimated},
-				"/b": {WindowWeekly: ObservedTokenBreakdown{Total: 4}, Status: observedTokensStatusEstimated},
-			},
-		},
 	}
 
 	out, err := f.Fetch(context.Background())
@@ -1324,7 +1115,7 @@ func TestFetcherMarksWindowUnavailableWhenActiveFetchFails(t *testing.T) {
 	}
 }
 
-func TestFetcherReturnsNilSummaryWhenAllFetchesFailWithoutObservedTokens(t *testing.T) {
+func TestFetcherReturnsNilSummaryWhenAllFetchesFail(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "/a")
@@ -1342,7 +1133,7 @@ func TestFetcherReturnsNilSummaryWhenAllFetchesFailWithoutObservedTokens(t *test
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if got, want := err.Error(), "all account fetches failed and observed tokens are unavailable"; got != want {
+	if got, want := err.Error(), "all account fetches failed"; got != want {
 		t.Fatalf("Fetch() error = %q, want %q", got, want)
 	}
 	if out != nil {
@@ -1360,13 +1151,11 @@ func TestFetcherSummarizesExpiredAuthWarning(t *testing.T) {
 				primary:  &fakeSource{name: "primary", err: errors.New(`primary source "app-server" failed: {"code":"token_expired","message":"Provided authentication token is expired. Please try signing in again."}`)},
 				fallback: &fakeSource{name: "fallback", err: errors.New(`oauth endpoint returned HTTP 401: {"code":"token_expired","message":"Provided authentication token is expired. Please try signing in again."}`)},
 			},
-		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/personal": {
-					WindowWeekly: ObservedTokenBreakdown{Total: 7},
-					Status:       observedTokensStatusEstimated,
-				},
+			{
+				account: MonitorAccount{Label: "successful", CodexHome: "/successful"},
+				primary: &fakeSource{name: "successful", out: &Summary{
+					WeeklyWindow: WindowSummary{UsedPercent: 20},
+				}},
 			},
 		},
 	}
@@ -1457,12 +1246,6 @@ func TestFetcherUpdatesWindowCardsWhenActiveHomeSwitches(t *testing.T) {
 				fallback: &fakeSource{name: "fallback-b"},
 			},
 		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {WindowWeekly: ObservedTokenBreakdown{Total: 2}, Status: observedTokensStatusEstimated},
-				"/b": {WindowWeekly: ObservedTokenBreakdown{Total: 4}, Status: observedTokensStatusEstimated},
-			},
-		},
 	}
 
 	t.Setenv("CODEX_HOME", "/a")
@@ -1506,12 +1289,6 @@ func TestFetcherMarksWindowUnavailableWhenActiveHomeMissing(t *testing.T) {
 				account:  MonitorAccount{Label: "b", CodexHome: "/b"},
 				primary:  &fakeSource{name: "primary-b", out: &Summary{AccountEmail: "b@example.com", WeeklyWindow: WindowSummary{UsedPercent: 70}}},
 				fallback: &fakeSource{name: "fallback-b"},
-			},
-		},
-		observed: fakeEstimator{
-			values: map[string]ObservedTokenEstimate{
-				"/a": {WindowWeekly: ObservedTokenBreakdown{Total: 2}, Status: observedTokensStatusEstimated},
-				"/b": {WindowWeekly: ObservedTokenBreakdown{Total: 4}, Status: observedTokensStatusEstimated},
 			},
 		},
 	}
@@ -1589,7 +1366,6 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 		accountCount := 2 + rng.Intn(5)
 		homes := make([]string, accountCount)
 		fetchers := make([]accountFetcher, 0, accountCount)
-		observedValues := map[string]ObservedTokenEstimate{}
 		summariesByIndex := make([]*Summary, accountCount)
 
 		for i := 0; i < accountCount; i++ {
@@ -1621,13 +1397,6 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 				summariesByIndex[i] = summary
 			}
 
-			observedValues[home] = ObservedTokenEstimate{
-				Status: observedTokensStatusEstimated,
-				WindowWeekly: ObservedTokenBreakdown{
-					Total: int64(1000 + rng.Intn(9000)),
-				},
-			}
-
 			fetchers = append(fetchers, accountFetcher{
 				account:  MonitorAccount{Label: fmt.Sprintf("a-%d", i), CodexHome: home},
 				primary:  primary,
@@ -1638,10 +1407,7 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 		activeHome := homes[rng.Intn(len(homes))]
 		t.Setenv("CODEX_HOME", activeHome)
 
-		f := &Fetcher{
-			accounts: fetchers,
-			observed: fakeEstimator{values: observedValues},
-		}
+		f := &Fetcher{accounts: fetchers}
 
 		out, err := f.Fetch(context.Background())
 		successCount := 0
@@ -1651,18 +1417,24 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 			}
 		}
 		if successCount == 0 {
-			if err != nil {
-				t.Fatalf("iter %d: expected observed-only success, got error: %v", iter, err)
+			if err == nil {
+				t.Fatalf("iter %d: expected error when all fetches fail", iter)
 			}
-		} else if err != nil {
+			if got, want := err.Error(), "all account fetches failed"; got != want {
+				t.Fatalf("iter %d: fetch error = %q, want %q", iter, got, want)
+			}
+			if out != nil {
+				t.Fatalf("iter %d: expected nil summary when all fetches fail, got %+v", iter, out)
+			}
+			continue
+		}
+		if err != nil {
 			t.Fatalf("iter %d: unexpected fetch error: %v", iter, err)
 		}
 
 		totalIdentities := map[string]struct{}{}
 		successfulIdentities := map[string]struct{}{}
 		var activeSummary *Summary
-		expectedObserved1w := int64(0)
-		observedByIdentity := map[string]ObservedTokenBreakdown{}
 
 		for idx, account := range fetchers {
 			home := account.account.CodexHome
@@ -1683,11 +1455,6 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 			if summary != nil {
 				successfulIdentities[key] = struct{}{}
 			}
-			observed := observedValues[home]
-			observedByIdentity[key] = addBreakdowns(observedByIdentity[key], observed.WindowWeekly)
-		}
-		for _, weekly := range observedByIdentity {
-			expectedObserved1w += weekly.Total
 		}
 
 		if out.TotalAccounts != len(totalIdentities) {
@@ -1699,10 +1466,6 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 		if len(out.Accounts) != len(totalIdentities) {
 			t.Fatalf("iter %d: expected account row count %d, got %d", iter, len(totalIdentities), len(out.Accounts))
 		}
-		if out.ObservedTokensWeekly == nil || *out.ObservedTokensWeekly != expectedObserved1w {
-			t.Fatalf("iter %d: expected observed weekly %d, got %+v", iter, expectedObserved1w, out.ObservedTokensWeekly)
-		}
-
 		if activeSummary != nil {
 			if !out.WindowDataAvailable {
 				t.Fatalf("iter %d: expected active window data to be available", iter)

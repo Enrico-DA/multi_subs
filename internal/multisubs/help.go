@@ -42,7 +42,6 @@ var codexCommandSummaries = []struct {
 	{Name: "status", Summary: "show Codex profile authentication states"},
 	{Name: "usage", Summary: "show Codex quota for every routed account"},
 	{Name: "reconcile", Summary: "reconcile resources for all Codex profiles"},
-	{Name: "heartbeat", Summary: "send a small keepalive for logged-in Codex profiles"},
 	{Name: "monitor [args...]", Summary: "show live Codex subscription usage"},
 	{Name: "doctor [flags]", Summary: "run focused, read-only Codex checks"},
 	{Name: "dry-run [operation]", Summary: "preview Codex operations without changing state"},
@@ -151,21 +150,13 @@ var commandHelpByName = map[string]commandHelp{
 		Usage:       "multisubs codex reconcile",
 		Description: "Apply configured guidance and skill links to every Codex profile without reading credentials or launching Codex.",
 	},
-	"codex heartbeat": {
-		Usage:       "multisubs codex heartbeat",
-		Description: "Send an ephemeral, read-only keepalive to every logged-in Codex profile with bounded retry and locking.",
-	},
 	"codex monitor": {
-		Usage:       "multisubs codex monitor [--interval 60s] [--timeout 60s] [--no-color] [--no-alt-screen] [--include-default] [--include-active] [--discover]",
+		Usage:       "multisubs codex monitor",
 		Description: "Run the Codex subscription-usage terminal interface.",
 	},
 	"codex monitor doctor": {
 		Usage:       "multisubs codex monitor doctor [--json] [--timeout 60s] [--include-default] [--include-active] [--discover] [--app-server]",
 		Description: "Run read-only checks against configured Codex usage sources.",
-	},
-	"codex monitor tui": {
-		Usage:       "multisubs codex monitor tui [flags]",
-		Description: "Run the Codex usage terminal interface explicitly.",
 	},
 	"codex monitor completion": {
 		Usage:       "multisubs codex monitor completion [bash|zsh|fish]",

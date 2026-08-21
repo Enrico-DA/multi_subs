@@ -69,7 +69,6 @@ func validateRepository(root string, trackedPaths []string) []string {
 	repo.checkApplicationName()
 	repo.checkMonitorIdentity()
 	repo.checkOAuthUserAgent()
-	repo.checkTUIIdentity()
 	repo.checkReleaseWorkflow()
 	repo.checkLegacyConstantStrings()
 	repo.checkForbiddenLegacyEnvironmentReads()
@@ -325,41 +324,6 @@ func (repo *repository) checkOAuthUserAgent() {
 	})
 	if !foundUserAgent {
 		repo.errors = append(repo.errors, fmt.Sprintf("%s: OAuth User-Agent must actively use clientName+%q+buildinfo.Version", relativePath, "/"))
-	}
-}
-
-func (repo *repository) checkTUIIdentity() {
-	const relativePath = "internal/monitor/tui/model.go"
-	file, ok := repo.parseGoFile(relativePath)
-	if !ok {
-		return
-	}
-	renderHeader := findFunction(file, "renderHeader")
-	if renderHeader == nil || renderHeader.Body == nil {
-		repo.errors = append(repo.errors, fmt.Sprintf("%s: TUI must define renderHeader", relativePath))
-		return
-	}
-
-	foundTitle := false
-	foundCompactName := false
-	ast.Inspect(renderHeader.Body, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok || len(call.Args) != 1 {
-			return true
-		}
-		switch selectorChain(call.Fun) {
-		case "m.styles.title.Render":
-			foundTitle = stringConstant(call.Args[0]) == " multisubs codex monitor " || foundTitle
-		case "m.styles.accent.Render":
-			foundCompactName = stringConstant(call.Args[0]) == "multisubs" || foundCompactName
-		}
-		return true
-	})
-	if !foundTitle {
-		repo.errors = append(repo.errors, fmt.Sprintf("%s: active monitor TUI title is incorrect", relativePath))
-	}
-	if !foundCompactName {
-		repo.errors = append(repo.errors, fmt.Sprintf("%s: active compact monitor TUI product name is incorrect", relativePath))
 	}
 }
 

@@ -50,7 +50,6 @@ func TestProviderAndNestedHelpTopics(t *testing.T) {
 		{args: []string{"help", "status"}, want: "Next section"},
 		{args: []string{"help", "usage"}, want: "multisubs usage"},
 		{args: []string{"help", "codex", "usage"}, want: "multisubs codex usage"},
-		{args: []string{"help", "codex", "heartbeat"}, want: "multisubs codex heartbeat"},
 		{args: []string{"help", "codex", "monitor", "doctor"}, want: "multisubs codex monitor doctor"},
 		{args: []string{"help", "claude", "exec"}, want: "multisubs claude exec"},
 	}
@@ -237,9 +236,7 @@ func TestFishCompletionTokensFollowStrictCommandTree(t *testing.T) {
 			name: "Codex monitor root",
 			path: []string{"codex", "monitor"},
 			want: []string{
-				"doctor", "completion", "help", "tui",
-				"--interval", "--timeout", "--no-color", "--no-alt-screen",
-				"--include-default", "--include-active", "--discover",
+				"doctor", "completion", "help",
 			},
 		},
 		{
@@ -257,17 +254,9 @@ func TestFishCompletionTokensFollowStrictCommandTree(t *testing.T) {
 			path: []string{"codex", "monitor", "help"},
 		},
 		{
-			name: "Codex monitor TUI",
-			path: []string{"codex", "monitor", "tui"},
-			want: []string{
-				"--interval", "--timeout", "--no-color", "--no-alt-screen",
-				"--include-default", "--include-active", "--discover",
-			},
-		},
-		{
 			name: "nested global help",
 			path: []string{"help", "codex", "monitor"},
-			want: []string{"doctor", "completion", "help", "tui"},
+			want: []string{"doctor", "completion", "help"},
 		},
 	}
 
@@ -291,12 +280,12 @@ func TestCompletionStopsAtCodexMonitorHelp(t *testing.T) {
 		{
 			name:      "bash",
 			output:    renderBashCompletion(),
-			forbidden: `help)` + "\n" + `                COMPREPLY=( $(compgen -W "doctor completion tui help"`,
+			forbidden: `help)` + "\n" + `                COMPREPLY=( $(compgen -W "doctor completion help"`,
 		},
 		{
 			name:      "zsh",
 			output:    renderZshCompletion(),
-			forbidden: `help) compadd -- doctor completion tui help`,
+			forbidden: `help) compadd -- doctor completion help`,
 		},
 		{
 			name:      "fish",
@@ -329,7 +318,7 @@ func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
 			output:    renderBashCompletion(),
 			guarded: "        help)\n" +
 				"          if (( COMP_CWORD == 3 )); then\n" +
-				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help\" -- \"$cur\") )\n" +
+				"            COMPREPLY=( $(compgen -W \"init add login login-all cli exec generate status usage reconcile monitor doctor dry-run help\" -- \"$cur\") )\n" +
 				"          fi",
 		},
 		{
@@ -347,7 +336,7 @@ func TestProviderHelpCompletionStopsAfterOneTopic(t *testing.T) {
 			output:    renderZshCompletion(),
 			guarded: "        help)\n" +
 				"          if (( CURRENT == 4 )); then\n" +
-				"            compadd -- init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help\n" +
+				"            compadd -- init add login login-all cli exec generate status usage reconcile monitor doctor dry-run help\n" +
 				"          fi",
 		},
 		{

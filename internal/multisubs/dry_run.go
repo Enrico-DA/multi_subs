@@ -49,8 +49,7 @@ func renderDryRunOverview(store *Store, cfg *Config, resolved *resolvedProfileRe
 	b.WriteString("3. login <name> runs official codex login within that profile context.\n")
 	b.WriteString("4. cli <name> starts an interactive Codex session with profile-local state.\n")
 	b.WriteString("5. exec routes codex exec across the default account and managed profiles using the same weekly policy. It checks default-account login twice, then warns and selects once more without default if neither check confirms login.\n")
-	b.WriteString("6. heartbeat sends one fixed, ephemeral, read-only keepalive for logged-in profiles without persisting Codex sessions.\n")
-	b.WriteString("7. multisubs does not switch or restore the shared default Codex auth account.\n\n")
+	b.WriteString("6. multisubs does not switch or restore the shared default Codex auth account.\n\n")
 	b.WriteString("dry-run only: no commands were executed and no files were changed.\n")
 	return b.String()
 }

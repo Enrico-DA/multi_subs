@@ -10,27 +10,22 @@ const defaultRateLimitID = "codex"
 
 // Summary is the normalized subscription usage snapshot used by CLI and TUI.
 type Summary struct {
-	Source                string                     `json:"source"`
-	PlanType              string                     `json:"plan_type"`
-	AccountEmail          string                     `json:"account_email,omitempty"`
-	AccountID             string                     `json:"account_id,omitempty"`
-	UserID                string                     `json:"user_id,omitempty"`
-	WindowDataAvailable   bool                       `json:"window_data_available"`
-	SessionWindow         WindowSummary              `json:"session_window"`
-	WeeklyWindow          WindowSummary              `json:"weekly_window"`
-	WindowAccountLabel    string                     `json:"window_account_label,omitempty"`
-	AdditionalLimitCount  int                        `json:"additional_limit_count,omitempty"`
-	RateLimitWindows      map[string]RateLimitWindow `json:"rate_limit_windows,omitempty"`
-	TotalAccounts         int                        `json:"total_accounts,omitempty"`
-	SuccessfulAccounts    int                        `json:"successful_accounts,omitempty"`
-	Accounts              []AccountSummary           `json:"accounts,omitempty"`
-	ObservedTokensWeekly  *int64                     `json:"observed_tokens_weekly,omitempty"`
-	ObservedWindowWeekly  *ObservedTokenBreakdown    `json:"observed_window_weekly,omitempty"`
-	ObservedTokensStatus  string                     `json:"observed_tokens_status,omitempty"`
-	ObservedTokensWarming bool                       `json:"observed_tokens_warming,omitempty"`
-	ObservedTokensNote    string                     `json:"observed_tokens_note,omitempty"`
-	Warnings              []string                   `json:"warnings,omitempty"`
-	FetchedAt             time.Time                  `json:"fetched_at"`
+	Source               string                     `json:"source"`
+	PlanType             string                     `json:"plan_type"`
+	AccountEmail         string                     `json:"account_email,omitempty"`
+	AccountID            string                     `json:"account_id,omitempty"`
+	UserID               string                     `json:"user_id,omitempty"`
+	WindowDataAvailable  bool                       `json:"window_data_available"`
+	SessionWindow        WindowSummary              `json:"session_window"`
+	WeeklyWindow         WindowSummary              `json:"weekly_window"`
+	WindowAccountLabel   string                     `json:"window_account_label,omitempty"`
+	AdditionalLimitCount int                        `json:"additional_limit_count,omitempty"`
+	RateLimitWindows     map[string]RateLimitWindow `json:"rate_limit_windows,omitempty"`
+	TotalAccounts        int                        `json:"total_accounts,omitempty"`
+	SuccessfulAccounts   int                        `json:"successful_accounts,omitempty"`
+	Accounts             []AccountSummary           `json:"accounts,omitempty"`
+	Warnings             []string                   `json:"warnings,omitempty"`
+	FetchedAt            time.Time                  `json:"fetched_at"`
 }
 
 type WindowSummary struct {
@@ -42,24 +37,19 @@ type WindowSummary struct {
 }
 
 type AccountSummary struct {
-	Label                 string                     `json:"label"`
-	Source                string                     `json:"source,omitempty"`
-	PlanType              string                     `json:"plan_type,omitempty"`
-	AccountEmail          string                     `json:"account_email,omitempty"`
-	AccountID             string                     `json:"account_id,omitempty"`
-	UserID                string                     `json:"user_id,omitempty"`
-	SessionWindow         WindowSummary              `json:"session_window,omitempty"`
-	WeeklyWindow          WindowSummary              `json:"weekly_window,omitempty"`
-	AdditionalLimitCount  int                        `json:"additional_limit_count,omitempty"`
-	RateLimitWindows      map[string]RateLimitWindow `json:"rate_limit_windows,omitempty"`
-	ObservedTokensWeekly  *int64                     `json:"observed_tokens_weekly,omitempty"`
-	ObservedWindowWeekly  *ObservedTokenBreakdown    `json:"observed_window_weekly,omitempty"`
-	ObservedTokensStatus  string                     `json:"observed_tokens_status,omitempty"`
-	ObservedTokensWarming bool                       `json:"observed_tokens_warming,omitempty"`
-	ObservedTokensNote    string                     `json:"observed_tokens_note,omitempty"`
-	Warnings              []string                   `json:"warnings,omitempty"`
-	Error                 string                     `json:"error,omitempty"`
-	FetchedAt             *time.Time                 `json:"fetched_at,omitempty"`
+	Label                string                     `json:"label"`
+	Source               string                     `json:"source,omitempty"`
+	PlanType             string                     `json:"plan_type,omitempty"`
+	AccountEmail         string                     `json:"account_email,omitempty"`
+	AccountID            string                     `json:"account_id,omitempty"`
+	UserID               string                     `json:"user_id,omitempty"`
+	SessionWindow        WindowSummary              `json:"session_window,omitempty"`
+	WeeklyWindow         WindowSummary              `json:"weekly_window,omitempty"`
+	AdditionalLimitCount int                        `json:"additional_limit_count,omitempty"`
+	RateLimitWindows     map[string]RateLimitWindow `json:"rate_limit_windows,omitempty"`
+	Warnings             []string                   `json:"warnings,omitempty"`
+	Error                string                     `json:"error,omitempty"`
+	FetchedAt            *time.Time                 `json:"fetched_at,omitempty"`
 }
 
 type RateLimitWindow struct {

@@ -50,7 +50,7 @@ Decision: Persistent product state defaults to `~/multisubs`, with `MULTISUBS_HO
 
 Why: A hard rename is safer than two homes or two environment namespaces that can disagree.
 
-Enforcement: Runtime path resolution reads only the new variables. Active heartbeat, routing metadata, Claude metadata, and selected-profile markers use the new namespace.
+Enforcement: Runtime path resolution reads only the new variables. Routing metadata, Claude metadata, and selected-profile markers use the new namespace.
 
 ## Reject legacy controls
 
@@ -76,15 +76,15 @@ Decision: Fail closed when a profile path, sensitive file, lock, or routing meta
 
 Why: Symlinks, hard links, broad permissions, or paths outside product state can cross account boundaries or leak credentials.
 
-Enforcement: State and profile paths are private. Sensitive files and locks reject unsafe links. Selected-profile metadata and heartbeat lock overrides stay below `MULTISUBS_HOME`.
+Enforcement: State and profile paths are private. Sensitive files and locks reject unsafe links. Selected-profile metadata stays below `MULTISUBS_HOME`.
 
-## Keep the live monitor recoverable without stale targets
+## Report usage as a snapshot, not a live interface
 
-Decision: A failed scheduled account reload stops the current monitor targets, but not the monitor loop. The loop reports the fetch error and retries the account reload on its normal schedule.
+Decision: The product reports Codex and Claude usage through `multisubs usage` and `multisubs status`. There is no live terminal interface, no observed-token estimation, and no keepalive command.
 
-Why: Continuing to fetch an old target set could spend or expose the wrong account after registry state changed. Exiting the whole interface would also require a manual restart after a short read failure. Keeping only the loop alive fails closed for provider access while allowing a later verified registry to recover.
+Why: The terminal interface, the observed-token estimator that only fed it, and the heartbeat keepalive were each carrying real cost for no product-owned workflow. The estimator scanned local session files and spread its fields across the usage model and fetcher for a number nothing else consumed. The interface pulled in the entire terminal-UI dependency tree. Nothing in the repository scheduled the keepalive, and it spent subscription quota when run. Removing all three leaves one authoritative usage path and a single direct dependency.
 
-Enforcement: A loader error closes and clears all current account fetchers before `Fetch` returns the existing no-accounts error. A reload that returns a verified safe set replaces the previous set, including with an empty set when every target was rejected.
+Enforcement: `internal/monitor/tui` and the observed-token estimator no longer exist. `multisubs codex monitor` prints its usage; the surviving nested topics are `doctor`, `completion`, and `help`. `multisubs codex heartbeat` is gone from routing, help, and completion. `go.mod` declares one direct dependency.
 
 ## Preserve no-clobber resource reconciliation
 
@@ -106,13 +106,13 @@ Migration impact: Existing valid default-config symlinks and single-link manual 
 
 ## Keep usage rules provider-specific
 
-Decision: Present Codex and Claude quota through one provider-neutral report model while keeping collection and routing rules provider-specific. Codex routing and the live monitor stay weekly-only. Successful monitor doctor fetch checks add only plan, source, and available weekly usage as structured usage fields. Claude routing uses fresh session and weekly all-model usage, plus Fable usage for each candidate whose effective model or fallback is applicable to Fable or cannot be classified conclusively. Each provider's default account competes normally with its managed profiles.
+Decision: Present Codex and Claude quota through one provider-neutral report model while keeping collection and routing rules provider-specific. Codex routing and monitor sources stay weekly-only. Successful monitor doctor fetch checks add only plan, source, and available weekly usage as structured usage fields. Claude routing uses fresh session and weekly all-model usage, plus Fable usage for each candidate whose effective model or fallback is applicable to Fable or cannot be classified conclusively. Each provider's default account competes normally with its managed profiles.
 
 Why: Users need one quick quota snapshot without hiding account-level differences. Scripts also need monitor health values without parsing an English sentence, while unavailable data must not look like real usage. A shared formatter keeps labels, partial failures, and reset display consistent, but combining provider collectors or routing scores would weaken their different safety rules. Claude model settings can differ between the default account and each isolated managed profile. A single invocation-wide Fable decision can either exclude a valid account or spend against a window that the selected account does not need.
 
 Enforcement: `multisubs usage` and both provider usage commands share one presentation model and renderer. Codex exec and usage share typed managed/default target enumeration and one account-ID-first identity reconciler from the usage package. A strictly validated normalized email is the Codex fallback, and user ID alone is never used. Automatic Codex routing compares requested weekly/model eligibility across every successful duplicate and fails the logical group closed on any bucket, availability, exhaustion, percentage, or reset disagreement before choosing a physical home. The report layer can recover only a normalized auth-file email after a Codex probe failure. It skips that read after choosing the unmanaged default app-server path. Claude usage uses a routing-independent logged-in organization/email validator and one deadline for official auth, usage, and auth again. It groups only unchanged identities. Different strong Codex account IDs and different Claude organization IDs remain separate even when email matches.
 
-The usage report creates no multisubs product state, changes no credentials, has bounded per-account collection, closes each Codex source once after fetch cancellation, treats cleanup failure as a safe partial failure, and has no JSON form in this release. The official unmanaged default Codex app server may write non-credential logs, caches, database files, and database write-ahead files in the default home. The report excludes monitor-only, active-home, discovered, and observed-token sources. Duplicate logical subscriptions use one deterministically chosen successful quota snapshot and one availability count; percentages are never averaged. Managed aliases sort, a group containing default renders `(also default)`, and that row stays last. Codex extra-limit display uses fixed product-owned labels only, currently Spark. Claude session duration comes only from an explicit bounded parenthesized heading fragment. Claude reset text is rendered only through a strict allow-list grammar.
+The usage report creates no multisubs product state, changes no credentials, has bounded per-account collection, closes each Codex source once after fetch cancellation, treats cleanup failure as a safe partial failure, and has no JSON form in this release. The official unmanaged default Codex app server may write non-credential logs, caches, database files, and database write-ahead files in the default home. The report excludes monitor-only, active-home, and discovered sources. Duplicate logical subscriptions use one deterministically chosen successful quota snapshot and one availability count; percentages are never averaged. Managed aliases sort, a group containing default renders `(also default)`, and that row stays last. Codex extra-limit display uses fixed product-owned labels only, currently Spark. Claude session duration comes only from an explicit bounded parenthesized heading fragment. Claude reset text is rendered only through a strict allow-list grammar.
 
 Monitor doctor JSON preserves the human details text. It adds structured usage fields only after a successful fetch, omits the weekly percentage when it is unavailable, and never exposes the internal unavailable value or a made-up zero. The new fields add no session windows or provider account identifiers to this weekly-only health contract.
 

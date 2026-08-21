@@ -76,7 +76,7 @@ _multisubs_complete() {
       ;;
     codex)
       if (( COMP_CWORD == 2 )); then
-        COMPREPLY=( $(compgen -W "init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "init add login login-all cli exec generate status usage reconcile monitor doctor dry-run help" -- "$cur") )
         return 0
       fi
       case "$provider" in
@@ -130,7 +130,7 @@ _multisubs_complete() {
           ;;
         help)
           if (( COMP_CWORD == 3 )); then
-            COMPREPLY=( $(compgen -W "init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "init add login login-all cli exec generate status usage reconcile monitor doctor dry-run help" -- "$cur") )
           fi
           ;;
       esac
@@ -164,7 +164,7 @@ _multisubs_complete() {
       elif (( COMP_CWORD == 3 )); then
         case "${COMP_WORDS[2]}" in
           codex)
-            COMPREPLY=( $(compgen -W "init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "init add login login-all cli exec generate status usage reconcile monitor doctor dry-run help" -- "$cur") )
             ;;
           claude)
             COMPREPLY=( $(compgen -W "add login cli exec status usage doctor help" -- "$cur") )
@@ -217,7 +217,7 @@ _multisubs_complete() {
       ;;
     codex)
       if (( CURRENT == 3 )); then
-        compadd -- init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help
+        compadd -- init add login login-all cli exec generate status usage reconcile monitor doctor dry-run help
         return
       fi
       case "$provider" in
@@ -265,7 +265,7 @@ _multisubs_complete() {
           ;;
         help)
           if (( CURRENT == 4 )); then
-            compadd -- init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help
+            compadd -- init add login login-all cli exec generate status usage reconcile monitor doctor dry-run help
           fi
           ;;
       esac
@@ -298,7 +298,7 @@ _multisubs_complete() {
         compadd -- init install doctor status usage codex claude completion version help
       elif (( CURRENT == 4 )); then
         case "${words[3]:-}" in
-          codex) compadd -- init add login login-all cli exec generate status usage reconcile heartbeat monitor doctor dry-run help ;;
+          codex) compadd -- init add login login-all cli exec generate status usage reconcile monitor doctor dry-run help ;;
           claude) compadd -- add login cli exec status usage doctor help ;;
         esac
       elif (( CURRENT == 5 )) && [[ "${words[3]:-}" == "codex" && "${words[4]:-}" == "monitor" ]]; then
@@ -321,10 +321,9 @@ type fishCompletionEntry struct {
 }
 
 func fishCompletionEntries() []fishCompletionEntry {
-	codexCommands := []string{"init", "add", "login", "login-all", "cli", "exec", "generate", "status", "usage", "reconcile", "heartbeat", "monitor", "doctor", "dry-run", "help"}
+	codexCommands := []string{"init", "add", "login", "login-all", "cli", "exec", "generate", "status", "usage", "reconcile", "monitor", "doctor", "dry-run", "help"}
 	claudeCommands := []string{"add", "login", "cli", "exec", "status", "usage", "doctor", "help"}
-	monitorCommands := []string{"doctor", "completion", "help", "tui"}
-	monitorTUIOptions := []string{"interval", "timeout", "no-color", "no-alt-screen", "include-default", "include-active", "discover"}
+	monitorCommands := []string{"doctor", "completion", "help"}
 
 	return []fishCompletionEntry{
 		{tokens: []string{"init", "install", "doctor", "status", "usage", "codex", "claude", "completion", "version", "help"}},
@@ -346,10 +345,9 @@ func fishCompletionEntries() []fishCompletionEntry {
 		{path: []string{"completion"}, tokens: []string{"bash", "zsh", "fish"}},
 		{path: []string{"doctor"}, matchPathPrefix: true, longOptions: []string{"json", "timeout"}},
 		{path: []string{"codex", "doctor"}, matchPathPrefix: true, longOptions: []string{"json", "timeout"}},
-		{path: []string{"codex", "monitor"}, tokens: monitorCommands, longOptions: monitorTUIOptions},
+		{path: []string{"codex", "monitor"}, tokens: monitorCommands},
 		{path: []string{"codex", "monitor", "completion"}, tokens: []string{"bash", "zsh", "fish"}},
 		{path: []string{"codex", "monitor", "doctor"}, matchPathPrefix: true, longOptions: []string{"json", "timeout", "include-default", "include-active", "discover", "app-server"}},
-		{path: []string{"codex", "monitor", "tui"}, matchPathPrefix: true, longOptions: monitorTUIOptions},
 		{path: []string{"codex", "help"}, tokens: codexCommands},
 		{path: []string{"claude", "help"}, tokens: claudeCommands},
 	}

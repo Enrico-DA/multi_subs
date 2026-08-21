@@ -9,7 +9,7 @@
 
 ## Purpose and layout
 
-- `multisubs` is a local-first Go CLI for isolated Codex and Claude subscription profiles, provider-specific execution routing, heartbeat checks, and usage monitoring.
+- `multisubs` is a local-first Go CLI for isolated Codex and Claude subscription profiles, provider-specific execution routing, and usage reporting.
 - `cmd/multisubs/` contains the entry point. Product code and tests live under `internal/`.
 - `README.md` is the user guide. `docs/command-spec.md` is the command contract, `docs/security-and-privacy.md` is the security contract, and `docs/decisions.md` records durable cross-cutting rationale.
 

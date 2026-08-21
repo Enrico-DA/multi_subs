@@ -14,7 +14,6 @@ import (
 
 type Fetcher struct {
 	accounts                []accountFetcher
-	observed                tokenEstimator
 	initializationNote      string
 	accountLoader           func() ([]MonitorAccount, string, error)
 	accountRefreshInterval  time.Duration
@@ -35,29 +34,22 @@ type accountFetcher struct {
 }
 
 type accountFetchResult struct {
-	codexHome           string
-	selectionPriority   int
-	account             AccountSummary
-	snapshot            *Summary
-	fetchErr            error
-	observedAvailable   bool
-	observedUnavailable bool
-	warnings            []string
-}
-
-type tokenEstimator interface {
-	Estimate(codexHome string, now time.Time) (ObservedTokenEstimate, error)
+	codexHome         string
+	selectionPriority int
+	account           AccountSummary
+	snapshot          *Summary
+	fetchErr          error
+	warnings          []string
 }
 
 func NewDefaultFetcherWithAccountOptions(options MonitorAccountOptions) *Fetcher {
-	return newFetcherWithAccountLoader(true, func() ([]MonitorAccount, string, error) {
+	return newFetcherWithAccountLoader(func() ([]MonitorAccount, string, error) {
 		return loadMonitorAccountsWithOptions(options)
 	})
 }
 
-func newFetcherWithAccountLoader(asyncObserved bool, loader func() ([]MonitorAccount, string, error)) *Fetcher {
+func newFetcherWithAccountLoader(loader func() ([]MonitorAccount, string, error)) *Fetcher {
 	f := &Fetcher{
-		observed:               newObservedTokenEstimator(60*time.Second, asyncObserved),
 		accountLoader:          loader,
 		accountRefreshInterval: 60 * time.Second,
 	}
@@ -84,20 +76,15 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 	f.refreshAccounts(now, false)
 
 	out := &Summary{
-		ObservedTokensStatus: observedTokensStatusUnavailable,
-		FetchedAt:            now,
+		FetchedAt: now,
 	}
 	if f.initializationNote != "" {
 		out.Warnings = append(out.Warnings, f.initializationNote)
 	}
 
 	anyAccountSuccess := false
-	anyObservedAvailable := false
-	anyObservedWarming := false
-	unavailableObservedCount := 0
 	totalAccountIdentities := map[string]struct{}{}
 	successfulAccountIdentities := map[string]struct{}{}
-	seenObservedByIdentity := map[string]ObservedTokenBreakdown{}
 	accountByIdentity := map[string]accountSummaryWithHome{}
 	activeHomes := resolveActiveCodexHomes()
 	var activeSuccessChoice *accountFetchResult
@@ -137,22 +124,6 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 					activeSuccessChoice = &candidate
 				}
 			}
-		}
-		if result.observedAvailable {
-			anyObservedAvailable = true
-			weekly := ObservedTokenBreakdown{}
-			if accountOut.ObservedWindowWeekly != nil {
-				weekly = *accountOut.ObservedWindowWeekly
-			}
-
-			identity := accountIdentityOrHomeKey(accountOut, result.codexHome)
-			seenObservedByIdentity[identity] = addBreakdowns(seenObservedByIdentity[identity], weekly)
-		}
-		if result.observedUnavailable {
-			unavailableObservedCount++
-		}
-		if result.account.ObservedTokensWarming {
-			anyObservedWarming = true
 		}
 		out.Warnings = append(out.Warnings, result.warnings...)
 		existing, ok := accountByIdentity[accountIdentity]
@@ -197,30 +168,10 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 		}
 	}
 
-	if anyObservedAvailable {
-		observedTotal := ObservedTokenBreakdown{}
-		for _, weekly := range seenObservedByIdentity {
-			observedTotal = addBreakdowns(observedTotal, weekly)
-		}
-		out.ObservedTokensStatus = observedTokensStatusEstimated
-		out.ObservedWindowWeekly = &observedTotal
-		out.ObservedTokensWeekly = int64Ptr(observedTotal.Total)
-		out.ObservedTokensNote = "sum across accounts"
-		out.ObservedTokensWarming = false
-		if unavailableObservedCount > 0 {
-			out.ObservedTokensStatus = observedTokensStatusPartial
-			out.ObservedTokensNote = "partial sum across accounts; some account homes unavailable"
-		}
-	} else if unavailableObservedCount > 0 {
-		out.ObservedTokensStatus = observedTokensStatusUnavailable
-		out.ObservedTokensNote = "token estimate warming or unavailable"
-		out.ObservedTokensWarming = anyObservedWarming
-	}
-
 	out.Warnings = dedupeStrings(out.Warnings)
 
-	if !anyAccountSuccess && !anyObservedAvailable {
-		return nil, fmt.Errorf("all account fetches failed and observed tokens are unavailable")
+	if !anyAccountSuccess {
+		return nil, fmt.Errorf("all account fetches failed")
 	}
 	return out, nil
 }
@@ -762,19 +713,6 @@ func accountSummariesFromIdentityMap(byIdentity map[string]accountSummaryWithHom
 	return accounts
 }
 
-func addBreakdowns(a, b ObservedTokenBreakdown) ObservedTokenBreakdown {
-	return ObservedTokenBreakdown{
-		Total:           a.Total + b.Total,
-		Input:           a.Input + b.Input,
-		CachedInput:     a.CachedInput + b.CachedInput,
-		Output:          a.Output + b.Output,
-		ReasoningOutput: a.ReasoningOutput + b.ReasoningOutput,
-		CachedOutput:    a.CachedOutput + b.CachedOutput,
-		HasSplit:        a.HasSplit || b.HasSplit,
-		HasCachedOutput: a.HasCachedOutput || b.HasCachedOutput,
-	}
-}
-
 func (f *Fetcher) fetchAccountsConcurrent(ctx context.Context, now time.Time, activeHomes activeHomeSet) []accountFetchResult {
 	if len(f.accounts) == 0 {
 		return nil
@@ -840,30 +778,6 @@ func (f *Fetcher) fetchAccountResult(ctx context.Context, account accountFetcher
 		result.account.Warnings = append(result.account.Warnings, snapshot.Warnings...)
 		ts := snapshot.FetchedAt
 		result.account.FetchedAt = &ts
-	}
-
-	if f.observed != nil {
-		estimate, estimateErr := f.observed.Estimate(account.account.CodexHome, now)
-		if estimateErr != nil {
-			result.account.ObservedTokensStatus = observedTokensStatusUnavailable
-			result.account.ObservedTokensNote = estimate.Note
-			result.account.ObservedTokensWarming = estimate.Warming
-			result.observedUnavailable = true
-			result.warnings = append(result.warnings, fmt.Sprintf("account %q observed tokens unavailable: %v", account.account.Label, estimateErr))
-		} else {
-			result.account.ObservedTokensStatus = estimate.Status
-			result.account.ObservedTokensNote = estimate.Note
-			result.account.ObservedTokensWarming = estimate.Warming
-			result.account.Warnings = append(result.account.Warnings, estimate.Warnings...)
-			result.account.ObservedWindowWeekly = &estimate.WindowWeekly
-			result.account.ObservedTokensWeekly = int64Ptr(estimate.WindowWeekly.Total)
-
-			if estimate.Status == observedTokensStatusUnavailable {
-				result.observedUnavailable = true
-			} else {
-				result.observedAvailable = true
-			}
-		}
 	}
 
 	result.account.Warnings = dedupeStrings(result.account.Warnings)

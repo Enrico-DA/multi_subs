@@ -50,7 +50,7 @@ func TestRunCLICodexCLIProfileHelpUsesNeutralProviderPathWithoutState(t *testing
 			t.Setenv("CODEX_HOME", filepath.Join(root, "stale-codex"))
 			t.Setenv("MULTISUBS_ACTIVE_PROFILE", "stale")
 			t.Setenv("MULTISUBS_SELECTED_PROFILE_PATH", filepath.Join(root, "stale-selection"))
-			t.Setenv("MULTISUBS_HEARTBEAT_PROMPT", "stale-prompt")
+			t.Setenv("MULTISUBS_MONITOR_ACCOUNTS_FILE", "stale-accounts")
 			t.Setenv("MULTISUBS_FUTURE_CONTROL", "stale")
 			t.Setenv("OPENAI_API_KEY", "stale-secret")
 			t.Setenv("CODEX_AUTH_TOKEN", "stale-secret")
@@ -77,7 +77,6 @@ func TestRunCLIRejectsBareCodexCommandsWithoutStateMutation(t *testing.T) {
 		"exec",
 		"generate",
 		"reconcile",
-		"heartbeat",
 		"monitor",
 		"dry-run",
 	}
