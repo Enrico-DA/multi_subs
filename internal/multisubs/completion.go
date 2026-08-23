@@ -95,7 +95,7 @@ _multisubs_complete() {
           ;;
         generate)
           if (( COMP_CWORD == 3 )); then
-            COMPREPLY=( $(compgen -W "--account --model --effort --base-instructions-file --developer-instructions-file --output-schema --json" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--search --account --model --effort --base-instructions-file --developer-instructions-file --output-schema --json" -- "$cur") )
           fi
           if (( COMP_CWORD == 4 )) && [[ "${COMP_WORDS[3]}" == "--account" ]]; then
             COMPREPLY=( $(compgen -W "$(_multisubs_codex_profiles)" -- "$cur") )
@@ -236,7 +236,7 @@ _multisubs_complete() {
           ;;
         generate)
           if (( CURRENT == 4 )); then
-            compadd -- --account --model --effort --base-instructions-file --developer-instructions-file --output-schema --json
+            compadd -- --search --account --model --effort --base-instructions-file --developer-instructions-file --output-schema --json
           fi
           if (( CURRENT == 5 )) && [[ "${words[4]:-}" == "--account" ]]; then
             compadd -- ${=($(_multisubs_codex_profiles))}
@@ -335,7 +335,7 @@ func fishCompletionEntries() []fishCompletionEntry {
 		{path: []string{"help", "codex", "monitor"}, tokens: monitorCommands},
 		{path: []string{"codex", "login"}, argumentExpression: "(__multisubs_codex_profiles)"},
 		{path: []string{"codex", "cli"}, tokens: []string{"--account"}, argumentExpression: "(__multisubs_codex_profiles)"},
-		{path: []string{"codex", "generate"}, tokens: []string{"--account", "--model", "--effort", "--base-instructions-file", "--developer-instructions-file", "--output-schema", "--json"}},
+		{path: []string{"codex", "generate"}, tokens: []string{"--search", "--account", "--model", "--effort", "--base-instructions-file", "--developer-instructions-file", "--output-schema", "--json"}},
 		{path: []string{"codex", "generate", "--account"}, argumentExpression: "(__multisubs_codex_profiles)"},
 		{path: []string{"codex", "cli", "--account"}, argumentExpression: "(__multisubs_codex_profiles)"},
 		{path: []string{"claude", "login"}, argumentExpression: "(__multisubs_claude_profiles)"},
