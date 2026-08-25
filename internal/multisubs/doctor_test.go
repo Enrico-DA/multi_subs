@@ -218,7 +218,11 @@ func TestAggregateAndFocusedDoctorScopesAreReadOnly(t *testing.T) {
 		if len(args) == 1 && args[0] == "--version" {
 			return []byte("claude test\n"), nil, nil
 		}
-		return fakeClaudeAuthJSON(false, ""), nil, nil
+		if strings.Join(args, " ") == "auth status --json" {
+			return fakeClaudeAuthJSONWithOrg(true, "cached-default@example.com", "cached-default-org"), nil, nil
+		}
+		t.Fatalf("unexpected Claude doctor probe: %#v", args)
+		return nil, nil, nil
 	}
 	stateHome := app.store.paths.MultisubsHome
 
@@ -279,9 +283,10 @@ func TestAggregateDoctorCompletesAllSectionsWhenCodexRegistryIsInvalid(t *testin
 				case "--version":
 					return []byte("claude test\n"), nil, nil
 				case "auth status --json":
-					return fakeClaudeAuthJSON(false, ""), nil, nil
+					return fakeClaudeAuthJSONWithOrg(true, "cached-default@example.com", "cached-default-org"), nil, nil
 				default:
-					return nil, nil, errors.New("unexpected Claude doctor command")
+					t.Fatalf("unexpected Claude doctor probe: %#v", args)
+					return nil, nil, nil
 				}
 			}
 

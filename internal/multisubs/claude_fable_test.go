@@ -516,12 +516,13 @@ func (*recordingClaudeFableResolver) Resolve(claudeCLIIntent, claudeTarget) fabl
 
 func TestClaudeExecDoesNotMutateForwardedArgsOrSafeEnvironment(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
+	profile := createClaudeProfiles(t, app, "managed")["managed"]
 	resolver := &recordingClaudeFableResolver{}
 	app.claudeFableResolver = resolver
 	t.Setenv("CLAUDE_FABLE_TEST_PASSTHROUGH", "synthetic-safe-value")
 	t.Setenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 	setFakeUsageCapture(t, runner, map[string][]byte{
-		"": fakeClaudeUsageEnvelope(1, 2, nil),
+		profile.ConfigDir: fakeClaudeUsageEnvelope(1, 2, nil),
 	})
 	args := []string{"--model", "claude-sonnet-4-5-20250929", "prompt", "--", "--model=fable"}
 	originalArgs := append([]string(nil), args...)

@@ -20,9 +20,9 @@ var commandSummaries = []struct {
 	{Name: "install [ref]", Summary: "replace the running binary and persist GOBIN"},
 	{Name: "doctor [flags]", Summary: "run aggregate shared, Codex, and Claude checks"},
 	{Name: "status", Summary: "show quota and the next command when an account is not ready"},
-	{Name: "usage", Summary: "show one quota snapshot for every routed account"},
+	{Name: "usage", Summary: "show quota for managed and default accounts"},
 	{Name: "codex <command>", Summary: "manage and route isolated Codex accounts"},
-	{Name: "claude <command>", Summary: "manage and route isolated Claude accounts"},
+	{Name: "claude <command>", Summary: "manage routed Claude profiles and explicit default access"},
 	{Name: "completion <shell>", Summary: "print shell completion for bash, zsh, or fish"},
 	{Name: "version", Summary: "print the multisubs version"},
 	{Name: "help [topic]", Summary: "show global or topic-specific help"},
@@ -72,7 +72,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"usage": {
 		Usage:       "multisubs usage",
-		Description: "Show a Codex and Claude quota snapshot with validated full local account emails for managed profiles and both default accounts. When any account is unavailable, print a Next section with the exact command to run. The default Codex app-server fallback may write non-credential operational state. Partial account failures exit 1. JSON output is not available yet.",
+		Description: "Show a Codex and Claude quota snapshot with validated full local account emails for managed profiles and the default Codex account. Default Claude quota remains visible as identity unavailable because its cached identity cannot be bound to the live credential. When any account is unavailable, print a Next section with the exact command to run. The default Codex app-server fallback may write non-credential operational state. Partial account failures exit 1. JSON output is not available yet.",
 	},
 	"completion": {
 		Usage:       "multisubs completion <bash|zsh|fish>",
@@ -180,7 +180,7 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"claude": {
 		Usage:       "multisubs claude <command> [args]",
-		Description: "Manage isolated Claude profiles and route Claude print-mode work across the default account and managed profiles.",
+		Description: "Manage isolated Claude profiles and route Claude print-mode work across managed profiles. The unmanaged default is usage-visible and explicitly runnable with `multisubs claude cli default`, but it is never selected automatically.",
 	},
 	"claude add": {
 		Usage:       "multisubs claude add <name>",
@@ -192,23 +192,23 @@ var commandHelpByName = map[string]commandHelp{
 	},
 	"claude cli": {
 		Usage:       "multisubs claude cli <name|default> [claude args...]",
-		Description: "Run the official interactive Claude CLI with a managed profile or the default account.",
+		Description: "Run the official interactive Claude CLI with a managed profile or explicitly with the unmanaged default account.",
 	},
 	"claude exec": {
 		Usage:       "multisubs claude exec [claude -p args...]",
-		Description: "Run official `claude -p` after fresh target-scoped session, weekly all-model, and Fable usage checks.",
+		Description: "Run official `claude -p` on a managed profile after fresh target-scoped session, weekly all-model, and Fable usage checks. The default account is never probed or selected automatically; use `multisubs claude cli default` for explicit access.",
 	},
 	"claude status": {
 		Usage:       "multisubs claude status",
-		Description: "Show official authentication status for the default Claude account and every managed profile. When a target is not logged in, print a Next section with the exact command to run.",
+		Description: "Show official authentication status for the default Claude account and every managed profile. A logged-in default shows identity unavailable and hides cached auth details, but adds no Next step. When a target is not logged in, print a Next section with the exact command to run.",
 	},
 	"claude usage": {
 		Usage:       "multisubs claude usage",
-		Description: "Show fresh session, weekly all-model, and optional Fable quota with validated full local account emails for every managed profile and the default account through the shared usage report. When any account is unavailable, print a Next section with the exact command to run.",
+		Description: "Show fresh session, weekly all-model, and optional Fable quota with validated full local account emails for managed profiles. Default quota remains visible in a separate identity unavailable row, makes the report partial, and points Next at `multisubs doctor` because cached identity cannot be bound to the live credential.",
 	},
 	"claude doctor": {
 		Usage:       "multisubs claude doctor",
-		Description: "Run focused, read-only Claude binary, sidecar, path, and authentication checks.",
+		Description: "Run focused, read-only Claude binary, sidecar, path, and authentication checks. A logged-in default warns that identity cannot be verified and is excluded from managed duplicate checks; that warning alone does not fail doctor.",
 	},
 	"claude help": {
 		Usage:       "multisubs claude help [command]",
@@ -269,8 +269,8 @@ func printClaudeHelp() {
 		{"add <name>", "add a managed Claude profile"},
 		{"login <name> [args...]", "run the official Claude.ai login flow"},
 		{"cli <name|default> [args...]", "run the official interactive Claude CLI"},
-		{"exec [args...]", "route official Claude print mode by fresh usage"},
-		{"status", "show auth status for default and managed profiles"},
+		{"exec [args...]", "route official Claude print mode across managed profiles"},
+		{"status", "show safe auth status for default and managed profiles"},
 		{"usage", "show session, weekly, and Fable quota"},
 		{"doctor", "run focused, read-only Claude checks"},
 		{"help [command]", "show Claude namespace help"},
@@ -278,7 +278,7 @@ func printClaudeHelp() {
 		fmt.Printf("  %-37s %s\n", item.name, item.summary)
 	}
 	fmt.Println()
-	fmt.Println("The default target runs with CLAUDE_CONFIG_DIR absent.")
+	fmt.Println("The default target is explicit-only and runs with CLAUDE_CONFIG_DIR absent.")
 }
 
 func printClaudeCommandHelp(command string) error {

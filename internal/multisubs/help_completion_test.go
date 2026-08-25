@@ -100,6 +100,44 @@ func TestAllUsageHelpTopicsDiscloseValidatedFullLocalEmailOutput(t *testing.T) {
 	}
 }
 
+func TestClaudeHelpDescribesDefaultAsExplicitAndIdentityUnavailable(t *testing.T) {
+	app := newTestAppForCLI(t)
+	tests := []struct {
+		args []string
+		want []string
+	}{
+		{
+			args: []string{"help", "claude", "exec"},
+			want: []string{"never probed or selected automatically", "multisubs claude cli default"},
+		},
+		{
+			args: []string{"help", "claude", "status"},
+			want: []string{"identity unavailable", "adds no Next step"},
+		},
+		{
+			args: []string{"help", "claude", "usage"},
+			want: []string{"separate identity unavailable row", "multisubs doctor"},
+		},
+		{
+			args: []string{"help", "claude", "doctor"},
+			want: []string{"excluded from managed duplicate checks", "warning alone does not fail doctor"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(strings.Join(test.args, "_"), func(t *testing.T) {
+			output, err := captureStdout(t, func() error { return app.Run(test.args) })
+			if err != nil {
+				t.Fatalf("help %q: %v", test.args, err)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(output, want) {
+					t.Fatalf("help %q omitted %q:\n%s", test.args, want, output)
+				}
+			}
+		})
+	}
+}
+
 func TestHelpUnknownTopic(t *testing.T) {
 	app := newTestAppForCLI(t)
 	_, err := captureStdout(t, func() error {

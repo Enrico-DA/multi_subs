@@ -18,7 +18,7 @@ func TestClaudeLoginUsesOfficialClaudeAIFlowForManagedProfile(t *testing.T) {
 			t.Fatalf("unexpected capture args: %#v", args)
 		}
 		if claudeConfigDirFromEnv(env) == "" {
-			return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
+			t.Fatal("managed login checked the shared default identity")
 		}
 		return fakeClaudeAuthJSONWithOrg(true, "work@example.com", "work-org"), nil, nil
 	}
@@ -38,37 +38,48 @@ func TestClaudeLoginUsesOfficialClaudeAIFlowForManagedProfile(t *testing.T) {
 	}
 }
 
-func TestClaudeLoginRejectsDefaultOrganizationDuplicate(t *testing.T) {
+func TestClaudeLoginIgnoresDefaultOrganizationDuplicate(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
-	createClaudeProfiles(t, app, "work")
+	profile := createClaudeProfiles(t, app, "work")["work"]
 	runner.run = func(context.Context, []string, []string) error { return nil }
-	runner.capture = func(_ context.Context, _ []string, env []string) ([]byte, []byte, error) {
-		email := "work@example.com"
-		if claudeConfigDirFromEnv(env) == "" {
-			email = "default@example.com"
+	runner.capture = func(_ context.Context, args []string, env []string) ([]byte, []byte, error) {
+		if !reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			t.Fatalf("unexpected login capture: %#v", args)
 		}
-		return fakeClaudeAuthJSONWithOrg(true, email, "shared-org"), nil, nil
+		if got := claudeConfigDirFromEnv(env); got != profile.ConfigDir {
+			t.Fatalf("managed login checked a non-target identity: %q", got)
+		}
+		return fakeClaudeAuthJSONWithOrg(true, "work@example.com", "shared-org"), nil, nil
+	}
+	if _, err := captureStdout(t, func() error { return app.cmdClaudeLogin([]string{"work"}) }); err != nil {
+		t.Fatalf("default organization must not block managed login: %v", err)
+	}
+}
+
+func TestClaudeLoginRejectsManagedOrganizationDuplicate(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	profiles := createClaudeProfiles(t, app, "other", "work")
+	runner.run = func(context.Context, []string, []string) error { return nil }
+	runner.capture = func(_ context.Context, args []string, env []string) ([]byte, []byte, error) {
+		if !reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			t.Fatalf("unexpected login capture: %#v", args)
+		}
+		switch claudeConfigDirFromEnv(env) {
+		case profiles["work"].ConfigDir:
+			return fakeClaudeAuthJSONWithOrg(true, "work@example.com", "shared-org"), nil, nil
+		case profiles["other"].ConfigDir:
+			return fakeClaudeAuthJSONWithOrg(true, "other@example.com", "shared-org"), nil, nil
+		case "":
+			t.Fatal("managed duplicate check probed the shared default identity")
+		default:
+			t.Fatalf("unexpected managed config dir: %q", claudeConfigDirFromEnv(env))
+		}
+		return nil, nil, nil
 	}
 	_, err := captureStdout(t, func() error { return app.cmdClaudeLogin([]string{"work"}) })
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || !strings.Contains(exitErr.Message, "same organization") {
-		t.Fatalf("expected duplicate organization error, got %T %v", err, err)
-	}
-}
-
-func TestClaudeLoginFailsClosedWhenDefaultIdentityIsUnknown(t *testing.T) {
-	app, runner, _ := newClaudeTestApp(t)
-	profile := createClaudeProfiles(t, app, "work")["work"]
-	runner.run = func(context.Context, []string, []string) error { return nil }
-	runner.capture = func(_ context.Context, _ []string, env []string) ([]byte, []byte, error) {
-		if claudeConfigDirFromEnv(env) == profile.ConfigDir {
-			return fakeClaudeAuthJSONWithOrg(true, "work@example.com", "work-org"), nil, nil
-		}
-		return nil, nil, errors.New("default status transport failed")
-	}
-	_, err := captureStdout(t, func() error { return app.cmdClaudeLogin([]string{"work"}) })
-	if err == nil || !strings.Contains(err.Error(), "cannot verify Claude organization for default account") {
-		t.Fatalf("expected fail-closed default identity error, got %v", err)
+		t.Fatalf("expected managed duplicate organization error, got %T %v", err, err)
 	}
 }
 
@@ -106,11 +117,11 @@ func TestClaudeCLIRunsDefaultWithoutConfigAndManagedWithDerivedConfig(t *testing
 	}
 }
 
-func TestClaudeStatusCallsOfficialJSONStatusForDefaultAndEveryManagedProfile(t *testing.T) {
+func TestClaudeStatusLeavesDefaultUnverifiedAndChecksEveryManagedProfile(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "alpha", "beta")
 	wantEmail := map[string]string{
-		"":                          "default@example.com",
+		"":                          "cached-default@example.com",
 		profiles["alpha"].ConfigDir: "alpha@example.com",
 		profiles["beta"].ConfigDir:  "beta@example.com",
 	}
@@ -129,13 +140,21 @@ func TestClaudeStatusCallsOfficialJSONStatusForDefaultAndEveryManagedProfile(t *
 	if err != nil {
 		t.Fatalf("Claude status: %v", err)
 	}
-	for _, want := range []string{"default", "alpha", "beta", "default@example.com", "alpha@example.com", "beta@example.com", "logged-in"} {
+	for _, want := range []string{"default", "identity unavailable", claudeDefaultIdentityDetail, "alpha", "beta", "alpha@example.com", "beta@example.com", "logged-in"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status output missing %q:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "\nNext:\n") {
+		t.Fatalf("logged-in unverified default added a recovery step:\n%s", out)
+	}
+	for _, forbidden := range []string{"cached-default@example.com", "org-cached-default@example.com"} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("status exposed cached default identity %q:\n%s", forbidden, out)
+		}
+	}
 	if calls := runner.Calls(); len(calls) != 3 {
-		t.Fatalf("status call count: got %d want 3 (%+v)", len(calls), calls)
+		t.Fatalf("status call count: got %d want 3 target probes (%+v)", len(calls), calls)
 	}
 }
 
@@ -202,13 +221,10 @@ func TestClaudeUsageReportsAllWindowsAndMissingFable(t *testing.T) {
 	fable := 30.0
 	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
 		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
-			email := "work@example.com"
-			organization := "work-org"
 			if claudeConfigDirFromEnv(env) == "" {
-				email = "default@example.com"
-				organization = "default-org"
+				t.Fatal("usage queried cached default identity")
 			}
-			return fakeClaudeAuthJSONWithOrg(true, email, organization), nil, nil
+			return fakeClaudeAuthJSONWithOrg(true, "work@example.com", "work-org"), nil, nil
 		}
 		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
 			t.Fatalf("usage args: %#v", args)
@@ -219,12 +235,10 @@ func TestClaudeUsageReportsAllWindowsAndMissingFable(t *testing.T) {
 		return fakeClaudeUsageEnvelope(40, 50, nil), nil, nil
 	}
 	out, err := captureStdout(t, func() error { return app.cmdClaudeUsage(nil) })
-	if err != nil {
-		t.Fatalf("Claude usage: %v", err)
-	}
+	requireExitCode(t, err, 1)
 	for _, want := range []string{
 		"work",
-		"default",
+		"default · identity unavailable",
 		"Session (~5h)",
 		"10% used · Resets in 2 hours",
 		"Weekly all models",
@@ -232,11 +246,15 @@ func TestClaudeUsageReportsAllWindowsAndMissingFable(t *testing.T) {
 		"Fable weekly",
 		"30% used · Resets Tuesday at 10:00",
 		"not reported",
-		"Result: complete · 2 of 2 accounts available",
+		"partial · identity unavailable",
+		"Result: partial · 1 of 2 accounts available",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("usage output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "default@example.com") || strings.Contains(out, "default-org") {
+		t.Fatalf("usage exposed cached default identity:\n%s", out)
 	}
 }
 
@@ -245,7 +263,7 @@ func TestClaudeUsageHidesMalformedProviderResultText(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
 		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
-			return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
+			t.Fatal("default usage queried cached identity")
 		}
 		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
 			t.Fatalf("unexpected usage args: %#v", args)
@@ -275,7 +293,7 @@ func TestClaudeDoctorReportsBinarySidecarAndAuthBasics(t *testing.T) {
 			return []byte("claude 2.0.0\n"), nil, nil
 		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
 			if claudeConfigDirFromEnv(env) == "" {
-				return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
+				return fakeClaudeAuthJSONWithOrg(true, "cached-default@example.com", "cached-default-org"), nil, nil
 			}
 			return fakeClaudeAuthJSONWithOrg(true, "person@example.com", "work-org"), nil, nil
 		default:
@@ -287,26 +305,55 @@ func TestClaudeDoctorReportsBinarySidecarAndAuthBasics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claude doctor: %v", err)
 	}
-	for _, want := range []string{"[ok] sidecar: version 1", "[ok] Claude binary: claude 2.0.0", "[ok] target default", "[ok] target work", "doctor result: PASS"} {
+	for _, want := range []string{"[ok] sidecar: version 1", "[ok] Claude binary: claude 2.0.0", "[warn] target default", claudeDefaultIdentityDetail, "[ok] target work", "doctor result: PASS (1 warn)"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
 		}
 	}
+	for _, forbidden := range []string{"cached-default@example.com", "cached-default-org"} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("doctor exposed cached default identity %q:\n%s", forbidden, out)
+		}
+	}
 }
 
-func TestClaudeDoctorFailsDuplicateOrganizations(t *testing.T) {
+func TestClaudeDoctorIgnoresDefaultForManagedDuplicateChecks(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	createClaudeProfiles(t, app, "work")
-	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
 		if reflect.DeepEqual(args, []string{"--version"}) {
 			return []byte("claude 2.0.0\n"), nil, nil
+		}
+		if claudeConfigDirFromEnv(env) == "" {
+			return fakeClaudeAuthJSONWithOrg(true, "cached-default@example.com", "shared-org"), nil, nil
+		}
+		return fakeClaudeAuthJSONWithOrg(true, "person@example.com", "shared-org"), nil, nil
+	}
+	out, err := captureStdout(t, func() error { return app.cmdClaudeDoctor(nil) })
+	if err != nil || strings.Contains(out, "duplicates Claude organization") {
+		t.Fatalf("default identity must not participate in duplicate checks, err=%v output=%s", err, out)
+	}
+	if strings.Contains(out, "cached-default@example.com") {
+		t.Fatalf("doctor exposed cached default identity: %s", out)
+	}
+}
+
+func TestClaudeDoctorFailsManagedDuplicateOrganizations(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	createClaudeProfiles(t, app, "alpha", "beta")
+	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"--version"}) {
+			return []byte("claude 2.0.0\n"), nil, nil
+		}
+		if claudeConfigDirFromEnv(env) == "" {
+			return fakeClaudeAuthJSONWithOrg(true, "cached-default@example.com", "shared-org"), nil, nil
 		}
 		return fakeClaudeAuthJSONWithOrg(true, "person@example.com", "shared-org"), nil, nil
 	}
 	out, err := captureStdout(t, func() error { return app.cmdClaudeDoctor(nil) })
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || !strings.Contains(out, "duplicates Claude organization") {
-		t.Fatalf("expected duplicate organization doctor failure, err=%v output=%s", err, out)
+		t.Fatalf("expected managed duplicate organization doctor failure, err=%v output=%s", err, out)
 	}
 }
 
@@ -326,6 +373,9 @@ func TestClaudeCommandProbeFailuresDoNotExposeCapturedDiagnostics(t *testing.T) 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			app, runner, _ := newClaudeTestApp(t)
+			if test.name == "status" || test.name == "exec" {
+				createClaudeProfiles(t, app, "managed")
+			}
 			runner.capture = func(context.Context, []string, []string) ([]byte, []byte, error) {
 				return nil, []byte(marker), errors.New(providerDiagnostic)
 			}
@@ -349,13 +399,14 @@ func TestClaudeCommandProbeFailuresDoNotExposeCapturedDiagnostics(t *testing.T) 
 
 func TestClaudeReadOnlyCommandsAndNamespaceHelpDoNotCreateState(t *testing.T) {
 	tests := []struct {
-		name string
-		run  func(*App) error
+		name     string
+		wantCode int
+		run      func(*App) error
 	}{
-		{"status", func(app *App) error { return app.cmdClaudeStatus(nil) }},
-		{"usage", func(app *App) error { return app.cmdClaudeUsage(nil) }},
-		{"doctor", func(app *App) error { return app.cmdClaudeDoctor(nil) }},
-		{"help", func(app *App) error { return app.cmdClaude([]string{"help"}) }},
+		{name: "status", run: func(app *App) error { return app.cmdClaudeStatus(nil) }},
+		{name: "usage", wantCode: 1, run: func(app *App) error { return app.cmdClaudeUsage(nil) }},
+		{name: "doctor", run: func(app *App) error { return app.cmdClaudeDoctor(nil) }},
+		{name: "help", run: func(app *App) error { return app.cmdClaude([]string{"help"}) }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -363,7 +414,10 @@ func TestClaudeReadOnlyCommandsAndNamespaceHelpDoNotCreateState(t *testing.T) {
 			runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
 				switch {
 				case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
-					return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
+					if test.name == "usage" {
+						t.Fatal("default usage queried cached identity")
+					}
+					return fakeClaudeAuthJSONWithOrg(true, "cached-default@example.com", "cached-default-org"), nil, nil
 				case reflect.DeepEqual(args, claudeUsageProbeArgs()):
 					return fakeClaudeUsageEnvelope(1, 2, nil), nil, nil
 				case reflect.DeepEqual(args, []string{"--version"}):
@@ -372,8 +426,10 @@ func TestClaudeReadOnlyCommandsAndNamespaceHelpDoNotCreateState(t *testing.T) {
 					return nil, nil, errors.New("unexpected capture")
 				}
 			}
-			if _, err := captureStdout(t, func() error { return test.run(app) }); err != nil {
+			if _, err := captureStdout(t, func() error { return test.run(app) }); test.wantCode == 0 && err != nil {
 				t.Fatalf("%s: %v", test.name, err)
+			} else if test.wantCode != 0 {
+				requireExitCode(t, err, test.wantCode)
 			}
 			if _, err := os.Stat(app.store.paths.MultisubsHome); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("%s created provider state: %v", test.name, err)
