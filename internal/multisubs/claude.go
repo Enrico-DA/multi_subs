@@ -11,6 +11,8 @@ import (
 
 var claudeProbeTimeout = 15 * time.Second
 
+const claudeDefaultIdentityDetail = "identity cannot be verified for the unmanaged default account"
+
 type claudeTarget struct {
 	Name        string
 	DisplayName string
@@ -205,7 +207,7 @@ func (a *App) rejectDuplicateClaudeOrganization(profile claudeProfile, orgID str
 	if err != nil {
 		return err
 	}
-	targets := []claudeTarget{{Name: claudeDefaultTarget, Kind: "default"}}
+	targets := make([]claudeTarget, 0, len(cfg.Profiles))
 	for _, name := range sortedClaudeProfileNames(cfg) {
 		if name == profile.Name {
 			continue
@@ -307,6 +309,10 @@ func (a *App) cmdClaudeStatus(args []string) error {
 		}
 		identity := valueOrDash(status.Identity)
 		auth := compactClaudeAuthDescription(status)
+		if target.Kind == "default" {
+			identity = "identity unavailable"
+			auth = claudeDefaultIdentityDetail
+		}
 		row.Account = identity
 		row.Detail = auth
 		fmt.Printf("%-16s %-9s %-12s %-30s %s\n", target.Name, target.Kind, row.State, truncate(identity, 30), truncate(auth, 80))
@@ -359,7 +365,7 @@ func (a *App) runClaudeDoctorChecks(timeout time.Duration) (DoctorReport, error)
 		}
 		checks = append(checks, DoctorCheck{Status: "ok", Name: "Claude binary", Details: truncate(firstLineOrDash(version), 120)})
 	}
-	organizationTargets := make(map[string]string, len(cfg.Profiles)+1)
+	organizationTargets := make(map[string]string, len(cfg.Profiles))
 	for _, target := range claudeTargets(cfg) {
 		if target.Profile != nil {
 			if err := store.EnsureProfileReady(*target.Profile); err != nil {
@@ -376,6 +382,10 @@ func (a *App) runClaudeDoctorChecks(timeout time.Duration) (DoctorReport, error)
 		}
 		if !status.LoggedIn {
 			checks = append(checks, DoctorCheck{Status: "warn", Name: "target " + target.Name, Details: "not logged in"})
+			continue
+		}
+		if target.Kind == "default" {
+			checks = append(checks, DoctorCheck{Status: "warn", Name: "target " + target.Name, Details: "logged in; " + claudeDefaultIdentityDetail})
 			continue
 		}
 		if err := validateClaudeRoutingAuth(status); err != nil {

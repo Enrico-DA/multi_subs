@@ -138,6 +138,43 @@ func TestProfileStatusNextStepsUsesOfficialDefaultLogin(t *testing.T) {
 	}
 }
 
+func TestClaudeUnverifiedDefaultUsesDoctorInsteadOfLogin(t *testing.T) {
+	t.Parallel()
+
+	report := usageReport{
+		Providers: []usageProviderReport{{
+			Name: "Claude",
+			Accounts: []usageAccountReport{{
+				Name:       "default",
+				HasDefault: true,
+				Failure:    "identity unavailable",
+			}},
+		}},
+	}
+	var output bytes.Buffer
+	printNextSteps(&output, usageReportNextSteps(report))
+	got := output.String()
+	if !strings.Contains(got, "Claude default · identity unavailable") ||
+		!strings.Contains(got, "Run: multisubs doctor") {
+		t.Fatalf("missing unverified-default recovery:\n%s", got)
+	}
+	if strings.Contains(got, "claude auth login") {
+		t.Fatalf("treated unverified default identity as a proven logout:\n%s", got)
+	}
+
+	output.Reset()
+	printNextSteps(&output, profileStatusNextSteps("Claude", []profileStatus{{
+		Name:    "default",
+		State:   "logged-in",
+		Account: "identity unavailable",
+		Detail:  claudeDefaultIdentityDetail,
+	}}))
+	got = output.String()
+	if got != "" {
+		t.Fatalf("logged-in unverified default produced a recovery step:\n%s", got)
+	}
+}
+
 func TestPrintNextStepsOmitsEmptyList(t *testing.T) {
 	t.Parallel()
 

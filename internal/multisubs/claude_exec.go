@@ -35,27 +35,8 @@ func (a *App) cmdClaudeExec(args []string) error {
 	fableResolver := a.claudeFableApplicabilityResolver()
 	intent := fableResolver.ParseIntent(args, os.Environ())
 
-	eligible := make([]claudeExecCandidate, 0, len(cfg.Profiles)+1)
-	eligibleOrganizations := make(map[string]struct{}, len(cfg.Profiles)+1)
-	defaultTarget := claudeTarget{Name: claudeDefaultTarget, Kind: "default"}
-	defaultAuthCtx, defaultAuthCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
-	defaultAuth, defaultAuthProbeErr := fetchClaudeAuthStatus(defaultAuthCtx, a.claudeCommandRunner(), "")
-	defaultAuthCancel()
-	if defaultAuthProbeErr == nil && validateClaudeRoutingAuth(defaultAuth) == nil {
-		applicability := fableResolver.Resolve(intent, defaultTarget)
-		needsFable := applicability.needsFable()
-		defaultUsageCtx, defaultUsageCancel := context.WithTimeout(context.Background(), claudeProbeTimeout)
-		defaultUsage, defaultUsageErr := fetchClaudeUsage(defaultUsageCtx, a.claudeCommandRunner(), "")
-		defaultUsageCancel()
-		if defaultUsageErr == nil && claudeUsageIsEligible(defaultUsage, needsFable) {
-			eligible = append(eligible, claudeExecCandidate{
-				Target: defaultTarget,
-				Score:  claudeUsageWorstPercent(defaultUsage, needsFable),
-				OrgID:  defaultAuth.OrgID,
-			})
-			eligibleOrganizations[defaultAuth.OrgID] = struct{}{}
-		}
-	}
+	eligible := make([]claudeExecCandidate, 0, len(cfg.Profiles))
+	eligibleOrganizations := make(map[string]struct{}, len(cfg.Profiles))
 
 	for _, name := range sortedClaudeProfileNames(cfg) {
 		profile := cfg.Profiles[name]

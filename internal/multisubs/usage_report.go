@@ -532,6 +532,17 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 
 	probeContext, cancelProbes := context.WithTimeout(context.Background(), usageAccountTimeout)
 	defer cancelProbes()
+	if target.Kind == "default" {
+		providerUsage, err := fetchClaudeUsage(probeContext, a.claudeCommandRunner(), target.ConfigDir)
+		if err != nil {
+			account.Failure = safeClaudeUsageFailure(probeContext, err)
+			collected.Account = account
+			return collected
+		}
+		account.Windows = claudeUsageWindows(providerUsage)
+		collected.Account = account
+		return collected
+	}
 	authBefore, authBeforeErr := fetchClaudeAuthStatus(probeContext, a.claudeCommandRunner(), target.ConfigDir)
 	if claudeAuthReportsLoggedOut(authBefore, authBeforeErr) {
 		account.Failure = "not logged in"
@@ -562,16 +573,21 @@ func (a *App) collectClaudeUsageCollection(store *claudeStore, target claudeTarg
 		collected.Account = account
 		return collected
 	}
-	account.Windows = []usageWindowReport{
+	account.Windows = claudeUsageWindows(providerUsage)
+	collected.Account = account
+	return collected
+}
+
+func claudeUsageWindows(providerUsage claudeUsage) []usageWindowReport {
+	windows := []usageWindowReport{
 		adaptClaudeUsageWindow(claudeSessionLabel(providerUsage.Session), providerUsage.Session),
 		adaptClaudeUsageWindow("Weekly all models", providerUsage.WeeklyAll),
 		{Label: "Fable weekly"},
 	}
 	if providerUsage.Fable != nil {
-		account.Windows[2] = adaptClaudeUsageWindow("Fable weekly", *providerUsage.Fable)
+		windows[2] = adaptClaudeUsageWindow("Fable weekly", *providerUsage.Fable)
 	}
-	collected.Account = account
-	return collected
+	return windows
 }
 
 func claudeAuthReportsLoggedOut(status claudeAuthStatus, err error) bool {
@@ -584,6 +600,9 @@ func collapseClaudeUsageCollections(collected []claudeUsageCollection) []usageAc
 	var groupOrganizations []string
 	for index, result := range collected {
 		organization := strings.TrimSpace(result.Organization)
+		if result.Target.Kind == "default" {
+			organization = ""
+		}
 		if organization == "" {
 			memberGroups = append(memberGroups, []int{index})
 			groupOrganizations = append(groupOrganizations, "")
@@ -610,7 +629,7 @@ func collapseClaudeUsageCollections(collected []claudeUsageCollection) []usageAc
 		aliases := make([]usageGroupAlias, 0, len(memberIndexes))
 		for _, memberIndex := range memberIndexes {
 			result := collected[memberIndex]
-			if result.AccountEmail != "" {
+			if result.Target.Kind != "default" && result.AccountEmail != "" {
 				emails[result.AccountEmail] = struct{}{}
 			}
 			aliases = append(aliases, usageGroupAlias{

@@ -12,13 +12,12 @@ import (
 	"time"
 )
 
-func TestClaudeExecManagedAccountCanBeatDefaultByLowerWorstUsage(t *testing.T) {
+func TestClaudeExecSelectsLowestUsageManagedAccountWithoutDefaultProbe(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "alpha", "beta")
 	usageByDir := map[string][]byte{
 		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(20, 40, nil),
 		profiles["beta"].ConfigDir:  fakeClaudeUsageEnvelope(10, 50, nil),
-		"":                          fakeClaudeUsageEnvelope(50, 60, nil),
 	}
 	setFakeUsageCapture(t, runner, usageByDir)
 	wantArgs := []string{"-p", "--model", "sonnet", "prompt text", "--allowedTools", "Read,Glob"}
@@ -70,14 +69,12 @@ func TestClaudeExecUsesCandidateSpecificFableEligibilityAndScore(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "alpha", "beta")
 	app.claudeFableResolver = &fakeClaudeFableResolver{byTarget: map[string]fableApplicability{
-		"default": fableApplicable,
-		"alpha":   fablePossible,
-		"beta":    fableNotApplicable,
+		"alpha": fablePossible,
+		"beta":  fableNotApplicable,
 	}}
 	alphaFable := 80.0
 	betaFable := 99.0
 	setFakeUsageCapture(t, runner, map[string][]byte{
-		"":                          fakeClaudeUsageEnvelope(1, 2, nil),
 		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(1, 2, &alphaFable),
 		profiles["beta"].ConfigDir:  fakeClaudeUsageEnvelope(50, 60, &betaFable),
 	})
@@ -92,29 +89,30 @@ func TestClaudeExecUsesCandidateSpecificFableEligibilityAndScore(t *testing.T) {
 	}
 }
 
-func TestClaudeExecExcludesManagedProfileThatDuplicatesDefaultOrganization(t *testing.T) {
+func TestClaudeExecDeduplicatesManagedOrganizations(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
-	profiles := createClaudeProfiles(t, app, "duplicate", "independent")
+	profiles := createClaudeProfiles(t, app, "duplicate-a", "duplicate-b", "independent")
 	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
 		configDir := claudeConfigDirFromEnv(env)
+		if configDir == "" {
+			t.Fatalf("automatic exec probed the shared default account: %#v", args)
+		}
 		switch {
 		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
 			switch configDir {
-			case "":
-				return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "shared-org"), nil, nil
-			case profiles["duplicate"].ConfigDir:
+			case profiles["duplicate-a"].ConfigDir, profiles["duplicate-b"].ConfigDir:
 				return fakeClaudeAuthJSONWithOrg(true, "duplicate@example.com", "shared-org"), nil, nil
 			default:
 				return fakeClaudeAuthJSONWithOrg(true, "independent@example.com", "independent-org"), nil, nil
 			}
 		case reflect.DeepEqual(args, claudeUsageProbeArgs()):
 			switch configDir {
-			case "":
+			case profiles["duplicate-a"].ConfigDir:
 				return fakeClaudeUsageEnvelope(70, 80, nil), nil, nil
 			case profiles["independent"].ConfigDir:
 				return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
-			case profiles["duplicate"].ConfigDir:
-				t.Fatal("usage queried for managed profile that duplicates the default organization")
+			case profiles["duplicate-b"].ConfigDir:
+				t.Fatal("usage queried twice for one managed organization")
 			}
 			t.Fatalf("usage queried for unexpected target: %q", configDir)
 		}
@@ -131,97 +129,64 @@ func TestClaudeExecExcludesManagedProfileThatDuplicatesDefaultOrganization(t *te
 	}
 }
 
-func TestClaudeExecSkipsDefaultAuthProbeFailureAndUsesManagedAccount(t *testing.T) {
+func TestClaudeExecNeverProbesOrRunsDefault(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profile := createClaudeProfiles(t, app, "managed")["managed"]
 	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
 		configDir := claudeConfigDirFromEnv(env)
+		if configDir == "" {
+			t.Fatalf("automatic exec probed the shared default account: %#v", args)
+		}
 		switch {
-		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}) && configDir == "":
-			return nil, nil, errors.New("default status transport failed")
 		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}) && configDir == profile.ConfigDir:
 			return fakeClaudeAuthJSONWithOrg(true, "managed@example.com", "managed-org"), nil, nil
 		case reflect.DeepEqual(args, claudeUsageProbeArgs()) && configDir == profile.ConfigDir:
 			return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
 		}
-		t.Fatalf("unexpected probe after default auth failure: args=%#v env=%q", args, env)
+		t.Fatalf("unexpected managed probe: args=%#v env=%q", args, env)
 		return nil, nil, nil
 	}
 	runner.run = func(_ context.Context, _ []string, env []string) error {
 		if got := claudeConfigDirFromEnv(env); got != profile.ConfigDir {
-			t.Fatalf("expected managed account after default probe failure, got %q", got)
+			t.Fatalf("expected managed account, got %q", got)
 		}
 		return nil
 	}
 	if err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"}); err != nil {
-		t.Fatalf("exec after default auth failure: %v", err)
+		t.Fatalf("managed-only exec: %v", err)
 	}
 }
 
-func TestClaudeExecSkipsDefaultUsageProbeFailureAndUsesManagedAccount(t *testing.T) {
-	const marker = "synthetic-provider-result-marker"
+func TestClaudeExecWithNoManagedProfilesDoesNotProbeOrRunDefault(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
-	profile := createClaudeProfiles(t, app, "managed")["managed"]
-	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
-		configDir := claudeConfigDirFromEnv(env)
-		switch {
-		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
-			if configDir == "" {
-				return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
-			}
-			return fakeClaudeAuthJSONWithOrg(true, "managed@example.com", "managed-org"), nil, nil
-		case reflect.DeepEqual(args, claudeUsageProbeArgs()) && configDir == "":
-			return fakeMalformedClaudeUsageEnvelope(marker), nil, nil
-		case reflect.DeepEqual(args, claudeUsageProbeArgs()) && configDir == profile.ConfigDir:
-			return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
-		default:
-			t.Fatalf("unexpected capture args: %#v", args)
-			return nil, nil, nil
-		}
+	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+		t.Fatalf("automatic exec probed Claude without a managed profile: %#v", args)
+		return nil, nil, nil
 	}
-	runner.run = func(_ context.Context, _ []string, env []string) error {
-		if got := claudeConfigDirFromEnv(env); got != profile.ConfigDir {
-			t.Fatalf("expected managed account after default usage failure, got %q", got)
-		}
+	runner.run = func(_ context.Context, args, _ []string) error {
+		t.Fatalf("automatic exec ran Claude without a managed profile: %#v", args)
 		return nil
 	}
-	if err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"}); err != nil {
-		t.Fatalf("exec after default usage failure: %v", err)
+	err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"})
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 || exitErr.Message != "no usable Claude account" {
+		t.Fatalf("expected no usable managed account, got %T %v", err, err)
 	}
-}
-
-func TestClaudeExecDefaultAccountCanBeatManagedByLowerWorstUsageWithoutConfigDir(t *testing.T) {
-	app, runner, _ := newClaudeTestApp(t)
-	profiles := createClaudeProfiles(t, app, "managed")
-	usageByDir := map[string][]byte{
-		profiles["managed"].ConfigDir: fakeClaudeUsageEnvelope(30, 40, nil),
-		"":                            fakeClaudeUsageEnvelope(2, 3, nil),
-	}
-	setFakeUsageCapture(t, runner, usageByDir)
-	runner.run = func(_ context.Context, args, env []string) error {
-		if claudeConfigDirFromEnv(env) != "" || envContainsKey(env, "CLAUDE_CONFIG_DIR") {
-			t.Fatalf("default account must have CLAUDE_CONFIG_DIR absent: %q", env)
-		}
-		if !reflect.DeepEqual(args, []string{"-p", "--model", "sonnet", "hello"}) {
-			t.Fatalf("unexpected default args: %#v", args)
-		}
-		return nil
-	}
-	if err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"}); err != nil {
-		t.Fatalf("default exec: %v", err)
+	if calls := runner.Calls(); len(calls) != 0 {
+		t.Fatalf("automatic exec touched the shared default account: %+v", calls)
 	}
 }
 
 func TestClaudeExecBreaksEqualScoresByTargetName(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
-	profile := createClaudeProfiles(t, app, "zeta")["zeta"]
+	profiles := createClaudeProfiles(t, app, "alpha", "zeta")
 	setFakeUsageCapture(t, runner, map[string][]byte{
-		"":                fakeClaudeUsageEnvelope(10, 20, nil),
-		profile.ConfigDir: fakeClaudeUsageEnvelope(10, 20, nil),
+		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(10, 20, nil),
+		profiles["zeta"].ConfigDir:  fakeClaudeUsageEnvelope(10, 20, nil),
 	})
 	runner.run = func(_ context.Context, _ []string, env []string) error {
-		if envContainsKey(env, "CLAUDE_CONFIG_DIR") {
-			t.Fatalf("expected default target to win equal-score name tie: %q", env)
+		if got := claudeConfigDirFromEnv(env); got != profiles["alpha"].ConfigDir {
+			t.Fatalf("expected alpha to win managed equal-score tie: %q", got)
 		}
 		return nil
 	}
@@ -230,27 +195,27 @@ func TestClaudeExecBreaksEqualScoresByTargetName(t *testing.T) {
 	}
 }
 
-func TestClaudeExecSkipsBusyDefaultAndUsesNextEligibleManagedAccount(t *testing.T) {
+func TestClaudeExecSkipsBusyManagedAccountAndUsesNextEligibleManagedAccount(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
-	profiles := createClaudeProfiles(t, app, "alpha")
+	profiles := createClaudeProfiles(t, app, "alpha", "beta")
 	setFakeUsageCapture(t, runner, map[string][]byte{
-		"":                          fakeClaudeUsageEnvelope(1, 2, nil),
-		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(10, 20, nil),
+		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(1, 2, nil),
+		profiles["beta"].ConfigDir:  fakeClaudeUsageEnvelope(10, 20, nil),
 	})
 	store := newClaudeStore(app.store.paths)
-	defaultReservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg("org-default@example.com"))
+	alphaReservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg("org-alpha@example.com"))
 	if err != nil || !acquired {
-		t.Fatalf("hold default reservation: acquired=%v err=%v", acquired, err)
+		t.Fatalf("hold alpha reservation: acquired=%v err=%v", acquired, err)
 	}
-	defer defaultReservation.Release()
+	defer alphaReservation.Release()
 	runner.run = func(_ context.Context, _ []string, env []string) error {
-		if got := claudeConfigDirFromEnv(env); got != profiles["alpha"].ConfigDir {
-			t.Fatalf("expected alpha after busy default account, got %q", got)
+		if got := claudeConfigDirFromEnv(env); got != profiles["beta"].ConfigDir {
+			t.Fatalf("expected beta after busy alpha account, got %q", got)
 		}
 		return nil
 	}
 	if err := app.cmdClaudeExec([]string{"--model", "sonnet", "hello"}); err != nil {
-		t.Fatalf("exec with busy default account: %v", err)
+		t.Fatalf("exec with busy managed account: %v", err)
 	}
 }
 
@@ -258,13 +223,12 @@ func TestClaudeExecReturnsNormalBusyErrorWhenAllEligibleAccountsAreBusy(t *testi
 	app, runner, _ := newClaudeTestApp(t)
 	profiles := createClaudeProfiles(t, app, "alpha", "beta")
 	setFakeUsageCapture(t, runner, map[string][]byte{
-		"":                          fakeClaudeUsageEnvelope(5, 6, nil),
 		profiles["alpha"].ConfigDir: fakeClaudeUsageEnvelope(1, 2, nil),
 		profiles["beta"].ConfigDir:  fakeClaudeUsageEnvelope(3, 4, nil),
 	})
 	store := newClaudeStore(app.store.paths)
 	var held []*claudeReservation
-	for _, name := range []string{"default", "alpha", "beta"} {
+	for _, name := range []string{"alpha", "beta"} {
 		reservation, acquired, err := store.acquireReservation(claudeReservationTargetForOrg("org-" + name + "@example.com"))
 		if err != nil || !acquired {
 			t.Fatalf("hold %s reservation: acquired=%v err=%v", name, acquired, err)
@@ -296,6 +260,9 @@ func TestClaudeExecReturnsOneNoUsableAccountError(t *testing.T) {
 	profiles := createClaudeProfiles(t, app, "logged-out", "exhausted")
 	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
 		configDir := claudeConfigDirFromEnv(env)
+		if configDir == "" {
+			t.Fatalf("automatic exec probed the shared default account: %#v", args)
+		}
 		switch {
 		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
 			if configDir == profiles["exhausted"].ConfigDir {
@@ -546,12 +513,12 @@ func setFakeUsageCapture(t *testing.T, runner *fakeClaudeRunner, usageByDir map[
 	t.Helper()
 	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
 		configDir := claudeConfigDirFromEnv(env)
+		if configDir == "" {
+			t.Fatalf("automatic exec probed the shared default account: %#v", args)
+		}
 		switch {
 		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
-			email := "default@example.com"
-			if configDir != "" {
-				email = filepath.Base(filepath.Dir(configDir)) + "@example.com"
-			}
+			email := filepath.Base(filepath.Dir(configDir)) + "@example.com"
 			return fakeClaudeAuthJSON(true, email), nil, nil
 		case reflect.DeepEqual(args, claudeUsageProbeArgs()):
 			result, ok := usageByDir[configDir]

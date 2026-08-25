@@ -795,7 +795,8 @@ func TestClaudeUsageCollectorHandlesOptionalFableAndSafeFailures(t *testing.T) {
 			case profiles["beta"].ConfigDir:
 				return fakeClaudeAuthJSONWithOrg(true, "beta@example.com", "beta-org"), nil, nil
 			default:
-				return nil, nil, &exec.Error{Name: "claude", Err: exec.ErrNotFound}
+				t.Fatal("default usage queried cached identity")
+				return nil, nil, nil
 			}
 		}
 		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
@@ -833,29 +834,58 @@ func TestClaudeUsageCollectorHandlesOptionalFableAndSafeFailures(t *testing.T) {
 	}
 }
 
-func TestClaudeUsageCollectorPrefersLoggedOutAuthOverMalformedUsage(t *testing.T) {
+func TestClaudeUsageCollectorKeepsDefaultQuotaStandaloneAndIdentityUnavailable(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	runner.capture = func(_ context.Context, args []string, _ []string) ([]byte, []byte, error) {
 		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
-			return fakeClaudeAuthJSONWithOrg(false, "", ""), nil, nil
+			t.Fatal("default usage queried cached identity")
 		}
-		t.Fatalf("logged-out auth must not start /usage: %#v", args)
-		return nil, nil, nil
+		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
+			t.Fatalf("unexpected default usage probe: %#v", args)
+		}
+		return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
 	}
 	report := app.collectClaudeUsage()
 	if len(report.Accounts) != 1 {
 		t.Fatalf("Claude account count: got %d", len(report.Accounts))
 	}
-	if report.Accounts[0].Name != "default" || report.Accounts[0].Failure != "not logged in" {
-		t.Fatalf("logged-out default category: %+v", report.Accounts[0])
+	if report.Accounts[0].Name != "default" ||
+		report.Accounts[0].Identity != "" ||
+		report.Accounts[0].Failure != "identity unavailable" ||
+		len(report.Accounts[0].Windows) != 3 {
+		t.Fatalf("standalone default quota: %+v", report.Accounts[0])
 	}
-	if len(report.Accounts[0].Windows) != 0 {
-		t.Fatalf("logged-out default kept usage windows: %+v", report.Accounts[0])
+	if calls := runner.Calls(); len(calls) != 1 || !reflect.DeepEqual(calls[0].Args, claudeUsageProbeArgs()) {
+		t.Fatalf("default usage probe sequence: %+v", calls)
 	}
-	for _, call := range runner.Calls() {
-		if reflect.DeepEqual(call.Args, claudeUsageProbeArgs()) {
-			t.Fatalf("logged-out auth still probed /usage: %+v", call)
+}
+
+func TestClaudeDefaultUsageLoginRequiredUsesOfficialLoginNextStep(t *testing.T) {
+	app, runner, _ := newClaudeTestApp(t)
+	runner.capture = func(_ context.Context, args []string, _ []string) ([]byte, []byte, error) {
+		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			t.Fatal("default usage queried cached identity")
 		}
+		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
+			t.Fatalf("unexpected default usage probe: %#v", args)
+		}
+		return []byte(`{"is_error":true,"result":"Please log in to Claude."}`), nil, nil
+	}
+
+	output, err := captureStdout(t, func() error { return app.cmdClaudeUsage(nil) })
+	requireExitCode(t, err, 1)
+	for _, want := range []string{
+		"default · identity unavailable",
+		"unavailable · not logged in",
+		"Claude default · not logged in",
+		"Run: claude auth login",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("logged-out default output missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "Run: multisubs doctor") {
+		t.Fatalf("logged-out default pointed at doctor instead of provider login:\n%s", output)
 	}
 }
 
@@ -868,13 +898,10 @@ func TestClaudeUsageCollectorCategorizesTimeoutAndLoggedOut(t *testing.T) {
 	runner.capture = func(ctx context.Context, args []string, env []string) ([]byte, []byte, error) {
 		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
 			configDir := claudeConfigDirFromEnv(env)
-			email := "default@example.com"
-			organization := "default-org"
-			if configDir == profiles["logged-out"].ConfigDir {
-				email = "logged-out@example.com"
-				organization = "logged-out-org"
+			if configDir == "" {
+				t.Fatal("default usage queried cached identity")
 			}
-			return fakeClaudeAuthJSONWithOrg(true, email, organization), nil, nil
+			return fakeClaudeAuthJSONWithOrg(true, "logged-out@example.com", "logged-out-org"), nil, nil
 		}
 		if !reflect.DeepEqual(args, claudeUsageProbeArgs()) {
 			t.Fatalf("unexpected Claude usage args: %#v", args)
@@ -902,7 +929,7 @@ func TestClaudeUsageCollectorIsolatesManagedProfilePathFailure(t *testing.T) {
 	}
 	runner.capture = func(_ context.Context, args []string, _ []string) ([]byte, []byte, error) {
 		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
-			return fakeClaudeAuthJSONWithOrg(true, "default@example.com", "default-org"), nil, nil
+			t.Fatal("default usage queried cached identity")
 		}
 		return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
 	}
@@ -910,12 +937,14 @@ func TestClaudeUsageCollectorIsolatesManagedProfilePathFailure(t *testing.T) {
 	if report.Accounts[0].Failure != "profile state unavailable" {
 		t.Fatalf("profile path failure category: %+v", report.Accounts[0])
 	}
-	if report.Accounts[1].Failure != "" {
-		t.Fatalf("default Claude account should remain available: %+v", report.Accounts[1])
+	if report.Accounts[1].Name != "default" ||
+		report.Accounts[1].Failure != "identity unavailable" ||
+		len(report.Accounts[1].Windows) != 3 {
+		t.Fatalf("default Claude quota should remain standalone and partial: %+v", report.Accounts[1])
 	}
 }
 
-func TestClaudeUsageCollectsIdentityWithBoundedProbesAndCollapsesOrganization(t *testing.T) {
+func TestClaudeUsageUsesBoundedManagedIdentityProbesAndOneDefaultQuotaProbe(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
 	profile := createClaudeProfiles(t, app, "personal")["personal"]
 	var authCalls atomic.Int32
@@ -943,11 +972,10 @@ func TestClaudeUsageCollectsIdentityWithBoundedProbesAndCollapsesOrganization(t 
 		switch {
 		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
 			authCalls.Add(1)
-			email := "owner@example.com"
-			if configDir == profile.ConfigDir {
-				email = "OWNER@EXAMPLE.COM"
+			if configDir == "" {
+				t.Fatal("default usage queried cached identity")
 			}
-			return fakeClaudeAuthJSONWithOrg(true, email, "opaque-shared-org"), nil, nil
+			return fakeClaudeAuthJSONWithOrg(true, "OWNER@EXAMPLE.COM", "managed-organization"), nil, nil
 		case reflect.DeepEqual(args, claudeUsageProbeArgs()):
 			usageCalls.Add(1)
 			if configDir == profile.ConfigDir {
@@ -960,30 +988,43 @@ func TestClaudeUsageCollectsIdentityWithBoundedProbesAndCollapsesOrganization(t 
 	}
 
 	report := app.collectClaudeUsage()
-	if authCalls.Load() != 4 || usageCalls.Load() != 2 {
-		t.Fatalf("probe counts: auth=%d usage=%d want auth=4 usage=2", authCalls.Load(), usageCalls.Load())
+	if authCalls.Load() != 2 || usageCalls.Load() != 2 {
+		t.Fatalf("probe counts: auth=%d usage=%d want auth=2 usage=2", authCalls.Load(), usageCalls.Load())
 	}
 	deadlineLock.Lock()
 	if deadlineMismatch || len(probeCounts) != 2 {
 		t.Fatalf("Claude auth/usage/auth did not share one target deadline: deadlines=%v counts=%v", deadlines, probeCounts)
 	}
 	for configDir, count := range probeCounts {
-		if count != 3 {
-			t.Fatalf("probe sequence for %q: got %d calls want 3", configDir, count)
+		want := 3
+		if configDir == "" {
+			want = 1
+		}
+		if count != want {
+			t.Fatalf("probe sequence for %q: got %d calls want %d", configDir, count, want)
 		}
 	}
 	deadlineLock.Unlock()
-	if len(report.Accounts) != 1 {
-		t.Fatalf("organization account count: got %d want 1", len(report.Accounts))
+	if len(report.Accounts) != 2 {
+		t.Fatalf("account count: got %d want 2", len(report.Accounts))
 	}
 	account := report.Accounts[0]
-	if account.Name != "personal (also default)" ||
+	if account.Name != "personal" ||
 		account.Identity != "owner@example.com" ||
 		account.Failure != "" {
 		t.Fatalf("organization row: %+v", account)
 	}
 	if account.Windows[1].UsedPercent == nil || *account.Windows[1].UsedPercent != 70 {
 		t.Fatalf("expected deterministic managed quota snapshot, got %+v", account.Windows)
+	}
+	defaultAccount := report.Accounts[1]
+	if defaultAccount.Name != "default" ||
+		defaultAccount.Identity != "" ||
+		defaultAccount.Failure != "identity unavailable" ||
+		len(defaultAccount.Windows) != 3 ||
+		defaultAccount.Windows[1].UsedPercent == nil ||
+		*defaultAccount.Windows[1].UsedPercent != 10 {
+		t.Fatalf("default quota was attributed or grouped: %+v", defaultAccount)
 	}
 }
 
@@ -1065,6 +1106,28 @@ func TestClaudeUsageKeepsDifferentOrganizationsWithSameEmailSeparate(t *testing.
 	}
 }
 
+func TestClaudeUsageNeverGroupsDefaultWithManagedOrganization(t *testing.T) {
+	managed := claudeUsageCollection{
+		Target:       claudeTarget{Name: "personal", DisplayName: "personal", Kind: "managed"},
+		Account:      claudeUsageAccountFixture("personal", 70),
+		Organization: "shared-organization",
+		AccountEmail: "person@example.com",
+	}
+	defaultAccount := claudeUsageCollection{
+		Target:       claudeTarget{Name: "default", DisplayName: "default", Kind: "default"},
+		Account:      claudeUsageAccountFixture("default", 10),
+		Organization: "shared-organization",
+		AccountEmail: "cached-default@example.com",
+	}
+	accounts := collapseClaudeUsageCollections([]claudeUsageCollection{managed, defaultAccount})
+	if len(accounts) != 2 || accounts[0].Name != "personal" || accounts[1].Name != "default" {
+		t.Fatalf("default quota grouped with managed organization: %+v", accounts)
+	}
+	if accounts[1].Identity != "" || accounts[1].Failure != "identity unavailable" {
+		t.Fatalf("default quota inherited cached identity: %+v", accounts[1])
+	}
+}
+
 func TestClaudeUsageOrganizationCollapseKeepsProbeFailurePartial(t *testing.T) {
 	success := claudeUsageCollection{
 		Target:       claudeTarget{Name: "alpha", DisplayName: "alpha", Kind: "managed"},
@@ -1086,17 +1149,24 @@ func TestClaudeUsageOrganizationCollapseKeepsProbeFailurePartial(t *testing.T) {
 	}
 }
 
-func TestClaudeUsageIdentityFailureRetainsQuotaAndStrictPartial(t *testing.T) {
+func TestClaudeManagedUsageIdentityFailureRetainsQuotaAndStrictPartial(t *testing.T) {
 	app, runner, _ := newClaudeTestApp(t)
-	runner.capture = func(_ context.Context, args, _ []string) ([]byte, []byte, error) {
+	profile := createClaudeProfiles(t, app, "work")["work"]
+	runner.capture = func(_ context.Context, args, env []string) ([]byte, []byte, error) {
 		if reflect.DeepEqual(args, []string{"auth", "status", "--json"}) {
+			if claudeConfigDirFromEnv(env) == "" {
+				t.Fatal("default usage queried cached identity")
+			}
 			return nil, nil, errors.New("synthetic auth failure with opaque-org")
+		}
+		if configDir := claudeConfigDirFromEnv(env); configDir != "" && configDir != profile.ConfigDir {
+			t.Fatalf("unexpected managed usage target: %q", configDir)
 		}
 		return fakeClaudeUsageEnvelope(10, 20, nil), nil, nil
 	}
 
 	report := app.collectClaudeUsage()
-	if len(report.Accounts) != 1 ||
+	if len(report.Accounts) != 2 ||
 		report.Accounts[0].Failure != "identity unavailable" ||
 		len(report.Accounts[0].Windows) != 3 {
 		t.Fatalf("identity failure discarded valid Claude quota: %+v", report.Accounts)
@@ -1236,29 +1306,37 @@ func TestCmdCodexUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 	}
 }
 
-func TestCmdClaudeUsageCollapsesManagedAndDefaultWithExactOutput(t *testing.T) {
+func TestCmdClaudeUsageKeepsDefaultStandaloneAndIdentityUnavailable(t *testing.T) {
 	app := newClaudeDuplicateUsageCommandApp(t, claudeUsageCommandScenario{})
 	output, err := captureStdout(t, func() error {
 		return app.cmdUsage(nil, usageProviderClaude)
 	})
-	if err != nil {
-		t.Fatalf("Claude duplicate usage: %v", err)
-	}
+	requireExitCode(t, err, 1)
 	want := usageGoldenHeader("multisubs claude usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Claude\n" +
-		"  personal (also default) · person@example.com\n" +
+		"  personal · person@example.com\n" +
 		"    Session (~5h)      30% used · Resets in 2 hours\n" +
 		"    Weekly all models  70% used · Resets Monday at 09:00\n" +
 		"    Fable weekly       not reported\n" +
 		"\n" +
-		"Result: complete · 1 of 1 accounts available\n"
+		"  default · identity unavailable\n" +
+		"    Session (~5h)      5% used · Resets in 2 hours\n" +
+		"    Weekly all models  10% used · Resets Monday at 09:00\n" +
+		"    Fable weekly       not reported\n" +
+		"    partial · identity unavailable\n" +
+		"\n" +
+		"Result: partial · 1 of 2 accounts available\n" +
+		"\n" +
+		"Next:\n" +
+		"  Claude default · identity unavailable\n" +
+		"    Run: multisubs doctor\n"
 	if output != want {
 		t.Fatalf("Claude duplicate output:\n--- got ---\n%s--- want ---\n%s", output, want)
 	}
 }
 
-func TestCmdClaudeUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
+func TestCmdClaudeUsageKeepsDefaultFailureSeparateFromManagedQuota(t *testing.T) {
 	app := newClaudeDuplicateUsageCommandApp(t, claudeUsageCommandScenario{defaultUsageFails: true})
 	output, err := captureStdout(t, func() error {
 		return app.cmdUsage(nil, usageProviderClaude)
@@ -1267,16 +1345,18 @@ func TestCmdClaudeUsageCollapsesFailedDuplicateAsOnePartialRow(t *testing.T) {
 	want := usageGoldenHeader("multisubs claude usage", "Fri 24 Jul 2026 12:00 UTC") +
 		"\n" +
 		"Claude\n" +
-		"  personal (also default) · person@example.com\n" +
+		"  personal · person@example.com\n" +
 		"    Session (~5h)      30% used · Resets in 2 hours\n" +
 		"    Weekly all models  70% used · Resets Monday at 09:00\n" +
 		"    Fable weekly       not reported\n" +
-		"    partial · usage probe failed\n" +
 		"\n" +
-		"Result: partial · 0 of 1 accounts available\n" +
+		"  default · identity unavailable\n" +
+		"    unavailable · usage probe failed\n" +
+		"\n" +
+		"Result: partial · 1 of 2 accounts available\n" +
 		"\n" +
 		"Next:\n" +
-		"  Claude personal (also default) · usage probe failed\n" +
+		"  Claude default · usage probe failed\n" +
 		"    Run: multisubs doctor\n"
 	if output != want {
 		t.Fatalf("Claude failed duplicate output:\n--- got ---\n%s--- want ---\n%s", output, want)
@@ -1298,12 +1378,13 @@ func TestCmdClaudeUsageIdentityChangeRetainsQuotaWithoutGrouping(t *testing.T) {
 		"    Fable weekly       not reported\n" +
 		"    partial · identity unavailable\n" +
 		"\n" +
-		"  default · person@example.com\n" +
+		"  default · identity unavailable\n" +
 		"    Session (~5h)      5% used · Resets in 2 hours\n" +
 		"    Weekly all models  10% used · Resets Monday at 09:00\n" +
 		"    Fable weekly       not reported\n" +
+		"    partial · identity unavailable\n" +
 		"\n" +
-		"Result: partial · 1 of 2 accounts available\n" +
+		"Result: partial · 0 of 2 accounts available\n" +
 		"\n" +
 		"Next:\n" +
 		"  Claude personal · identity unavailable\n" +
@@ -1373,6 +1454,9 @@ func newClaudeDuplicateUsageCommandApp(t *testing.T, scenario claudeUsageCommand
 		configDir := claudeConfigDirFromEnv(env)
 		switch {
 		case reflect.DeepEqual(args, []string{"auth", "status", "--json"}):
+			if configDir == "" {
+				t.Fatal("default usage queried cached identity")
+			}
 			authLock.Lock()
 			authCalls[configDir]++
 			call := authCalls[configDir]
