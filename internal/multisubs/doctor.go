@@ -159,9 +159,12 @@ func RunCodexDoctor(store *Store, cfg *Config, timeout time.Duration) DoctorRepo
 			}
 			detail = fmt.Sprintf("%s (%s)", path, version)
 			status := "ok"
-			if strings.HasPrefix(version, "codex-cli ") && version != codexappserver.SupportedCodexVersion {
+			if strings.HasPrefix(version, "codex-cli ") &&
+				version != codexappserver.SupportedCodexVersion &&
+				version != codexappserver.PreviousSupportedCodexVersion {
 				status = "warn"
-				detail += "; generate requires " + codexappserver.SupportedCodexVersion
+				detail += "; generate requires " + codexappserver.PreviousSupportedCodexVersion +
+					" or " + codexappserver.SupportedCodexVersion
 			}
 			checks = append(checks, DoctorCheck{Name: "codex binary", Status: status, Details: detail})
 		}

@@ -146,13 +146,13 @@ Trade-offs: The unmanaged app server may write its normal non-credential logs, c
 
 Enforcement: `internal/monitor/usage` owns the typed default source and keeps managed and unmanaged app-server modes distinct. The unmanaged source does not fingerprint auth and never receives `cli_auth_credentials_store="file"`. Standard weekly data is the top-level weekly window or the `codex` bucket; Spark extra limits do not skip the unmanaged probe. `internal/multisubs/exec.go` owns the two-attempt gate, fixed warning, typed default exclusion, and single reselection. The same gate is reused by `multisubs codex cli` automatic mode and `multisubs codex generate`. `internal/multisubs/status.go` keeps account enrichment for status and doctor but gives exec a state-only probe. Tests cover the file-backed OAuth fast path, Spark-only OAuth falling through to unmanaged app-server weekly, missing-file app-server path, sanitized unmanaged invocation, retry success, warned managed fallback, and exit code 1 when nothing remains.
 
-## Keep tool-free Codex generation on the subscription path
+## Keep harness-free Codex generation on the subscription path
 
-Decision: `multisubs codex generate` sends one prompt through Codex App Server using ChatGPT subscription authentication. It lives under the Codex namespace, uses the same weekly selector as exec, and never reads credential contents.
+Decision: `multisubs codex generate` sends one prompt through Codex App Server using ChatGPT subscription authentication. It lives under the Codex namespace, uses the same weekly selector as exec, and never reads credential contents. Tools stay off by default. Explicit `--search` can expose only native live web search.
 
-Why: Upstream added a tool-free generation command so scripts can get one subscription reply without starting the interactive CLI or custom tools. The fork keeps that command and translates identity, routing, and the managed versus unmanaged app-server split.
+Why: Upstream added harness-free generation so scripts can get one subscription reply without starting the interactive CLI or coding tools. The fork keeps that command, optional native search, and Codex 0.147/0.148 support, and translates identity, routing, and the managed versus unmanaged app-server split.
 
-Enforcement: Generation requires Codex CLI 0.147.0, ChatGPT account type, a private empty workspace, a one-model catalog with tools removed, and fail-closed handling for unexpected App Server events. Automatic mode reuses exec routing. `--account` selects one managed profile without creating state for an unknown name. Default-account generation receives no managed file-auth override.
+Enforcement: Generation requires Codex CLI 0.147.0 or 0.148.0, ChatGPT account type, a private empty workspace, a one-model catalog with agent tools removed, fail-closed handling for unexpected App Server events, and search-only tool exposure when `--search` is set. Automatic mode reuses exec routing. `--account` selects one managed profile without creating state for an unknown name. Default-account generation receives no managed file-auth override.
 
 ## Prefer plain English
 

@@ -48,7 +48,7 @@ multisubs version
 multisubs doctor
 ```
 
-`multisubs codex generate` requires Codex CLI 0.147.0. `codex --version` must print `codex-cli 0.147.0`.
+`multisubs codex generate` requires Codex CLI 0.147.0 or 0.148.0. `codex --version` must print one of those versions.
 
 ## Start
 
@@ -76,6 +76,7 @@ multisubs codex cli personal
 multisubs codex exec -s read-only "Summarize this repository."
 multisubs codex exec --search "What changed this week?"
 multisubs codex generate "Name three risks in this change."
+multisubs codex generate --search "What changed this week?"
 ```
 
 Add and use a Claude profile. Managed Claude profiles currently require a Claude Max subscription with first-party `claude.ai` login; other plans, including Pro, fail login verification and are never routed to. Claude usage reporting still works for any logged-in managed profile. It also keeps live quota visible for the default account, but does not trust that account's cached identity.
@@ -115,7 +116,7 @@ multisubs codex login <name> [...]
 multisubs codex login-all
 multisubs codex cli [<name>] [...]
 multisubs codex exec [--search] [...]
-multisubs codex generate [...]
+multisubs codex generate [--search] [...]
 multisubs codex status
 multisubs codex usage
 multisubs codex reconcile

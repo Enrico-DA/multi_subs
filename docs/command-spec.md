@@ -157,7 +157,7 @@ Runs official `codex exec` after weekly-only account selection.
 - Exact provider help requests pass through without config or state creation.
 - Optional selected-profile metadata is confined to `MULTISUBS_HOME/run`.
 
-### `multisubs codex generate [--account <name>] [-m|--model <model>] [--effort <effort>] [--base-instructions-file <path>] [--developer-instructions-file <path>] [--output-schema <path>] [--json] [prompt]`
+### `multisubs codex generate [--search] [--account <name>] [-m|--model <model>] [--effort <effort>] [--base-instructions-file <path>] [--developer-instructions-file <path>] [--output-schema <path>] [--json] [prompt]`
 
 Sends one text prompt through Codex App Server using ChatGPT subscription authentication and Codex's built-in OpenAI provider.
 
@@ -165,16 +165,17 @@ Sends one text prompt through Codex App Server using ChatGPT subscription authen
 - Uses the same weekly-aware routing, identity reconciliation, equal default/managed priority, and default-login gate as `multisubs codex exec`, unless `--account <name>` selects one managed profile directly.
 - Passes an explicit model to the existing model-aware selector. Otherwise, uses the highest-priority visible model in the installed Codex bundled catalog.
 - Validates `--effort` against the selected model's bundled supported-effort metadata. Without the flag, uses the selected model's bundled default effort.
-- Requires exactly `codex-cli 0.147.0` and fails before generation for any other version.
+- Supports exactly `codex-cli 0.147.0` and `0.148.0`, and fails before generation for any other version.
 - Requires App Server `account/read` to report managed ChatGPT authentication. It rejects API-key billing and does not start login or token-refresh flows.
 - Runs an ephemeral thread in a private empty temporary directory with read-only sandboxing and approval policy `never`.
 - Sends exact base or developer instruction file contents when selected and empty client instructions otherwise. The prompt and each optional input file have independent 4 MiB limits; file inputs must resolve to regular files. File-read errors do not print those paths.
 - Accepts `--output-schema` only when the file contains a JSON object and passes that object to App Server for structured-output enforcement.
-- Disables client context sources, tools, MCP servers, and notification hooks, ignores unrelated custom model providers, and uses a private `0600` one-model catalog with tool metadata removed.
-- Fails closed if Codex config replaces the built-in OpenAI provider, overrides its endpoint, or loads a configuration lockfile.
-- Rejects server requests, command, file, web, image, and unexpected item events.
+- Exposes no tools by default. `--search` enables only the native live web-search tool; all other tools remain disabled.
+- Disables client context sources, MCP servers, and notification hooks, ignores unrelated custom model providers, and uses a private `0600` one-model catalog with agent-tool metadata removed.
+- Fails closed if Codex config replaces the built-in OpenAI provider, overrides its endpoint, changes the selected web-search mode, loads a configuration lockfile, or defines any non-null nested `tools.web_search` settings while `--search` is selected, such as domain, search-context, or approximate-location filters.
+- Rejects server requests, command, file, image, unexpected tool events, and web-search events unless `--search` was selected.
 - By default, streams only assistant text to standard output. Resource notices and safe errors use standard error. A failure can occur after partial text was written.
-- With `--json`, buffers up to 16 MiB of assistant text and writes one object only after success. The object contains response text, model, effective effort, elapsed milliseconds, and numeric token usage. Usage is `null` when App Server emits no usage event. It excludes account and profile identifiers, paths, reasoning text, and raw events. A generation failure or response-limit failure writes no JSON object.
+- With `--json`, buffers up to 16 MiB of assistant text and writes one object only after success. The object contains response text, model, effective effort, elapsed milliseconds, a count of distinct native web-search items deduplicated by nonblank lifecycle ID of at most 256 bytes, and numeric token usage. The search count is zero when no native search ran. Generation fails if search activity has no lifecycle item, an item has an invalid ID, or a turn exceeds 1,024 distinct search IDs. The count adds no search query, URL, result, account, profile, path, reasoning, or raw-event data. Assistant text can contain model-written citations or search-derived content. Usage is `null` when App Server emits no usage event. A generation failure or response-limit failure writes no JSON object.
 - Writes selected-profile metadata under `MULTISUBS_HOME/run` when `MULTISUBS_SELECTED_PROFILE_PATH` is set. The selection source is `explicit_account`, `usage_selector`, or `usage_selector_default`.
 - Deletes the temporary workspace and model catalog when the command ends.
 - Re-checks profile filesystem and file-backed auth isolation before a configured-profile run. It never changes or manages default account authentication.
